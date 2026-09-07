@@ -16,6 +16,8 @@ const SlpGenerationSchema = z.object({
   number: z.number().int().positive(),
   agentId: z.string(),
   state: z.enum(["preparing", "active", "retired"]),
+  /** Hash of the instruction text this generation runs under; see instructions.ts. */
+  instructionsVersion: z.string(),
   createdAt: z.string(),
   activatedAt: z.string().nullable(),
   retiredAt: z.string().nullable(),
@@ -82,6 +84,61 @@ const SlpGroupEnvelopeSchema = z.object({
     .optional(),
 });
 
+/**
+ * One durable handback per Peer generation, registered before the Peer
+ * exists. The destination is a slot, resolved at delivery time, so an owner
+ * handoff between registration and completion cannot lose or misroute it.
+ * See docs/slp/handoff.md#relationships-and-background-work.
+ */
+const SlpHandbackBaseSchema = z.object({
+  id: z.string(),
+  groupId: z.string(),
+  peerSlotId: z.string(),
+  peerGenerationId: z.string(),
+  peerAgentId: z.string(),
+  ownerSlotId: z.string(),
+  /** Set by a transfer so a Peer close during the switch is not read as failure. */
+  transferInProgress: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const SlpHandbackOutcomeSchema = z.object({
+  reason: z.enum(["finished", "errored", "closed"]),
+  at: z.string(),
+});
+export type SlpHandbackOutcome = z.infer<typeof SlpHandbackOutcomeSchema>;
+
+/** Receipt semantics: architecture.md#receipts-and-notifications. */
+const SlpHandbackReceiptSchema = z.enum(["accepted", "uncertain"]);
+
+export const SlpHandbackSchema = z.discriminatedUnion("state", [
+  // Waiting for the Peer. A daemon restart owes the owner an interruption notice.
+  SlpHandbackBaseSchema.extend({
+    state: z.literal("armed"),
+    notice: z
+      .object({
+        messageId: z.string(),
+        receipt: z.enum(["pending", ...SlpHandbackReceiptSchema.options]),
+      })
+      .nullable(),
+  }),
+  // The Peer's outcome is recorded and the handback is owed to the owner slot.
+  SlpHandbackBaseSchema.extend({
+    state: z.literal("fired"),
+    outcome: SlpHandbackOutcomeSchema,
+    delivery: z.object({ messageId: z.string() }),
+  }),
+  SlpHandbackBaseSchema.extend({
+    state: z.literal("delivered"),
+    outcome: SlpHandbackOutcomeSchema,
+    delivery: z.object({ messageId: z.string(), receipt: SlpHandbackReceiptSchema }),
+  }),
+  // The Peer was never created.
+  SlpHandbackBaseSchema.extend({ state: z.literal("abandoned"), abandonedAt: z.string() }),
+]);
+export type SlpHandbackRecord = z.infer<typeof SlpHandbackSchema>;
+
 export type SlpStoredGroup =
   | { kind: "valid"; record: SlpGroupRecord }
   | { kind: "unknown"; groupId: string; workspaceId: string; agentIds: string[]; error: string }
@@ -91,7 +148,7 @@ export function newSlpGroupId(): string {
   return `grp_${randomBytes(8).toString("hex")}`;
 }
 
-export function newSlpId(prefix: "slot" | "gen"): string {
+export function newSlpId(prefix: "slot" | "gen" | "hb"): string {
   return `${prefix}_${randomBytes(8).toString("hex")}`;
 }
 
@@ -146,6 +203,38 @@ export class SlpGroupStore {
       ),
       error: full.error.message,
     };
+  }
+}
+
+/** One file per handback under `$PASEO_HOME/slp/handbacks/`. */
+export class SlpHandbackStore {
+  constructor(private readonly directory: string) {}
+
+  async write(record: SlpHandbackRecord): Promise<void> {
+    await writeJsonFileAtomic(path.join(this.directory, `${record.id}.json`), record);
+  }
+
+  /** An unparseable handback is a boot error, never a silent drop. */
+  async list(): Promise<Array<{ id: string; result: SlpHandbackRecord | Error }>> {
+    let names: string[];
+    try {
+      names = await readdir(this.directory);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+      throw error;
+    }
+    const results: Array<{ id: string; result: SlpHandbackRecord | Error }> = [];
+    for (const name of names) {
+      if (!name.endsWith(".json") || name.startsWith(".")) continue;
+      const id = name.slice(0, -".json".length);
+      try {
+        const raw: unknown = JSON.parse(await readFile(path.join(this.directory, name), "utf8"));
+        results.push({ id, result: SlpHandbackSchema.parse(raw) });
+      } catch (error) {
+        results.push({ id, result: error instanceof Error ? error : new Error(String(error)) });
+      }
+    }
+    return results;
   }
 }
 

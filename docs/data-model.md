@@ -53,8 +53,10 @@ $PASEO_HOME/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
 ├── slp/
-│   └── groups/
-│       └── {groupId}.json               # One SLP group: slots, generations, hold, initialization
+│   ├── groups/
+│   │   └── {groupId}.json               # One SLP group: slots, generations, hold, initialization
+│   └── handbacks/
+│       └── {handbackId}.json            # One Peer handback: owner slot, outcome, delivery receipt
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── projects/
@@ -182,6 +184,10 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
 **Path:** `$PASEO_HOME/slp/groups/{groupId}.json`
 
 One file per group holds the group, its slots and their generations, so a multi-record transition inside a group is one atomic rename. Schema: `packages/server/src/server/slp/store.ts`. The `hold` field is the persisted destructive-operation gate: while it is set, or while `status` is `frozen`, every archive, cascade, delete and workspace teardown touching a member agent or the workspace is refused. Boot recovery resumes an `initializing` group through the agent request journal; a record it cannot parse keeps its gate from the id and membership it can read and is frozen. Design: [docs/slp/architecture.md](slp/architecture.md#stable-identity).
+
+**Path:** `$PASEO_HOME/slp/handbacks/{handbackId}.json`
+
+One file per Peer generation, written before the Peer agent exists and addressed to the owner slot rather than an agent. The record holds the Peer's outcome and the receipt of the message owed to the owner; the composed instruction text itself lives in the agent record's `config.systemPrompt`, not here. Why the built-in finish notification cannot be reused: [docs/slp/handoff.md](slp/handoff.md#relationships-and-background-work).
 
 ## 2. Daemon Configuration
 

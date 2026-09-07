@@ -31,21 +31,26 @@ export class AgentRequests {
     });
   }
 
+  /**
+   * `send` may return `"declined"` when it made no provider call at all (the
+   * recipient was busy and could not be steered). The receipt is discarded so
+   * the same message can be offered again without an uncertain outcome.
+   */
   async send(input: {
     agentId: string;
     messageId: string;
     request: unknown;
-    send: () => Promise<void>;
+    send: () => Promise<void | "declined">;
     prepare?: () => Promise<void>;
-  }): Promise<void> {
-    await this.execute(["send", input.agentId, input.messageId], input.request, {
+  }): Promise<"sent" | "declined"> {
+    return this.execute(["send", input.agentId, input.messageId], input.request, {
       agentId: input.agentId,
       // A provider call can take effect before the daemon records its outcome.
       // Never repeat that call merely because a process died in this window.
       recover: async () => false,
       run: input.send,
       prepare: input.prepare,
-    });
+    }).then((result) => (result === DECLINED ? "declined" : "sent"));
   }
 
   private execute(
@@ -54,7 +59,7 @@ export class AgentRequests {
     operation: {
       agentId: string;
       recover: (agentId: string) => Promise<boolean>;
-      run: (agentId: string) => Promise<void>;
+      run: (agentId: string) => Promise<void | "declined">;
       prepare?: (() => Promise<void>) | undefined;
       retrySafe?: (agentId: string) => Promise<boolean>;
     },
@@ -81,7 +86,7 @@ export class AgentRequests {
     operation: {
       agentId: string;
       recover: (agentId: string) => Promise<boolean>;
-      run: (agentId: string) => Promise<void>;
+      run: (agentId: string) => Promise<void | "declined">;
       prepare?: (() => Promise<void>) | undefined;
       retrySafe?: (agentId: string) => Promise<boolean>;
     },
@@ -100,18 +105,26 @@ export class AgentRequests {
     await operation.prepare?.();
     const receipt: Receipt = { fingerprint, agentId: operation.agentId, state: "pending" };
     await writeJsonFileAtomic(file, receipt);
+    let outcome: void | "declined";
     try {
-      await operation.run(receipt.agentId);
+      outcome = await operation.run(receipt.agentId);
     } catch (error) {
       // Keyed creation has no initial prompt. Once its normal cleanup finished,
       // absence of an agent confirms that retrying cannot duplicate one.
       if (await operation.retrySafe?.(receipt.agentId)) await rm(file, { force: true });
       throw error;
     }
+    if (outcome === "declined") {
+      await rm(file, { force: true });
+      return DECLINED;
+    }
     await writeJsonFileAtomic(file, { ...receipt, state: "completed" });
     return receipt.agentId;
   }
 }
+
+/** Sentinel agent id for a declined send; never a real agent id. */
+const DECLINED = "\u0000declined";
 
 async function readReceipt(file: string): Promise<Receipt | null> {
   try {

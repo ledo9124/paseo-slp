@@ -1,28 +1,27 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentManager } from "../agent/agent-manager.js";
-import { AgentStorage } from "../agent/agent-storage.js";
-import { AgentRequests } from "../agent/requests/index.js";
 import { archiveByScope, type ArchiveDependencies } from "../workspace-archive-service.js";
 import { createNoopWorkspaceGitService } from "../test-utils/workspace-git-service-stub.js";
-import { createHeldTurnClient, type HeldTurnClient } from "../test-utils/held-turn-agent-client.js";
-import { SlpGroupHeldError, SlpInitializationConflictError } from "./errors.js";
-import { SlpService, type SlpInitializeGroupInput } from "./service.js";
+import {
+  slpLeadAgentId as leadAgentId,
+  startSlpTestDaemon,
+  type SlpTestDaemon as Daemon,
+  type SlpTestDaemonOptions,
+} from "../test-utils/slp-test-daemon.js";
+import {
+  SlpDelegationUnavailableError,
+  SlpGroupHeldError,
+  SlpInitializationConflictError,
+  SlpInstructionsUnavailableError,
+} from "./errors.js";
+import type { SlpInitializeGroupInput } from "./service.js";
 import type { SlpGroupRecord } from "./store.js";
 
 const WORKSPACE = "wks_slp_test";
-
-interface Daemon {
-  service: SlpService;
-  manager: AgentManager;
-  client: HeldTurnClient;
-  storage: AgentStorage;
-}
 
 describe("SlpService", () => {
   let paseoHome: string;
@@ -36,40 +35,12 @@ describe("SlpService", () => {
   });
 
   afterEach(async () => {
-    for (const daemon of daemons.splice(0)) {
-      for (const agent of daemon.manager.listAgents()) {
-        await daemon.manager.closeAgent(agent.id).catch(() => undefined);
-      }
-      await daemon.storage.flush();
-    }
+    for (const daemon of daemons.splice(0)) await daemon.stop();
     await rm(paseoHome, { recursive: true, force: true });
   });
 
-  // A "daemon" is one AgentManager + storage + journal + SLP service over the
-  // same preserved home. Two of them in sequence stand in for a restart.
-  async function startDaemon(): Promise<Daemon> {
-    const logger = createTestLogger();
-    const client = createHeldTurnClient({ provider: "codex" });
-    const storage = new AgentStorage(path.join(paseoHome, "agents"), logger);
-    await storage.initialize();
-    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
-    const agentRequests = new AgentRequests(path.join(paseoHome, "agent-requests"));
-    const service = new SlpService({
-      paseoHome,
-      logger,
-      agentManager: manager,
-      agentStorage: storage,
-      agentRequests,
-      createLeadAgent: async (creation) => {
-        await manager.createAgent(
-          { provider: creation.lead.provider, cwd: creation.lead.cwd },
-          creation.agentId,
-          { workspaceId: creation.workspaceId },
-        );
-      },
-    });
-    await service.recover();
-    const daemon = { service, manager, client, storage };
+  async function startDaemon(overrides?: Omit<SlpTestDaemonOptions, "paseoHome">): Promise<Daemon> {
+    const daemon = await startSlpTestDaemon({ paseoHome, ...overrides });
     daemons.push(daemon);
     return daemon;
   }
@@ -88,12 +59,6 @@ describe("SlpService", () => {
     return JSON.parse(
       await readFile(path.join(paseoHome, "slp", "groups", `${groupId}.json`), "utf8"),
     ) as SlpGroupRecord;
-  }
-
-  function leadAgentId(group: SlpGroupRecord): string {
-    const slot = group.slots[group.leadSlotId]!;
-    return slot.generations.find((generation) => generation.id === slot.activeGenerationId)!
-      .agentId;
   }
 
   test("concurrent clients and retries converge on one group, mode and receipt", async () => {
@@ -140,8 +105,7 @@ describe("SlpService", () => {
     const group = await first.service.initializeGroup(input());
     first.client.sessions[0]!.release();
     await first.manager.waitForAgentEvent(leadAgentId(group), { waitForActive: true });
-    for (const agent of first.manager.listAgents()) await first.manager.closeAgent(agent.id);
-    await first.storage.flush();
+    await first.stop();
 
     const second = await startDaemon();
     const recovered = second.service.getGroup(group.id);
@@ -187,8 +151,7 @@ describe("SlpService", () => {
     const sendReceipt = JSON.parse(await readFile(sendReceiptPath, "utf8")) as { state: string };
     expect(sendReceipt.state).toBe("completed");
     await writeFile(sendReceiptPath, JSON.stringify({ ...sendReceipt, state: "pending" }));
-    for (const agent of first.manager.listAgents()) await first.manager.closeAgent(agent.id);
-    await first.storage.flush();
+    await first.stop();
 
     const second = await startDaemon();
     const recovered = second.service.getGroup(group.id)!;
@@ -210,8 +173,7 @@ describe("SlpService", () => {
       path.join(paseoHome, "slp", "groups", `${group.id}.json`),
       JSON.stringify({ ...group, hold }),
     );
-    for (const agent of daemon.manager.listAgents()) await daemon.manager.closeAgent(agent.id);
-    await daemon.storage.flush();
+    await daemon.stop();
     return group;
   }
 
@@ -272,8 +234,7 @@ describe("SlpService", () => {
       }),
     );
     await writeFile(path.join(paseoHome, "slp", "groups", "grp_garbage.json"), "{not json");
-    for (const agent of first.manager.listAgents()) await first.manager.closeAgent(agent.id);
-    await first.storage.flush();
+    await first.stop();
 
     const second = await startDaemon();
     expect(second.service.getGroup(ready.id)?.status).toBe("ready");
@@ -288,5 +249,49 @@ describe("SlpService", () => {
       new Date().toISOString(),
     );
     expect(archived.archivedAt).toEqual(expect.any(String));
+  });
+
+  test("the Lead runs under the shared block plus exactly the Lead role, restored on resume", async () => {
+    const daemon = await startDaemon();
+    const group = await daemon.service.initializeGroup(input());
+    const record = await daemon.storage.get(leadAgentId(group));
+    const prompt = record?.config?.systemPrompt ?? "";
+
+    expect(prompt.match(/^# Shared SLP instructions$/gm)).toHaveLength(1);
+    expect(prompt.match(/^# Lead instructions$/gm)).toHaveLength(1);
+    expect(prompt).not.toMatch(/^# (Supervisor|Peer) instructions$/m);
+    expect(prompt).not.toMatch(/^Status:/m);
+    expect(prompt).toContain(`- Group: ${group.id}`);
+    expect(prompt).toContain(`- Slot: ${group.leadSlotId}`);
+    expect(prompt).toContain("- Workspace mode: direct");
+    const generation = group.slots[group.leadSlotId]!.generations[0]!;
+    expect(generation.instructionsVersion).toMatch(/^[0-9a-f]{16}$/);
+    expect(daemon.manager.getAgent(leadAgentId(group))?.config?.systemPrompt).toBe(prompt);
+  });
+
+  test("initialization refuses visibly when agents would get no Paseo tools", async () => {
+    const daemon = await startDaemon({ isDelegationToolingEnabled: () => false });
+
+    await expect(daemon.service.initializeGroup(input())).rejects.toThrow(
+      SlpDelegationUnavailableError,
+    );
+    expect(daemon.service.getGroupForWorkspace(WORKSPACE)).toBeNull();
+    expect(daemon.client.sessions).toHaveLength(0);
+    await expect(readdir(path.join(paseoHome, "slp", "groups"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  test("a missing role instruction file is a setup failure, not an unconfigured Lead", async () => {
+    const rolesDir = path.join(paseoHome, "roles");
+    await mkdir(rolesDir, { recursive: true });
+    await writeFile(path.join(rolesDir, "common.md"), "# Shared SLP instructions\n");
+    const daemon = await startDaemon({ instructionsDir: rolesDir });
+
+    await expect(daemon.service.initializeGroup(input())).rejects.toThrow(
+      SlpInstructionsUnavailableError,
+    );
+    expect(daemon.service.getGroupForWorkspace(WORKSPACE)).toBeNull();
+    expect(daemon.client.sessions).toHaveLength(0);
   });
 });

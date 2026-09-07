@@ -31,7 +31,11 @@ import {
   requireActiveWorkspaceForArchive,
   type ArchiveDependencies,
 } from "../../workspace-archive-service.js";
-import { createAgentCommand, type CreateAgentFromMcpInput } from "../create-agent/create.js";
+import {
+  createAgentCommand,
+  type CreateAgentFromMcpInput,
+  type SlpCreationHook,
+} from "../create-agent/create.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { FirstAgentContext } from "../../messages.js";
 import { everyMsToFiveFieldCron } from "@getpaseo/protocol/schedule/cadence";
@@ -131,6 +135,7 @@ export interface PaseoToolHostDependencies {
   browserToolsEnabled?: boolean;
   browserToolsBroker?: BrowserToolsBroker | null;
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
+  slp?: SlpCreationHook | null;
   paseoHome?: string;
   worktreesRoot?: string;
   /**
@@ -1441,11 +1446,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         snapshot,
         background: createdInBackground,
         initialPromptStarted,
+        handbackRegistered,
       } = await createAgentCommand(
         {
           agentManager,
           agentStorage,
           logger: childLogger,
+          slp: options.slp,
           paseoHome: options.paseoHome,
           worktreesRoot: options.worktreesRoot,
           terminalManager,
@@ -1510,7 +1517,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       // Return immediately for async creation.
       const currentSnapshot = agentManager.getAgent(snapshot.id) ?? snapshot;
       const guidance =
-        callerAgentId && notifyOnFinish && initialPromptStarted
+        callerAgentId && (notifyOnFinish || handbackRegistered) && initialPromptStarted
           ? "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives."
           : undefined;
       const response = {

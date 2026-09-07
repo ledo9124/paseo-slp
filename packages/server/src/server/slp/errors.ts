@@ -39,3 +39,36 @@ export class SlpGroupFrozenError extends Error {
     this.name = "SlpGroupFrozenError";
   }
 }
+
+/** A Lead without Paseo tools cannot delegate, so the group is not created. */
+export class SlpDelegationUnavailableError extends Error {
+  constructor(public readonly workspaceId: string) {
+    super(
+      `SLP needs Paseo tools injected into agents; enable daemon.mcp.enabled and daemon.mcp.injectIntoAgents before initializing a group for workspace ${workspaceId}`,
+    );
+    this.name = "SlpDelegationUnavailableError";
+  }
+}
+
+/** A required role instruction file is missing or unreadable. */
+export class SlpInstructionsUnavailableError extends Error {
+  constructor(
+    public readonly file: string,
+    cause: unknown,
+  ) {
+    super(`SLP role instructions are unavailable: ${file}`, { cause });
+    this.name = "SlpInstructionsUnavailableError";
+  }
+}
+
+/** The calling role may not perform this operation. */
+export class SlpRoleAuthorityError extends Error {
+  constructor(
+    public readonly agentId: string,
+    public readonly role: string,
+    public readonly operation: string,
+  ) {
+    super(`SLP ${role} ${agentId} may not ${operation}`);
+    this.name = "SlpRoleAuthorityError";
+  }
+}

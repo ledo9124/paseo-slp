@@ -1,6 +1,6 @@
 # Shared SLP instructions
 
-Status: instruction specification; runtime activation is not implemented by this documentation change.
+Status: loaded by the daemon. Each SLP generation is composed from this file plus one role file at creation; see [prompt composition](../architecture.md#prompt-composition).
 
 ## Activation and authority
 

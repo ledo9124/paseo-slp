@@ -1,6 +1,6 @@
 # SLP design and role instructions
 
-Status: agreed design direction and instruction drafts for this fork. No SLP runtime, provider hook, checkpoint tool, or compatibility guarantee is implemented by this documentation change.
+Status: agreed design direction, with the runtime foundations through Peer creation and handback implemented in `packages/server/src/server/slp/`; see the [implementation plan](implementation-plan.md) for what is landed. No provider hook, checkpoint tool, mailbox, handoff, client entrypoint or compatibility guarantee exists yet.
 
 The architecture, handoff, provider and plan documents record the source survey and its review against fork commit `dee2a8d405e02ada2658e674372407f439788bea`. Distinguish verified code behavior, target contracts and provider probes. An absent adapter integration does not establish that the provider cannot support it.
 

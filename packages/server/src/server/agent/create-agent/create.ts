@@ -35,10 +35,30 @@ export interface CreateAgentSessionWorktreeResult {
   createdWorkspaceId?: string;
 }
 
+/** What an SLP Peer creation overrides on the Lead's request. */
+export interface SlpPeerCreation {
+  agentId: string;
+  systemPrompt: string;
+  labels: Record<string, string>;
+}
+
+/**
+ * Lets the SLP service claim a creation whose caller is an SLP member before
+ * the agent exists: the Peer's identity, instructions and handback are
+ * durable first. Returns null for callers outside any group, which keeps
+ * ordinary creation unchanged.
+ */
+export interface SlpCreationHook {
+  preparePeerCreation(input: { callerAgentId: string }): Promise<SlpPeerCreation | null>;
+  peerCreated(agentId: string): Promise<void>;
+  peerCreationFailed(agentId: string, error: unknown): Promise<void>;
+}
+
 export interface CreateAgentCommandDependencies {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   logger: Logger;
+  slp?: SlpCreationHook | null;
   paseoHome?: string;
   worktreesRoot?: string;
   terminalManager?: TerminalManager | null;
@@ -129,6 +149,8 @@ export interface CreateAgentCommandResult {
   background: boolean;
   initialPromptStarted: boolean;
   initialPromptError: unknown | null;
+  /** True when SLP owns completion delivery for this agent instead of notify-on-finish. */
+  handbackRegistered: boolean;
   createdWorktree?: CreatePaseoWorktreeWorkflowResult;
 }
 
@@ -177,6 +199,36 @@ export async function createAgentCommand(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentCommandInput,
 ): Promise<CreateAgentCommandResult> {
+  const slp = dependencies.slp;
+  if (input.kind !== "mcp" || !input.callerAgentId || !slp) {
+    return runCreateAgent(dependencies, input, null);
+  }
+  const peer = await slp.preparePeerCreation({ callerAgentId: input.callerAgentId });
+  if (!peer) {
+    return runCreateAgent(dependencies, input, null);
+  }
+  const peerInput: CreateAgentFromMcpInput = {
+    ...input,
+    agentId: peer.agentId,
+    notifyOnFinish: false,
+    labels: { ...input.labels, ...peer.labels },
+    config: { ...input.config, systemPrompt: peer.systemPrompt },
+  };
+  try {
+    return await runCreateAgent(dependencies, peerInput, slp);
+  } catch (error) {
+    if (!dependencies.agentManager.getAgent(peer.agentId)) {
+      await slp.peerCreationFailed(peer.agentId, error);
+    }
+    throw error;
+  }
+}
+
+async function runCreateAgent(
+  dependencies: CreateAgentCommandDependencies,
+  input: CreateAgentCommandInput,
+  slp: SlpCreationHook | null,
+): Promise<CreateAgentCommandResult> {
   const resolved =
     input.kind === "session"
       ? await resolveSessionCreateAgent(dependencies, input)
@@ -187,6 +239,7 @@ export async function createAgentCommand(
     input.agentId,
     resolved.createOptions,
   );
+  if (slp) await slp.peerCreated(snapshot.id);
 
   resolved.setupContinuation?.startAfterAgentCreate({
     agentId: snapshot.id,
@@ -222,6 +275,7 @@ export async function createAgentCommand(
     background: resolved.background,
     initialPromptStarted,
     initialPromptError,
+    handbackRegistered: slp !== null,
     ...(resolved.createdWorktree ? { createdWorktree: resolved.createdWorktree } : {}),
   };
 }

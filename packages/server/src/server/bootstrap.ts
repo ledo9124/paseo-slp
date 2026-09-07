@@ -131,7 +131,7 @@ import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { AgentRequests } from "./agent/requests/index.js";
-import { SlpService } from "./slp/service.js";
+import { SLP_GROUP_LABEL, SlpService } from "./slp/service.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -1187,12 +1187,20 @@ export async function createPaseoDaemon(
         cwd: input.lead.cwd,
         workspaceId: input.workspaceId,
         mode: input.lead.modeId ?? undefined,
-        labels: { "paseo.slp-group-id": input.groupId },
+        config: { systemPrompt: input.systemPrompt },
+        labels: { [SLP_GROUP_LABEL]: input.groupId },
         background: true,
         notifyOnFinish: false,
       });
     },
+    isDelegationToolingEnabled: () => {
+      const mcp = daemonConfigStore.get().mcp;
+      return mcp.enabled !== false && mcp.injectIntoAgents;
+    },
   });
+  // Peers are created by the Lead through the create funnel; the service is
+  // constructed after the funnel is bound, so the hook is attached here.
+  createAgentCommandDependencies.slp = slpService;
   await slpService.recover();
   logger.info({ elapsed: elapsed() }, "SLP groups recovered");
   const archiveWorkspaceByIdExternal = (workspaceId: string, requestId: string) =>
@@ -1391,6 +1399,7 @@ export async function createPaseoDaemon(
     scheduleService,
     providerSnapshotManager,
     daemonConfigStore,
+    slp: slpService,
     github,
     workspaceGitService,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,

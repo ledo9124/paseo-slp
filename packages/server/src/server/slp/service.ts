@@ -1,21 +1,37 @@
+import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 
 import type { AgentManager, DestructiveOperationGate } from "../agent/agent-manager.js";
 import type { AgentRequests } from "../agent/requests/index.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
+import type { SlpCreationHook, SlpPeerCreation } from "../agent/create-agent/create.js";
 import {
+  SlpDelegationUnavailableError,
   SlpGroupFrozenError,
   SlpGroupHeldError,
   SlpInitializationConflictError,
+  SlpRoleAuthorityError,
 } from "./errors.js";
+import { SlpHandbackRegister, type SlpHandbackAgentManager } from "./handbacks.js";
+import {
+  composeSlpSystemPrompt,
+  loadSlpInstructions,
+  resolveBundledSlpRolesDir,
+  type SlpInstructions,
+} from "./instructions.js";
 import {
   newSlpGroupId,
   newSlpId,
   SlpGroupStore,
+  type SlpGenerationRecord,
   type SlpGroupRecord,
+  type SlpHandbackRecord,
   type SlpInitializationRecord,
+  type SlpSlotRecord,
   type SlpWorkspaceMode,
 } from "./store.js";
+
+export const SLP_GROUP_LABEL = "paseo.slp-group-id";
 
 export interface SlpInitializeGroupInput {
   workspaceId: string;
@@ -29,19 +45,25 @@ export interface SlpLeadCreationInput {
   groupId: string;
   workspaceId: string;
   lead: SlpInitializationRecord["lead"];
+  systemPrompt: string;
 }
 
 export interface SlpServiceOptions {
   paseoHome: string;
   logger: Logger;
-  agentManager: Pick<
-    AgentManager,
-    "admitForegroundTurn" | "getAgent" | "setDestructiveOperationGate"
-  >;
-  agentStorage: Pick<AgentStorage, "get">;
+  agentManager: SlpHandbackAgentManager &
+    Pick<AgentManager, "admitForegroundTurn" | "getAgent" | "setDestructiveOperationGate">;
+  agentStorage: AgentStorage;
   agentRequests: Pick<AgentRequests, "create" | "send">;
   /** Creates the Lead agent under the preassigned id. Bootstrap binds the create funnel. */
   createLeadAgent: (input: SlpLeadCreationInput) => Promise<void>;
+  /**
+   * Whether created agents receive Paseo tools. A Lead without them has no
+   * delegation route, so group initialization refuses instead of producing one.
+   */
+  isDelegationToolingEnabled: () => boolean;
+  /** Where the role instruction files live; defaults to the bundled copy of docs/slp/roles. */
+  instructionsDir?: string;
   now?: () => Date;
 }
 
@@ -54,16 +76,21 @@ interface FrozenUnknownGroup {
 
 /**
  * Daemon-owned SLP groups: identity, fixed workspace mode, initialization,
- * boot recovery and the destructive-operation gate. Membership is authority;
- * labels are only a projection. See docs/slp/architecture.md.
+ * role instructions, Peer creation with its handback, boot recovery and the
+ * destructive-operation gate. Membership is authority; labels are only a
+ * projection. See docs/slp/architecture.md.
  */
-export class SlpService {
+export class SlpService implements SlpCreationHook {
   private readonly store: SlpGroupStore;
+  private readonly handbacks: SlpHandbackRegister;
   private readonly logger: Logger;
   private readonly agentManager: SlpServiceOptions["agentManager"];
   private readonly agentStorage: SlpServiceOptions["agentStorage"];
   private readonly agentRequests: SlpServiceOptions["agentRequests"];
   private readonly createLeadAgent: SlpServiceOptions["createLeadAgent"];
+  private readonly isDelegationToolingEnabled: SlpServiceOptions["isDelegationToolingEnabled"];
+  private readonly instructionsDir: string;
+  private instructionsLoad: Promise<SlpInstructions> | null = null;
   private readonly now: () => Date;
   private readonly groups = new Map<string, SlpGroupRecord>();
   /** Records recovery could not fully parse. They keep their gate and nothing else. */
@@ -77,11 +104,20 @@ export class SlpService {
     this.agentStorage = options.agentStorage;
     this.agentRequests = options.agentRequests;
     this.createLeadAgent = options.createLeadAgent;
+    this.isDelegationToolingEnabled = options.isDelegationToolingEnabled;
+    this.instructionsDir = options.instructionsDir ?? resolveBundledSlpRolesDir();
     this.now = options.now ?? (() => new Date());
+    this.handbacks = new SlpHandbackRegister({
+      directory: `${options.paseoHome}/slp/handbacks`,
+      logger: this.logger,
+      agentManager: options.agentManager,
+      agentStorage: options.agentStorage,
+      agentRequests: options.agentRequests,
+      resolveSlotAgent: (groupId, slotId) => this.resolveSlotAgent(groupId, slotId),
+      now: this.now,
+    });
     this.agentManager.setDestructiveOperationGate(this.destructiveOperationGate());
   }
-
-  // ---------------------------------------------------------------- queries
 
   getGroup(groupId: string): SlpGroupRecord | null {
     return this.groups.get(groupId) ?? null;
@@ -101,7 +137,14 @@ export class SlpService {
     return null;
   }
 
-  // ------------------------------------------------------------------- gate
+  listHandbacks(): SlpHandbackRecord[] {
+    return this.handbacks.list();
+  }
+
+  /** Stops watching agents. Tests use it to end a daemon; bootstrap never needs it. */
+  dispose(): void {
+    this.handbacks.dispose();
+  }
 
   /**
    * Group gate before per-agent lanes: callers read this before entering a
@@ -144,8 +187,6 @@ export class SlpService {
     }
   }
 
-  // --------------------------------------------------------- initialization
-
   /**
    * Choose the fixed mode and deliver the first Human message through one
    * recoverable operation. Retries and concurrent clients for the same
@@ -168,6 +209,12 @@ export class SlpService {
         }
         return existing.status === "ready" ? existing : this.runInitialization(existing);
       }
+      // Both preconditions fail before anything is persisted: a group with a
+      // tool-less or instruction-less Lead is not worth recovering.
+      if (!this.isDelegationToolingEnabled()) {
+        throw new SlpDelegationUnavailableError(input.workspaceId);
+      }
+      await this.instructions();
       const at = this.now().toISOString();
       const leadSlotId = newSlpId("slot");
       const record: SlpGroupRecord = {
@@ -208,6 +255,16 @@ export class SlpService {
   private async runInitialization(record: SlpGroupRecord): Promise<SlpGroupRecord> {
     const leadSlot = record.slots[record.leadSlotId]!;
     if (!leadSlot.activeGenerationId) {
+      const instructions = await this.instructions();
+      const generationNumber = leadSlot.generations.length + 1;
+      const systemPrompt = composeSlpSystemPrompt(instructions, {
+        role: "lead",
+        groupId: record.id,
+        workspaceId: record.workspaceId,
+        slotId: leadSlot.id,
+        generationNumber,
+        mode: record.mode,
+      });
       const leadAgentId = await this.agentRequests.create({
         key: `slp-lead:${record.id}`,
         request: { groupId: record.id, lead: record.initialization.lead },
@@ -220,20 +277,20 @@ export class SlpService {
             groupId: record.id,
             workspaceId: record.workspaceId,
             lead: record.initialization.lead,
+            systemPrompt,
           }),
       });
       const at = this.now().toISOString();
-      const generationId = newSlpId("gen");
-      leadSlot.generations.push({
-        id: generationId,
-        number: 1,
+      const generation = newGeneration({
+        number: generationNumber,
         agentId: leadAgentId,
-        state: "active",
-        createdAt: at,
-        activatedAt: at,
-        retiredAt: null,
+        instructionsVersion: instructions.version,
+        at,
       });
-      leadSlot.activeGenerationId = generationId;
+      generation.state = "active";
+      generation.activatedAt = at;
+      leadSlot.generations.push(generation);
+      leadSlot.activeGenerationId = generation.id;
       record.initialization.leadAgentId = leadAgentId;
       await this.persist(record);
     }
@@ -241,7 +298,7 @@ export class SlpService {
     if (record.initialization.receipt === "pending") {
       const leadAgentId = record.initialization.leadAgentId!;
       try {
-        await this.agentRequests.send({
+        const result = await this.agentRequests.send({
           agentId: leadAgentId,
           messageId: record.initialization.messageId,
           request: { groupId: record.id, text: record.initialization.text },
@@ -251,11 +308,12 @@ export class SlpService {
               record.initialization.text,
               { clientMessageId: record.initialization.messageId },
             );
-            if (admission.status === "busy") {
-              throw new Error(`Lead ${leadAgentId} was busy before its first message`);
-            }
+            return admission.status === "busy" ? "declined" : undefined;
           },
         });
+        if (result === "declined") {
+          throw new Error(`Lead ${leadAgentId} was busy before its first message`);
+        }
         record.initialization.receipt = "accepted";
       } catch (error) {
         if (!(error instanceof Error && error.message === "agent_request_outcome_unknown")) {
@@ -276,12 +334,94 @@ export class SlpService {
     return record;
   }
 
-  // --------------------------------------------------------------- recovery
+  /**
+   * The create funnel asks here before creating an agent for an SLP caller.
+   * Only the active Lead may create, and what it creates is a Peer: its slot,
+   * preparing generation and handback are durable before the agent exists,
+   * so a crash in between leaves a record recovery can retire, never an
+   * unaccounted agent.
+   */
+  async preparePeerCreation(input: { callerAgentId: string }): Promise<SlpPeerCreation | null> {
+    const group = this.getGroupForAgent(input.callerAgentId);
+    if (!group) return null;
+    this.assertGroupNotHeld(group);
+    const { slot: callerSlot, generation: callerGeneration } = membershipOf(
+      group,
+      input.callerAgentId,
+    );
+    if (callerSlot.role !== "lead" || callerSlot.activeGenerationId !== callerGeneration.id) {
+      throw new SlpRoleAuthorityError(input.callerAgentId, callerSlot.role, "create agents");
+    }
+    const instructions = await this.instructions();
+    const at = this.now().toISOString();
+    const peerSlot: SlpSlotRecord = {
+      id: newSlpId("slot"),
+      role: "peer",
+      ownerSlotId: callerSlot.id,
+      activeGenerationId: null,
+      generations: [],
+    };
+    const generation = newGeneration({
+      number: 1,
+      agentId: randomUUID(),
+      instructionsVersion: instructions.version,
+      at,
+    });
+    peerSlot.generations.push(generation);
+    group.slots[peerSlot.id] = peerSlot;
+    await this.persist(group);
+    await this.handbacks.register({
+      groupId: group.id,
+      peerSlotId: peerSlot.id,
+      peerGenerationId: generation.id,
+      peerAgentId: generation.agentId,
+      ownerSlotId: callerSlot.id,
+    });
+    return {
+      agentId: generation.agentId,
+      labels: { [SLP_GROUP_LABEL]: group.id },
+      systemPrompt: composeSlpSystemPrompt(instructions, {
+        role: "peer",
+        groupId: group.id,
+        workspaceId: group.workspaceId,
+        slotId: peerSlot.id,
+        generationNumber: generation.number,
+        mode: group.mode,
+      }),
+    };
+  }
+
+  async peerCreated(agentId: string): Promise<void> {
+    const group = this.getGroupForAgent(agentId);
+    if (!group) return;
+    const { slot, generation } = membershipOf(group, agentId);
+    if (generation.state !== "preparing") return;
+    generation.state = "active";
+    generation.activatedAt = this.now().toISOString();
+    slot.activeGenerationId = generation.id;
+    await this.persist(group);
+  }
+
+  async peerCreationFailed(agentId: string, error: unknown): Promise<void> {
+    const group = this.getGroupForAgent(agentId);
+    if (!group) return;
+    this.logger.warn({ groupId: group.id, agentId, err: error }, "SLP Peer creation failed");
+    await this.retirePreparingGeneration(group, agentId);
+  }
+
+  private async retirePreparingGeneration(group: SlpGroupRecord, agentId: string): Promise<void> {
+    const { generation } = membershipOf(group, agentId);
+    generation.state = "retired";
+    generation.retiredAt = this.now().toISOString();
+    await this.persist(group);
+    await this.handbacks.abandon(agentId);
+  }
 
   /**
-   * Boot recovery: load every group, resume interrupted initializations, and
-   * freeze only the groups whose state cannot be resumed. Runs in the same
-   * bootstrap block as agent storage recovery, before the WebSocket server.
+   * Boot recovery: load every group, resume interrupted initializations,
+   * settle Peer generations the daemon died while creating, re-arm handbacks,
+   * and freeze only the groups whose state cannot be resumed. Runs in the
+   * same bootstrap block as agent storage recovery, before the WebSocket server.
    */
   async recover(): Promise<void> {
     for (const stored of await this.store.list()) {
@@ -314,11 +454,34 @@ export class SlpService {
         await this.freeze(record, "transfer recovery is not implemented");
         continue;
       }
+      await this.settlePreparingPeers(record);
       if (record.status !== "initializing") continue;
       try {
         await this.serializeByWorkspace(record.workspaceId, () => this.runInitialization(record));
       } catch (error) {
         await this.freeze(record, `initialization recovery failed: ${describe(error)}`);
+      }
+    }
+    await this.handbacks.recover((handback) => {
+      const group = this.groups.get(handback.groupId);
+      const generation = group?.slots[handback.peerSlotId]?.generations.find(
+        (candidate) => candidate.id === handback.peerGenerationId,
+      );
+      return generation?.state === "active";
+    });
+  }
+
+  /** A Peer the daemon died while creating either exists (activate) or does not (retire). */
+  private async settlePreparingPeers(group: SlpGroupRecord): Promise<void> {
+    for (const slot of Object.values(group.slots)) {
+      if (slot.role !== "peer") continue;
+      for (const generation of slot.generations) {
+        if (generation.state !== "preparing") continue;
+        if (await this.agentStorage.get(generation.agentId)) {
+          await this.peerCreated(generation.agentId);
+        } else {
+          await this.retirePreparingGeneration(group, generation.agentId);
+        }
       }
     }
   }
@@ -330,7 +493,18 @@ export class SlpService {
     this.logger.error({ groupId: record.id, reason }, "SLP group frozen");
   }
 
-  // ---------------------------------------------------------------- helpers
+  private instructions(): Promise<SlpInstructions> {
+    this.instructionsLoad ??= loadSlpInstructions(this.instructionsDir).catch((error: unknown) => {
+      this.instructionsLoad = null;
+      throw error;
+    });
+    return this.instructionsLoad;
+  }
+
+  private resolveSlotAgent(groupId: string, slotId: string): string | null {
+    const slot = this.groups.get(groupId)?.slots[slotId];
+    return slot ? (activeGeneration(slot)?.agentId ?? null) : null;
+  }
 
   private async persist(record: SlpGroupRecord): Promise<void> {
     record.updatedAt = this.now().toISOString();
@@ -353,6 +527,39 @@ export class SlpService {
     });
     return run;
   }
+}
+
+function newGeneration(input: {
+  number: number;
+  agentId: string;
+  instructionsVersion: string;
+  at: string;
+}): SlpGenerationRecord {
+  return {
+    id: newSlpId("gen"),
+    number: input.number,
+    agentId: input.agentId,
+    state: "preparing",
+    instructionsVersion: input.instructionsVersion,
+    createdAt: input.at,
+    activatedAt: null,
+    retiredAt: null,
+  };
+}
+
+function activeGeneration(slot: SlpSlotRecord): SlpGenerationRecord | null {
+  return slot.generations.find((candidate) => candidate.id === slot.activeGenerationId) ?? null;
+}
+
+function membershipOf(
+  group: SlpGroupRecord,
+  agentId: string,
+): { slot: SlpSlotRecord; generation: SlpGenerationRecord } {
+  for (const slot of Object.values(group.slots)) {
+    const generation = slot.generations.find((candidate) => candidate.agentId === agentId);
+    if (generation) return { slot, generation };
+  }
+  throw new Error(`Agent ${agentId} is not a member of SLP group ${group.id}`);
 }
 
 function groupAgentIds(group: SlpGroupRecord): string[] {
