@@ -29,6 +29,9 @@ buildNpmPackage rec {
       let
         baseName = builtins.baseNameOf path;
         relPath = lib.removePrefix (toString ./..) path;
+        # The server build copies docs/slp/roles into dist (see build:lib in
+        # packages/server/package.json), so that directory and its parents stay.
+        isRoleDoc = p: p == "/docs" || p == "/docs/slp" || lib.hasPrefix "/docs/slp/roles" p;
       in
       # Exclude non-daemon workspace contents (keep package.json for workspace resolution)
       !(lib.hasPrefix "/packages/app/android" relPath)
