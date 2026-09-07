@@ -1,6 +1,6 @@
 # Claude Code and Codex handoff support
 
-Status: source evidence plus one recorded manual run per provider for the preparation policy ([evidence](evidence.md)); no tested provider version is certified for SLP. A declared capability must describe what the installed runtime can do, not the presence of a handler. The [handoff contract](handoff.md) owns transfer behavior.
+Status: source evidence plus one recorded manual run per provider for the preparation policy and restart recovery ([evidence](evidence.md)); no tested provider version is certified for SLP. A declared capability must describe what the installed runtime can do, not the presence of a handler. The [handoff contract](handoff.md) owns transfer behavior.
 
 ## Support boundary
 
