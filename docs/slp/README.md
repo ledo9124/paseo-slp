@@ -1,6 +1,6 @@
 # SLP design and role instructions
 
-Status: agreed design direction, with the runtime through explicit same-role handoff implemented in `packages/server/src/server/slp/`; see the [implementation plan](implementation-plan.md) for what is landed. No provider hook, proactive trigger, client entrypoint or compatibility guarantee exists yet, and no live provider has run under the preparation policy.
+Status: agreed design direction, with the runtime through explicit same-role handoff implemented in `packages/server/src/server/slp/`; see the [implementation plan](implementation-plan.md) for what is landed. No provider hook, proactive trigger, client entrypoint or compatibility guarantee exists yet; the preparation policy has one recorded live run per provider ([evidence](evidence.md)).
 
 The architecture, handoff, provider and plan documents record the source survey and its review against fork commit `dee2a8d405e02ada2658e674372407f439788bea`. Distinguish verified code behavior, target contracts and provider probes. An absent adapter integration does not establish that the provider cannot support it.
 

@@ -103,6 +103,33 @@ describe("Codex preparation policy", () => {
     });
   });
 
+  test("pre-approves the daemon's MCP tools while preparing so readiness can be acknowledged", async () => {
+    let policy = PREPARING;
+    const session = createSession(
+      {
+        ...FULL_ACCESS_SOURCE,
+        mcpServers: { paseo: { type: "http", url: "http://127.0.0.1/mcp" } },
+      },
+      () => policy,
+    );
+    const { client, requests } = recordingClient();
+    session.currentThreadId = "thread-1";
+    session.client = client;
+
+    await session.startTurn("prepare");
+    session.activeForegroundTurnId = null;
+    policy = AUTHORIZED;
+    await session.startTurn("product work");
+
+    const turns = requests.filter((request) => request.method === "turn/start");
+    expect(turns[0]?.params).toMatchObject({
+      config: { mcp_servers: { paseo: { default_tools_approval_mode: "approve" } } },
+    });
+    expect(turns[1]?.params).not.toHaveProperty(
+      "config.mcp_servers.paseo.default_tools_approval_mode",
+    );
+  });
+
   test("restores the source's own settings on the first turn after the policy lifts", async () => {
     let policy = PREPARING;
     const session = createSession(FULL_ACCESS_SOURCE, () => policy);

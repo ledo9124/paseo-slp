@@ -1,6 +1,6 @@
 # Claude Code and Codex handoff support
 
-Status: source evidence only; no tested provider version is certified for SLP. A declared capability must describe what the installed runtime can do, not the presence of a handler. The [handoff contract](handoff.md) owns transfer behavior.
+Status: source evidence plus one recorded manual run per provider for the preparation policy ([evidence](evidence.md)); no tested provider version is certified for SLP. A declared capability must describe what the installed runtime can do, not the presence of a handler. The [handoff contract](handoff.md) owns transfer behavior.
 
 ## Support boundary
 
@@ -105,4 +105,4 @@ The current server CI configuration does not run the real/local provider certifi
 
 The existing real-provider harness routes Claude and Codex through OpenRouter rather than the native authentication paths targeted by certification. Add native/local-auth execution for P1 and P2. Proxy-based results may test parts of the harness, but cannot alone certify production compaction thresholds, model behavior or the native authentication path. Preserve those results with their actual scope.
 
-Run the evidence on both providers within each capability tier, then a mixed topology with Lead and Peer on different providers. Record whether a gap prevents certification. Do not advertise strict handoff replacement on an unsupported version, missing telemetry path, denied hook or unverified stopping boundary. These are implementation gates, not requests for Human to decide adapter internals.
+Run the evidence on both providers within each capability tier, then a mixed topology with Lead and Peer on different providers. Record the result in [the evidence record](evidence.md), one row per gate, replacing the previous run. Record whether a gap prevents certification. Do not advertise strict handoff replacement on an unsupported version, missing telemetry path, denied hook or unverified stopping boundary. These are implementation gates, not requests for Human to decide adapter internals.

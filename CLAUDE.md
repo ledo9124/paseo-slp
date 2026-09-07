@@ -36,6 +36,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/slp/roles/lead.md](docs/slp/roles/lead.md)                     | Lead instruction draft                                                                                                         |
 | [docs/slp/roles/peer.md](docs/slp/roles/peer.md)                     | Peer instruction draft                                                                                                         |
 | [docs/slp/implementation-plan.md](docs/slp/implementation-plan.md)   | SLP implementation slices and validation scenarios                                                                             |
+| [docs/slp/evidence.md](docs/slp/evidence.md)                         | Recorded live-provider evidence per certification gate, pinned versions, findings                                              |
 | [docs/agent-lifecycle.md](docs/agent-lifecycle.md)                   | Agent states, parent/child relationships, archive semantics, tabs vs archive, subagents track                                  |
 | [docs/data-model.md](docs/data-model.md)                             | File-based JSON persistence, Zod schemas, atomic writes, no migrations                                                         |
 | [docs/glossary.md](docs/glossary.md)                                 | Authoritative terminology — UI label wins, no synonyms                                                                         |

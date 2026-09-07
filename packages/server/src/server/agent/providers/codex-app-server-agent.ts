@@ -51,6 +51,7 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
+import { PASEO_MCP_SERVER_NAME } from "../runtime-mcp-config.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { curateAgentActivity } from "../activity-curator.js";
 import {
@@ -836,6 +837,7 @@ interface CodexMcpServerConfig {
   args?: string[];
   env?: Record<string, string>;
   tool_timeout_sec?: number;
+  default_tools_approval_mode?: "approve" | "prompt";
 }
 
 function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
@@ -5156,6 +5158,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       const mcpServers: Record<string, CodexMcpServerConfig> = {};
       for (const [name, serverConfig] of Object.entries(this.config.mcpServers)) {
         mcpServers[name] = toCodexMcpConfig(serverConfig);
+      }
+      const paseo = mcpServers[PASEO_MCP_SERVER_NAME];
+      if (paseo && this.executionPolicy().kind === "preparation") {
+        // "never" also refuses MCP calls that would prompt, which would take the
+        // readiness channel with it. The daemon gates its own tools per call.
+        mcpServers[PASEO_MCP_SERVER_NAME] = { ...paseo, default_tools_approval_mode: "approve" };
       }
       innerConfig.mcp_servers = mcpServers;
     }

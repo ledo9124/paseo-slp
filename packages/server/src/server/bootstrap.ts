@@ -465,6 +465,7 @@ export interface PaseoDaemon {
   config: PaseoDaemonConfig;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
+  slp: SlpService;
   terminalManager: TerminalManager;
   serviceProxy: ServiceProxySubsystem;
   scriptRuntimeStore: WorkspaceScriptRuntimeStore;
@@ -1855,6 +1856,7 @@ export async function createPaseoDaemon(
     config,
     agentManager,
     agentStorage,
+    slp: slpService,
     terminalManager,
     serviceProxy,
     scriptRuntimeStore,

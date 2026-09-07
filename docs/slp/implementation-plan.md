@@ -1,6 +1,6 @@
 # SLP implementation plan
 
-Status: PR 0 through PR 5b landed on `slp/admission-foundations` (see [admission](admission.md) and `packages/server/src/server/slp/`); PR 6 onward NOT_STARTED; live provider proof NOT_RUN. There is no client entrypoint yet: group initialization is reachable from boot recovery and tests until the RPC lands. A Peer is created by the Lead's `create_agent` call, agent-to-agent sends inside a group go through the slot mailbox, and an agent hands its own slot off with `slp_request_handoff` after `slp_checkpoint`.
+Status: PR 0 through PR 5b landed on `slp/admission-foundations` (see [admission](admission.md) and `packages/server/src/server/slp/`); PR 6 onward NOT_STARTED; live provider proof recorded once per provider for P7 and the daemon half of P8 ([evidence](evidence.md)), P1/P2/P6 NOT_RUN. There is no client entrypoint yet: group initialization is reachable from boot recovery and tests until the RPC lands. A Peer is created by the Lead's `create_agent` call, agent-to-agent sends inside a group go through the slot mailbox, and an agent hands its own slot off with `slp_request_handoff` after `slp_checkpoint`.
 
 This plan records the agreed work sequence. Merging documentation does not prove SLP works or authorize deployment. Use [architecture](architecture.md), [handoff](handoff.md), and [provider support](providers.md) as the design owners. Follow the repository's existing development, validation and PR workflow; no external harness installation is part of this plan.
 
@@ -109,7 +109,7 @@ Enumerate the guarantees not yet delivered, in each PR description. Standing ent
 - Handoff is not lossless memory. Checkpoints select and condense, and there is no Paseo-side transcript to normalize.
 - Provider certification currently requires recorded manual evidence; automated certification is not yet configured.
 - Crash-recovery tests are seeded state plus a soft reboot, not crashes.
-- The provider preparation policy is proven at the launch configuration: hook decisions on Claude, request parameters on Codex, adapter unit tests plus the mock daemon. No live provider has run a preparation turn under it (P7 NOT_RUN).
+- The provider preparation policy has one recorded live run per provider ([evidence](evidence.md)), outside CI, with no restart and no mixed topology. Activation is not announced to the successor; a successor without queued mail may treat its next prompt as pre-activation.
 - On Codex, preparation does not deny third-party MCP tools; the read-only sandbox and never-approve policy cover native file, shell and delegation. On Claude, preparation is an allowlist of native reads plus Paseo tools.
 - Late recovery covers the daemon's own timeline: the tail is the rows after the checkpoint in the same epoch, at most 100 entries. Provider history is not retrieved, and a checkpoint written before a restart or reload must be rewritten before the handoff is accepted.
 - Handoff is agent-initiated only. Nothing measures context usage or asks a source to checkpoint; a source that never writes a checkpoint cannot hand off.
