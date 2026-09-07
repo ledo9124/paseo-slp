@@ -262,6 +262,14 @@ async function runGroupProbe(provider: Provider, model: string | null): Promise<
     await printTimeline(daemon, candidateId);
     say("files after preparation:", (await readdir(cwd)).join(", "));
 
+    // The runtime's activation notice is the successor's first turn; let it land first.
+    await until(
+      "activation delivered",
+      () => slp.listMail().some((mail) => mail.kind === "activation" && mail.state === "accepted"),
+      60_000,
+    );
+    await until("successor idle after activation", () => lifecycle(candidateId) === "idle");
+    await printTimeline(daemon, candidateId, 3);
     await runTurn(daemon, candidateId, RESTORED_WRITE);
     say("files after activation:", (await readdir(cwd)).join(", "));
     // The successor's own approval policy must still let it reach the control channel.

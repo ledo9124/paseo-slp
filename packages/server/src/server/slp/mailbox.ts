@@ -162,13 +162,14 @@ export class SlpMailbox {
     }
   }
 
+  /** Sequence order, except that an activation notice goes before whatever queued during the transfer. */
   private nextQueued(groupId: string, slotId: string): SlpMailRecord | null {
     let candidate: SlpMailRecord | null = null;
     for (const record of this.records.values()) {
       if (record.groupId !== groupId || record.slotId !== slotId || record.state !== "queued") {
         continue;
       }
-      if (!candidate || record.sequence < candidate.sequence) candidate = record;
+      if (!candidate || precedes(record, candidate)) candidate = record;
     }
     return candidate;
   }
@@ -224,4 +225,11 @@ export class SlpMailbox {
     this.records.set(next.id, next);
     return next;
   }
+}
+
+function precedes(a: SlpMailRecord, b: SlpMailRecord): boolean {
+  const aFirst = a.kind === "activation";
+  const bFirst = b.kind === "activation";
+  if (aFirst !== bFirst) return aFirst;
+  return a.sequence < b.sequence;
 }

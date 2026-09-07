@@ -175,7 +175,8 @@ const SlpMailBaseSchema = z.object({
   groupId: z.string(),
   slotId: z.string(),
   fromSlotId: z.string().nullable(),
-  kind: z.enum(["message", "handback", "interrupted"]),
+  /** `activation` is the runtime's own notice after a switch; it dispatches before anything else queued. */
+  kind: z.enum(["message", "handback", "interrupted", "activation"]),
   prompt: SlpMailPromptSchema,
   /** Dispatch order within the slot. */
   sequence: z.number().int().nonnegative(),

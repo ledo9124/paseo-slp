@@ -109,7 +109,7 @@ Enumerate the guarantees not yet delivered, in each PR description. Standing ent
 - Handoff is not lossless memory. Checkpoints select and condense, and there is no Paseo-side transcript to normalize.
 - Provider certification currently requires recorded manual evidence; automated certification is not yet configured.
 - Crash-recovery tests are seeded state plus a soft reboot, not crashes.
-- The provider preparation policy has one recorded live run per provider ([evidence](evidence.md)), outside CI, with no restart and no mixed topology. Activation is not announced to the successor; a successor without queued mail may treat its next prompt as pre-activation.
+- The provider preparation policy has one recorded live run per provider ([evidence](evidence.md)), outside CI, with no restart and no mixed topology. The activation notice has one live run per provider behind it.
 - On Codex, preparation does not deny third-party MCP tools; the read-only sandbox and never-approve policy cover native file, shell and delegation. On Claude, preparation is an allowlist of native reads plus Paseo tools.
 - Late recovery covers the daemon's own timeline: the tail is the rows after the checkpoint in the same epoch, at most 100 entries. Provider history is not retrieved, and a checkpoint written before a restart or reload must be rewritten before the handoff is accepted.
 - Handoff is agent-initiated only. Nothing measures context usage or asks a source to checkpoint; a source that never writes a checkpoint cannot hand off.

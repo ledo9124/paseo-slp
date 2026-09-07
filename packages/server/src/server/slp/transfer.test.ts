@@ -312,13 +312,26 @@ describe("SLP same-role handoff", () => {
     await expect(
       readSlpFile(SlpCheckpointSchema, "checkpoints", transferId),
     ).resolves.toMatchObject({ kind: "finalized", slotId: group.leadSlotId, revision: 1 });
-    // The queued handback drains to the successor, not the retired source.
+    // The runtime's activation notice is the successor's first turn after the switch,
+    // ahead of the handback that queued during the transfer; then the handback drains
+    // to the successor, not the retired source.
+    const activation = daemon.service.listMail().find((mail) => mail.kind === "activation");
+    expect(activation).toMatchObject({ id: `activation:${transferId}`, slotId: group.leadSlotId });
+    await untilSettled(
+      () => mailState(daemon, `activation:${transferId}`) === "accepted",
+      "activation delivered to successor",
+    );
+    expect(candidate.startPrompts).toHaveLength(2);
+    expect(candidate.startPrompts[1]).toContain(`SLP activation: transfer ${transferId}`);
+    expect(candidate.startPrompts[1]).toContain("active generation 2");
+    expect(handbackMail(daemon)[0]?.state).toBe("queued");
+    candidate.release();
     await untilSettled(
       () => handbackMail(daemon)[0]?.state === "accepted",
       "handback delivered to successor",
     );
-    expect(candidate.startPrompts).toHaveLength(2);
-    expect(candidate.startPrompts[1]).toContain(HANDBACK_TEXT);
+    expect(candidate.startPrompts).toHaveLength(3);
+    expect(candidate.startPrompts[2]).toContain(HANDBACK_TEXT);
     expect(lead.startPrompts).toHaveLength(2);
     expect(handbackMail(daemon)[0]).toMatchObject({ attempt: { agentId: candidateId } });
 

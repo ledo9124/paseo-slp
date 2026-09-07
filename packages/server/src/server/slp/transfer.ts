@@ -67,7 +67,7 @@ export interface SlpTransferHost {
   agentStorage: Pick<AgentStorage, "get">;
   agentRequests: Pick<AgentRequests, "create">;
   handbacks: Pick<SlpHandbackRegister, "setTransferInProgress" | "supersede" | "register">;
-  mailbox: Pick<SlpMailbox, "pump" | "list">;
+  mailbox: Pick<SlpMailbox, "pump" | "list" | "enqueue">;
   checkpoints: SlpCheckpointStore;
   getGroup(groupId: string): SlpGroupRecord;
   persistGroup(group: SlpGroupRecord): Promise<void>;
@@ -464,6 +464,18 @@ export class SlpTransfers {
         ownerSlotId: slot.ownerSlotId,
       });
     }
+    const successor = slot.generations.find((entry) => entry.id === record.candidate.generationId);
+    if (!successor) throw new Error("the successor generation is missing from its slot");
+    // Durable before the hold lifts, keyed by the transfer so a roll-forward
+    // re-running this step cannot queue a second notice.
+    await this.host.mailbox.enqueue({
+      id: `activation:${record.id}`,
+      groupId: group.id,
+      slotId: slot.id,
+      fromSlotId: null,
+      kind: "activation",
+      prompt: this.describeActivation(record, slot, successor.number),
+    });
     group.hold = null;
     await this.host.persistGroup(group);
     await this.persist({
@@ -541,6 +553,20 @@ export class SlpTransfers {
    * What the candidate reads before acknowledging: the checkpoint, what the
    * daemon knows that the checkpoint cannot, and the mail accepted after it.
    */
+  /** The successor learns it holds the slot from the runtime, not from the shape of its next prompt. */
+  private describeActivation(
+    record: TransferIn<"switched">,
+    slot: SlpSlotRecord,
+    generationNumber: number,
+  ): string {
+    return formatSystemNotificationPrompt(
+      [
+        `SLP activation: transfer ${record.id} is complete. You are now the active generation ${generationNumber} of slot ${slot.id}; the previous generation is retired.`,
+        "You have product execution authority from this message on. Mail to your slot resumes after it. Continue from the checkpoint's next action; if nothing is pending, end your turn.",
+      ].join("\n"),
+    );
+  }
+
   private async describeHandoff(
     record: TransferIn<"stopped">,
     slot: SlpSlotRecord,
