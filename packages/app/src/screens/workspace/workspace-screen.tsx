@@ -3852,14 +3852,12 @@ function WorkspaceScreenContent({
       showBrowser: showCreateBrowserTab,
       terminalDisabled: createTerminalDisabled,
       launch: launchWorkspaceTab,
-      startSlpGroup: openSlpStartSheet,
     }),
     [
       createTerminalDisabled,
       hasPullRequest,
       isGitCheckout,
       launchWorkspaceTab,
-      openSlpStartSheet,
       showCreateBrowserTab,
     ],
   );

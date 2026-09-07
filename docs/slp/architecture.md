@@ -1,6 +1,6 @@
 # SLP runtime architecture
 
-Status: target design, with the group store, fixed mode, initialization, boot recovery, destructive-operation gate, prompt composition, the tool precondition, Peer creation, the handback register, the slot mailbox, role tool policy and explicit same-role handoff implemented in `packages/server/src/server/slp/`. Provider-side preparation policy is implemented at the launch boundary and the client surface (group initialization RPC, group summary push, the start action in the workspace and new-tab menus, and the agent banner) is in place; provider interception is unimplemented. See [the documentation map](README.md) for scope and [the implementation plan](implementation-plan.md) for delivery gates.
+Status: target design, with the group store, fixed mode, initialization, boot recovery, destructive-operation gate, prompt composition, the tool precondition, Peer creation, the handback register, the slot mailbox, role tool policy and explicit same-role handoff implemented in `packages/server/src/server/slp/`. Provider-side preparation policy is implemented at the launch boundary and the client surface (group initialization RPC, group summary push, workspace menu and agent banner) is in place; provider interception is unimplemented. See [the documentation map](README.md) for scope and [the implementation plan](implementation-plan.md) for delivery gates.
 
 ## Topology and fixed workspace mode
 

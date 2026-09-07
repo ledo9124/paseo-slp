@@ -8,7 +8,7 @@ import {
 } from "react";
 import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
-import { Globe, SquarePen, SquareTerminal, Users } from "lucide-react-native";
+import { Globe, SquarePen, SquareTerminal } from "lucide-react-native";
 import invariant from "tiny-invariant";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolvePluginIcon } from "@/plugins/icons";
@@ -43,8 +43,6 @@ export interface NewTabLauncher {
   showBrowser: boolean;
   terminalDisabled: boolean;
   launch: (selection: NewTabSelection, destination: WorkspaceTabLaunchDestination) => void;
-  /** Present only while the host supports SLP groups and this workspace has none yet. */
-  startSlpGroup?: () => void;
 }
 
 export interface WorkspaceTabLaunchItem {
@@ -59,7 +57,7 @@ export interface WorkspaceTabLaunchItem {
 }
 
 export interface WorkspaceTabLaunchGroup {
-  id: "tabs" | "slp" | "plugin-panels" | "terminal-profiles";
+  id: "tabs" | "plugin-panels" | "terminal-profiles";
   label: string | null;
   items: readonly WorkspaceTabLaunchItem[];
   accessory?: { id: string; label: string; run: () => void };
@@ -218,23 +216,6 @@ export function useWorkspaceTabLaunchCatalog(input: {
 
     const profiles = resolveTerminalProfiles(config?.terminalProfiles);
     const groups: WorkspaceTabLaunchGroup[] = [{ id: "tabs", label: null, items: tabItems }];
-    const startSlpGroup = launcher.startSlpGroup;
-    if (startSlpGroup && purpose === "primary" && host === "main") {
-      groups.push({
-        id: "slp",
-        label: null,
-        items: [
-          {
-            id: "slp-group",
-            label: t("slp.start.menu"),
-            Icon: Users,
-            disabled: false,
-            panelKind: "agent",
-            launch: startSlpGroup,
-          },
-        ],
-      });
-    }
     if (pluginItems.length > 0) {
       groups.push({ id: "plugin-panels", label: null, items: pluginItems });
     }
