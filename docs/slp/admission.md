@@ -8,11 +8,7 @@ An admission decides, atomically against every other writer in the daemon, wheth
 
 ## The claim is synchronous
 
-`streamAgent` in `packages/server/src/server/agent/agent-manager.ts` claims the run slot before its generator body exists: it calls `requireSessionAgent`, checks `activeForegroundTurnId || runs.hasRun(agentId)`, and then `runs.createPendingRun(agentId)`, all in the same tick. Nothing awaits between the check and the claim. Once `createPendingRun` returns, `hasInFlightRun` reports true to every later caller.
-
-Consequence: a busy check and a `streamAgent` call in one synchronous stretch are atomic against every writer in the daemon, because the daemon is one process and one event loop. That is the entire mechanism. No lock is needed for the decision itself.
-
-What breaks it: making `streamAgent` `async`, inserting an `await` before `createPendingRun`, or hoisting the claim out of the function. None of these is caught by types. PR 1 pins the invariant with a test that calls `streamAgent` without iterating it and asserts `hasInFlightRun` is true on the next line.
+`streamAgent` claims the run slot in the same tick as its busy check; the `INVARIANT` comment in `admitForegroundTurn` and [architecture](architecture.md#admission) own that statement. Nothing in this doc adds to it beyond the consequence: a busy check and a `streamAgent` call in one synchronous stretch need no lock, and `agent-manager-admission.test.ts` pins it by calling `streamAgent` without iterating it.
 
 ## Why the existing routes race anyway
 
@@ -49,11 +45,13 @@ The lifecycle lane (`runLifecycleMutation`) is a second, independent chain on th
 
 ### The generator strand
 
-An admitted `streamAgent` generator that is never iterated strands the run slot until process exit. Only the generator's own `finally` settles the pending run, and `startPendingForegroundTurn` only runs when the generator is first pulled. Callers of `startAgentRun` avoid this because it always drains in a detached loop.
+A `streamAgent` generator that is never iterated strands the run slot; `agent-stream-drain.ts` explains why and is the one drain every non-consuming route uses. A caller that needs provider acceptance waits on `waitForAgentRunStart` afterwards.
 
-`admitForegroundTurn` therefore owns the drain. It starts the detached iteration itself before returning, the same way `startAgentRun` does, so a caller that ignores the result cannot strand the slot. A caller that needs provider acceptance waits on `waitForAgentRunStart` afterwards.
+### Admit or steer in one entry
 
-The schedule service is the first consumer. On `busy` it calls `steerAgentRun` after admission has returned, never from inside it, and fails the run visibly when the provider cannot steer. That is the only route that no longer replaces.
+Admission and steer are one lane operation, not two. Two separate entries leave a gap in which the winning turn can still be pending (no turn id to steer into), can finish (busy is now false), or can be replaced by a newer turn (the steer lands in the wrong one). `admitForegroundTurn` drains session events first, so a queued terminal event cannot produce a stale busy, and it treats a pending replacement as busy, because `replaceAgentRun` reserves the slot before it calls `streamAgent` and `hasInFlightRun` cannot see that reservation once the cancelled turn ends in error.
+
+The schedule service is the first consumer. A busy answer with no turn id means the owner has not reached `started`; the schedule waits for that once and retries, then fails the run visibly. That is the only route that no longer replaces.
 
 ## Lock ordering for later PRs
 
@@ -77,10 +75,6 @@ Two facts make the order sufficient rather than merely conventional:
 ## Creation journal
 
 `AgentRequests` is constructed inside `VoiceAssistantWebSocketServer`, so it is unreachable from bootstrap and from any daemon-owned service. Group initialization and candidate creation need its keyed create. PR 1 constructs it in bootstrap and passes it in; the on-disk directory and the receipt format do not change, so existing receipts remain valid.
-
-## What PR 1 did
-
-`admitForegroundTurn` and the drain in `agent-manager.ts`; the schedule consumer in `schedule/service.ts`; subscriber containment in `AgentManager.dispatch`; `AgentRequests` constructed in `bootstrap.ts` and passed to the WebSocket server. Tests: `agent-manager-admission.test.ts` pins the synchronous claim, one-winner admission, the owned drain and subscriber containment; the schedule suite covers the idle, busy-no-steer and busy-steer cases with a held turn.
 
 ## What PR 1 does not do
 

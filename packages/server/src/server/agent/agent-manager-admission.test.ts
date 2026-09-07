@@ -1,151 +1,13 @@
-import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentManager, type AgentManagerEvent } from "./agent-manager.js";
-import type {
-  AgentCapabilityFlags,
-  AgentClient,
-  AgentMode,
-  AgentModelDefinition,
-  AgentPermissionRequest,
-  AgentPermissionResponse,
-  AgentPersistenceHandle,
-  AgentPromptInput,
-  AgentRunResult,
-  AgentSession,
-  AgentSessionConfig,
-  AgentStreamEvent,
-  SteerActiveTurnOptions,
-  SteerResult,
-} from "./agent-sdk-types.js";
+import { createHeldTurnClient } from "../test-utils/held-turn-agent-client.js";
+import { AgentManager, type AgentManagerEvent, type ManagedAgent } from "./agent-manager.js";
 
 const logger = createTestLogger();
-
-const CAPABILITIES: AgentCapabilityFlags = {
-  supportsStreaming: false,
-  supportsSessionPersistence: false,
-  supportsSessionListing: true,
-  supportsDynamicModes: false,
-  supportsMcpServers: false,
-  supportsReasoningStream: false,
-  supportsToolInvocations: false,
-};
-
-/**
- * A session whose turns finish only when the test releases them, so busy
- * windows are deterministic rather than timer-shaped.
- */
-class HeldTurnSession implements AgentSession {
-  readonly provider = "codex" as const;
-  readonly capabilities = CAPABILITIES;
-  readonly id = randomUUID();
-  startCount = 0;
-  interruptCount = 0;
-  steerCount = 0;
-  steerAvailable = false;
-  private activeTurnId: string | null = null;
-  private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
-
-  async run(): Promise<AgentRunResult> {
-    return { sessionId: this.id, finalText: "", timeline: [] };
-  }
-
-  async startTurn(_prompt: AgentPromptInput): Promise<{ turnId: string }> {
-    const turnId = `held-turn-${++this.startCount}`;
-    this.activeTurnId = turnId;
-    setImmediate(() => this.emit({ type: "turn_started", provider: this.provider, turnId }));
-    return { turnId };
-  }
-
-  release(): void {
-    const turnId = this.activeTurnId;
-    if (!turnId) throw new Error("no held turn to release");
-    this.activeTurnId = null;
-    this.emit({ type: "turn_completed", provider: this.provider, turnId });
-  }
-
-  async steerActiveTurn(
-    _prompt: AgentPromptInput,
-    _options: SteerActiveTurnOptions,
-  ): Promise<SteerResult> {
-    this.steerCount += 1;
-    return this.steerAvailable ? { status: "accepted" } : { status: "unavailable" };
-  }
-
-  subscribe(callback: (event: AgentStreamEvent) => void): () => void {
-    this.subscribers.add(callback);
-    return () => {
-      this.subscribers.delete(callback);
-    };
-  }
-
-  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
-
-  async getRuntimeInfo() {
-    return { provider: this.provider, sessionId: this.id, model: null, modeId: null };
-  }
-
-  async getAvailableModes(): Promise<AgentMode[]> {
-    return [];
-  }
-
-  async getCurrentMode(): Promise<string | null> {
-    return null;
-  }
-
-  async setMode(): Promise<void> {}
-
-  getPendingPermissions(): AgentPermissionRequest[] {
-    return [];
-  }
-
-  async respondToPermission(_id: string, _response: AgentPermissionResponse): Promise<void> {}
-
-  describePersistence(): AgentPersistenceHandle {
-    return { provider: this.provider, sessionId: this.id };
-  }
-
-  async interrupt(): Promise<void> {
-    this.interruptCount += 1;
-    const turnId = this.activeTurnId;
-    this.activeTurnId = null;
-    if (turnId) this.emit({ type: "turn_canceled", provider: this.provider, turnId });
-  }
-
-  async close(): Promise<void> {}
-
-  private emit(event: AgentStreamEvent): void {
-    for (const subscriber of this.subscribers) subscriber(event);
-  }
-}
-
-class HeldTurnClient implements AgentClient {
-  readonly provider = "codex" as const;
-  readonly capabilities = CAPABILITIES;
-  readonly sessions: HeldTurnSession[] = [];
-
-  async isAvailable(): Promise<boolean> {
-    return true;
-  }
-
-  async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
-    const session = new HeldTurnSession();
-    this.sessions.push(session);
-    return session;
-  }
-
-  async resumeSession(_handle: AgentPersistenceHandle): Promise<AgentSession> {
-    return this.createSession({ provider: this.provider, cwd: process.cwd() });
-  }
-
-  async fetchCatalog(): Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }> {
-    return { models: [], modes: [] };
-  }
-}
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -154,7 +16,7 @@ afterEach(async () => {
 
 async function fixture() {
   const workdir = mkdtempSync(join(tmpdir(), "agent-admission-"));
-  const client = new HeldTurnClient();
+  const client = createHeldTurnClient({ provider: "codex" });
   const manager = new AgentManager({ clients: { codex: client }, logger });
   const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
     workspaceId: undefined,
@@ -167,11 +29,19 @@ async function fixture() {
   return { manager, agentId: agent.id, session };
 }
 
-function waitForLifecycle(manager: AgentManager, agentId: string, lifecycle: string) {
+function waitForLifecycle(
+  manager: AgentManager,
+  agentId: string,
+  lifecycle: ManagedAgent["lifecycle"],
+): Promise<void> {
   return new Promise<void>((resolve) => {
     const unsubscribe = manager.subscribe(
       (event: AgentManagerEvent) => {
-        if (event.type === "agent_state" && event.agent.lifecycle === lifecycle) {
+        if (
+          event.type === "agent_state" &&
+          event.agent.id === agentId &&
+          event.agent.lifecycle === lifecycle
+        ) {
           unsubscribe();
           resolve();
         }
@@ -211,9 +81,9 @@ test("concurrent admissions have exactly one winner and the loser cancels nothin
     manager.admitForegroundTurn(agentId, "c"),
   ]);
 
-  expect(results.filter((result) => result.status === "started")).toHaveLength(1);
-  expect(results.filter((result) => result.status === "busy")).toHaveLength(2);
-  expect(results[0]).toEqual({ status: "started" });
+  // Losers may observe the winner before or after it reaches started, so the
+  // turn id they report is not pinned; the statuses are.
+  expect(results.map((result) => result.status)).toEqual(["started", "busy", "busy"]);
 
   await manager.waitForAgentRunStart(agentId);
   expect(session.startCount).toBe(1);
@@ -226,10 +96,12 @@ test("concurrent admissions have exactly one winner and the loser cancels nothin
   session.release();
   await idle;
   expect(session.interruptCount).toBe(0);
+  const secondIdle = waitForLifecycle(manager, agentId, "idle");
   expect(await manager.admitForegroundTurn(agentId, "next")).toEqual({ status: "started" });
   await manager.waitForAgentRunStart(agentId);
   expect(session.startCount).toBe(2);
   session.release();
+  await secondIdle;
 });
 
 test("an admitted turn is drained by the manager so an ignored result cannot strand the slot", async () => {
@@ -240,6 +112,70 @@ test("an admitted turn is drained by the manager so an ignored result cannot str
   session.release();
   await idle;
   expect(manager.hasInFlightRun(agentId)).toBe(false);
+});
+
+test("admission drains queued session events before answering busy", async () => {
+  const { manager, agentId, session } = await fixture();
+  const idle = waitForLifecycle(manager, agentId, "idle");
+  await manager.admitForegroundTurn(agentId, "first");
+  await manager.waitForAgentRunStart(agentId);
+
+  // release() enqueues turn_completed on the session-event chain; the state
+  // still reads running in this tick. Admission must not answer from it.
+  session.release();
+  expect(manager.hasInFlightRun(agentId)).toBe(true);
+  expect(await manager.admitForegroundTurn(agentId, "second")).toEqual({ status: "started" });
+  await idle;
+  await manager.waitForAgentRunStart(agentId);
+  expect(session.startCount).toBe(2);
+  expect(session.interruptCount).toBe(0);
+  session.release();
+  await waitForLifecycle(manager, agentId, "idle");
+});
+
+test("steer admission delivers into the live turn without cancelling it", async () => {
+  const { manager, agentId, session } = await fixture();
+  session.steerBehavior = "accepted";
+  const idle = waitForLifecycle(manager, agentId, "idle");
+  await manager.admitForegroundTurn(agentId, "first");
+  await manager.waitForAgentRunStart(agentId);
+
+  expect(await manager.admitForegroundTurn(agentId, "aside", { steer: true })).toEqual({
+    status: "steered",
+  });
+  expect(session.steerPrompts).toEqual(["aside"]);
+  expect(session.interruptCount).toBe(0);
+
+  session.steerBehavior = "unavailable";
+  expect(await manager.admitForegroundTurn(agentId, "again", { steer: true })).toEqual({
+    status: "busy",
+    turnId: "held-turn-1",
+  });
+  session.release();
+  await idle;
+});
+
+test("a pending replacement keeps the slot reserved even after the cancelled turn fails", async () => {
+  const { manager, agentId, session } = await fixture();
+  await manager.admitForegroundTurn(agentId, "first");
+  await manager.waitForAgentRunStart(agentId);
+
+  // Fail the cancelled turn so lifecycle drops to error and hasInFlightRun
+  // goes false while the replacement is still pending.
+  session.interruptBehavior = "failed";
+  const replacement = manager.replaceAgentRun(agentId, "replacement");
+  const admission = manager.admitForegroundTurn(agentId, "scheduled");
+
+  const iterator = await replacement;
+  expect(await admission).toEqual({ status: "busy", turnId: null });
+  const drained = (async () => {
+    for await (const _ of iterator) {
+    }
+  })();
+  await manager.waitForAgentRunStart(agentId);
+  expect(session.startCount).toBe(2);
+  session.release();
+  await drained;
 });
 
 test("a throwing subscriber does not starve later subscribers or the dispatching turn", async () => {

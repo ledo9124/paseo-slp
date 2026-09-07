@@ -6,7 +6,7 @@ import type { AgentManager } from "../agent/agent-manager.js";
 import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
-import { ensureAgentLoaded } from "../agent/agent-loading.js";
+import { ensureAgentLoaded, type AgentLoaderManager } from "../agent/agent-loading.js";
 import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
 import { resolveCreateAgentTitles } from "../agent/create-agent-title.js";
 import { type BoundCreateAgentCommand, formatProviderModel } from "../agent/create-agent/create.js";
@@ -195,19 +195,11 @@ function buildRunOutput(params: {
   return null;
 }
 
-type ScheduleAgentManager = Pick<
-  AgentManager,
-  | "admitForegroundTurn"
-  | "steerAgentRun"
-  | "getAgent"
-  | "createAgent"
-  | "getRegisteredProviderIds"
-  | "hydrateTimelineFromProvider"
-  | "resumeAgentFromPersistence"
-  | "runAgent"
-  | "waitForAgentEvent"
-  | "waitForAgentClose"
->;
+type ScheduleAgentManager = AgentLoaderManager &
+  Pick<
+    AgentManager,
+    "admitForegroundTurn" | "runAgent" | "waitForAgentEvent" | "waitForAgentRunStart"
+  >;
 
 interface ScheduleWorkspaceCreateInput {
   cwd: string;
@@ -824,18 +816,25 @@ export class ScheduleService {
 
   /**
    * Admit-or-steer, never replace. A busy check followed by a later send
-   * cancelled whichever turn won the race; admission decides atomically and
-   * steerAgentRun never falls through to a turn-cancelling replacement.
+   * cancelled whichever turn won the race; admission decides and steers in
+   * one lane entry and never falls through to a turn-cancelling replacement.
+   * A busy answer with no turn id means the owning run has not started yet;
+   * wait for it once so the steer has a turn to target.
    */
   private async admitOrSteerScheduleFire(agentId: string, prompt: string): Promise<void> {
-    const admission = await this.agentManager.admitForegroundTurn(agentId, prompt);
-    if (admission.status === "started") {
-      return;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const admission = await this.agentManager.admitForegroundTurn(agentId, prompt, {
+        steer: true,
+      });
+      if (admission.status !== "busy") {
+        return;
+      }
+      if (admission.turnId !== null || attempt > 0) {
+        break;
+      }
+      await this.agentManager.waitForAgentRunStart(agentId).catch(() => undefined);
     }
-    const steered = await this.agentManager.steerAgentRun(agentId, prompt);
-    if (steered.status !== "accepted") {
-      throw new Error(`Agent ${agentId} already has an active run`);
-    }
+    throw new Error(`Agent ${agentId} already has an active run`);
   }
 
   private async executeSchedule(

@@ -74,6 +74,7 @@ import {
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
+import { drainAgentStream } from "./agent-stream-drain.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
@@ -315,12 +316,19 @@ export type ActiveTurnSteerDispatchResult =
 
 /**
  * Outcome of {@link AgentManager.admitForegroundTurn}. `busy` never cancels
- * the run that owns the slot; `turnId` is null while that run is still
- * starting.
+ * the run that owns the slot. `turnId` is null when no turn id can be
+ * correlated yet: the owning run has not reached `started`, a replacement is
+ * pending, or the agent reports `running` with no tracked turn.
  */
 export type ForegroundTurnAdmission =
   | { status: "started" }
+  | { status: "steered" }
   | { status: "busy"; turnId: string | null };
+
+export interface AdmitForegroundTurnOptions extends AgentRunOptions {
+  /** When the slot is busy, deliver into the live turn instead of reporting busy. */
+  steer?: boolean;
+}
 
 function stripSteerOptions(options?: AgentSteerOptions): AgentRunOptions | undefined {
   if (!options) return undefined;
@@ -2603,72 +2611,88 @@ export class AgentManager {
     expectedTurnId: string,
     operation: () => Promise<T>,
   ): Promise<T> {
-    return this.runForegroundMutation(agent.id, async () => {
-      await this.drainSessionEvents(agent.id);
-      this.agentStreamCoalescer.flushFor(agent.id);
-      this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
-      const barrier: SteerEventBarrier = { events: [] };
-      this.steerEventBarriers.set(agent.id, barrier);
-      try {
-        return await operation();
-      } finally {
-        if (this.steerEventBarriers.get(agent.id) === barrier) {
-          this.steerEventBarriers.delete(agent.id);
-        }
-        for (const event of barrier.events) {
-          this.enqueueSessionEvent(agent.id, event);
-        }
-        await this.drainSessionEvents(agent.id);
+    return this.runForegroundMutation(agent.id, () =>
+      this.steerWithinLane(agent, expectedTurnId, operation),
+    );
+  }
+
+  /** Steer body for callers that already hold the agent's foreground lane. */
+  private async steerWithinLane<T>(
+    agent: ActiveManagedAgent,
+    expectedTurnId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    await this.drainSessionEvents(agent.id);
+    this.agentStreamCoalescer.flushFor(agent.id);
+    this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
+    const barrier: SteerEventBarrier = { events: [] };
+    this.steerEventBarriers.set(agent.id, barrier);
+    try {
+      return await operation();
+    } finally {
+      if (this.steerEventBarriers.get(agent.id) === barrier) {
+        this.steerEventBarriers.delete(agent.id);
       }
-    });
+      for (const event of barrier.events) {
+        this.enqueueSessionEvent(agent.id, event);
+      }
+      await this.drainSessionEvents(agent.id);
+    }
   }
 
   /**
-   * Admit a prompt as a new foreground turn only if the agent has no run in
-   * flight. Unlike {@link replaceAgentRun} and {@link steerOrReplaceActiveTurn}
-   * this never cancels: a busy agent is reported, not interrupted.
+   * Admit a prompt as a new foreground turn if the agent has no run in
+   * flight; otherwise, with `steer`, deliver it into the live turn. Unlike
+   * {@link replaceAgentRun} and {@link steerOrReplaceActiveTurn} this never
+   * cancels: a busy agent is reported, not interrupted.
    *
-   * Runs inside the per-agent foreground lane so the busy answer is taken
-   * against a settled view (a steer admission or cancel ahead of it has
-   * finished). The operation must not call anything that re-enters the lane
-   * for the same agent; the lane is a promise chain and would deadlock.
-   * See docs/slp/admission.md.
+   * One lane entry covers the whole decision. Session events are drained
+   * first so the busy answer is not taken from a queued terminal event, and
+   * the steer targets the same turn the busy answer saw. The operation must
+   * not call anything that re-enters the lane for the same agent; the lane
+   * is a promise chain and would deadlock. See docs/slp/admission.md.
    */
   async admitForegroundTurn(
     agentId: string,
     prompt: AgentPromptInput,
-    options?: AgentRunOptions,
+    options?: AdmitForegroundTurnOptions,
   ): Promise<ForegroundTurnAdmission> {
+    const { steer, ...runOptions } = options ?? {};
     return this.runForegroundMutation(agentId, async () => {
+      await this.drainSessionEvents(agentId);
       const agent = this.requireSessionAgent(agentId);
-      if (this.hasInFlightRun(agentId)) {
-        return {
-          status: "busy",
-          turnId: agent.activeForegroundTurnId ?? this.runs.getTurnId(agentId),
-        };
+      // A pending replacement has reserved the slot for a caller that is still
+      // awaiting its cancel; hasInFlightRun cannot see that reservation once
+      // the cancelled turn ends in error.
+      if (!agent.pendingReplacement && !this.hasInFlightRun(agentId)) {
+        // INVARIANT: no await between the busy check above and this call.
+        // streamAgent claims the run slot synchronously, before its generator
+        // body exists, so check-and-claim in one tick is atomic against every
+        // other writer in the daemon. An await here reopens the race.
+        const iterator = this.streamAgent(agentId, prompt, runOptions);
+        drainAgentStream(iterator, { logger: this.logger, agentId });
+        return { status: "started" };
       }
-      // INVARIANT: no await between the busy check above and this call.
-      // streamAgent claims the run slot synchronously, before its generator
-      // body exists, so check-and-claim in one tick is atomic against every
-      // other writer in the daemon. An await here reopens the race.
-      const iterator = this.streamAgent(agentId, prompt, options);
-      // A never-iterated generator strands the slot; only its own settle path
-      // releases the pending run. Own the drain so no caller can strand it.
-      this.drainAdmittedRun(agentId, iterator);
-      return { status: "started" };
-    });
-  }
-
-  private drainAdmittedRun(agentId: string, iterator: AsyncGenerator<AgentStreamEvent>): void {
-    void (async () => {
-      try {
-        for await (const _ of iterator) {
-          // Events reach subscribers through dispatchStream.
+      const expectedTurnId = agent.pendingReplacement
+        ? null
+        : (agent.activeForegroundTurnId ?? this.runs.getTurnId(agentId));
+      if (!steer || !expectedTurnId || !agent.session.steerActiveTurn) {
+        return { status: "busy", turnId: expectedTurnId };
+      }
+      const admission = await this.steerWithinLane(agent, expectedTurnId, async () => {
+        const result = await agent.session.steerActiveTurn!(prompt, {
+          ...runOptions,
+          expectedTurnId,
+        });
+        if (result.status === "accepted") {
+          await this.recordAcceptedSteer(agent, prompt, runOptions.clientMessageId, expectedTurnId);
         }
-      } catch (error) {
-        this.logger.error({ err: error, agentId }, "Admitted foreground turn failed");
-      }
-    })();
+        return result;
+      });
+      return admission.status === "accepted"
+        ? { status: "steered" }
+        : { status: "busy", turnId: expectedTurnId };
+    });
   }
 
   private async runForegroundMutation<T>(agentId: string, operation: () => Promise<T>): Promise<T> {
