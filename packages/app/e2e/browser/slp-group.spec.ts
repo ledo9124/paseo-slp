@@ -5,7 +5,7 @@ import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
 /**
  * Browser evidence for the SLP client surface (implementation plan PR 7): the
- * workspace menu starts a supervised group on the mock provider, the app lands
+ * tab strip's "+" menu starts a supervised group on the mock provider, the app lands
  * on the Supervisor as the Human's contact, and the Lead's own screen says it
  * is the Lead. The daemon behind this is the e2e worker's, with Paseo tools
  * injected, so the runtime's own preconditions hold.
@@ -14,14 +14,18 @@ import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 test.use({ e2eInjectPaseoTools: true });
 
 test.describe("SLP group", () => {
-  test("starts a supervised group from the workspace menu and shows each member's role", async ({
+  test("starts a supervised group from the tab strip's + menu and shows each member's role", async ({
     page,
   }) => {
     const workspace = await seedWorkspace({ repoPrefix: "slp-group-" });
     try {
       await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
+      // The tab strip's "+" menu and the workspace header menu both offer the group.
       await page.getByTestId("workspace-header-menu-trigger").click();
-      await page.getByTestId("workspace-header-start-slp-group").click();
+      await expect(page.getByTestId("workspace-header-start-slp-group")).toBeVisible();
+      await page.keyboard.press("Escape");
+      await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).first().click();
+      await page.getByTestId("workspace-new-tab-menu-slp-group").click();
 
       const sheet = page.getByTestId("slp-start-group-sheet");
       await expect(sheet).toBeVisible();
@@ -51,10 +55,14 @@ test.describe("SLP group", () => {
         .click();
       await expect(role()).toContainText("Lead", { timeout: 30_000 });
 
-      // The workspace menu no longer offers a second group.
+      // Neither menu offers a second group.
       await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
       await expect(page.getByTestId("workspace-header-menu")).toBeVisible();
       await expect(page.getByTestId("workspace-header-start-slp-group")).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).first().click();
+      await expect(page.getByTestId("workspace-new-tab-menu")).toBeVisible();
+      await expect(page.getByTestId("workspace-new-tab-menu-slp-group")).toHaveCount(0);
       await page.keyboard.press("Escape");
     } finally {
       await workspace.cleanup();
