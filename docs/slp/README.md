@@ -2,7 +2,7 @@
 
 Status: agreed design direction and instruction drafts for this fork. No SLP runtime, provider hook, checkpoint tool, or compatibility guarantee is implemented by this documentation change.
 
-The architecture, handoff, provider and plan documents have since been reconciled against a full survey of the current daemon. Where the original design assumed a mechanism the code does not have, or named work that already exists, the owning document now says so. Treat those three documents as the record of what the codebase actually supports; the decisions in them were taken with file-level evidence and are not open questions.
+The architecture, handoff, provider and plan documents record the source survey and its review against fork commit `dee2a8d405e02ada2658e674372407f439788bea`. Distinguish verified code behavior, target contracts and provider probes. An absent adapter integration does not establish that the provider cannot support it.
 
 The user chose Supervisor–Lead–Peer to separate Human conversation, project engineering authority, and bounded technical judgment. The original [SLP Core Definition v0.1](core-definition-v0.1.md) is retained as supplied. The documents below apply the subsequent workspace-mode and same-role handoff decisions to Paseo.
 
@@ -35,7 +35,7 @@ The role drafts deliberately leave decision quality, neutral delegation, and ind
 
 Later user decisions narrow or extend the original Core document: mode is fixed at the first workspace message, only Claude Code and Codex are supported for SLP, and same-role context handoff is now in scope. Dynamic Lead replacement, semantic supervision triggers, mode switching, automatic role selection, and automatic debate remain deferred.
 
-One further narrowing came out of the survey: automatic, compaction-intercepting handoff is Claude-only in v1 and conditional on a real-provider probe. Codex is supported for roles, delivery and explicit handoff, and reports that automatic handoff is unavailable. See [provider support](providers.md).
+Automatic same-role handoff remains a target for both Claude Code and Codex. Explicit handoff, proactive handoff and guaranteed pre-compaction interception have separate evidence gates; neither provider is certified by these documents. See [provider support](providers.md#support-boundary).
 
 The user installs any project documentation framework. SLP does not install or require [repository-harness](https://github.com/hoangnb24/repository-harness). Use the consumer workspace's own authoritative guidance. The role documents here belong to the Paseo extension; they are not an automatic payload for every repository.
 

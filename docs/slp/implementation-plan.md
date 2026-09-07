@@ -8,51 +8,49 @@ This plan records the agreed work sequence. Merging documentation does not prove
 
 A full survey of the daemon against this design found three things worth stating before the order below.
 
-Most of what SLP needs already exists under other names: agent-to-agent creation and delivery tools, a completion notification channel, a per-agent instruction snapshot that survives resume, active-context telemetry on both providers, a fingerprinted idempotency journal, a public steer-only delivery path with no caller, and a Claude hook merge helper that is written, tested and unused. Budget those as wiring.
+Most of what SLP needs already exists under other names: agent-to-agent creation and delivery tools, a completion notification channel, a per-agent instruction snapshot that survives resume, active-context telemetry on both providers, a fingerprinted idempotency journal, a public steer-only delivery path with no caller, and a Claude hook merge helper that is written, tested and unused. Reuse those mechanisms only after checking their lifecycle and recovery contracts; availability alone does not make integration a wiring task.
 
 Three things are genuinely new and carry the schedule: the daemon-owned group, slot and generation records; a durable mail queue admitted at the serialized turn boundary; and generation transfer with a recoverable journal.
 
 Two of the original slice boundaries were wrong. Provider feasibility does not block identity, storage, delivery or authority, so it must not gate them. And the ownership-representation question has to be settled before the first Peer exists, not during handoff.
 
-## Prerequisites the original plan omitted
+## Prerequisites
 
-| Prerequisite                                                             | Why it is forced                                                                                                                                                                                | When                                                        |
-| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Hoist the idempotency journal out of the WebSocket server                | A bootstrap-owned service cannot reach it, and a second instance over the same directory loses the in-process per-key serialization that makes concurrent clients converge                      | First PR                                                    |
-| Error containment in agent event dispatch                                | Subscribers run in a bare loop; a throwing SLP subscriber stops agent updates for every session registered after it                                                                             | First PR                                                    |
-| Register every SLP end-to-end file by name in the integration script     | Files merely placed in the end-to-end directory get no PR coverage at all                                                                                                                       | Every PR that adds one                                      |
-| Preserve the Codex abort reason; log unhandled server-to-client requests | Without both, the Codex hook probe is blind                                                                                                                                                     | With the probe track                                        |
-| Gate workspace teardown                                                  | Workspace archive dismantles a whole group by workspace id, ignoring parentage and failures                                                                                                     | Earlier than last; it is an open hole for the whole build   |
-| Launch environment on resume                                             | **Not** three argument additions — the environment is not persisted at all, so this is a schema change to the busiest store. Claude does not need it; the hook callback closes over the session | Deferred, and only if the Codex hook probe returns positive |
+Hoist the keyed creation journal into a shared daemon service before bootstrap-owned SLP initialization uses it. Contain subscriber errors before registering SLP consumers. Register new integration tests in the current CI script.
+
+Install the [group destructive-operation gate](handoff.md#retirement) with group identity, before groups become runnable. Cover individual archive, cascade, scheduled archive and workspace teardown; a label-only exception is insufficient.
+
+Provider probes run alongside foundations. Hook probes gate strict interception, telemetry probes gate proactive thresholds, and preparation/history probes gate the corresponding explicit and recovery paths. Record the result before enabling each capability.
 
 ## Delivery order
 
-Probes run as a parallel track from day one and gate only automatic handoff. Nothing else waits on them.
+| PR | Deliverable | Exit evidence |
+| --- | --- | --- |
+| 0 | Admission spike: determine safe lane scope and lock ordering | Written deadlock/race analysis; no production feature enabled |
+| 1 | Admission operation, shared creation journal, event dispatch containment | Concurrent admissions have one winner; a losing schedule does not cancel it; subscriber failure does not starve later subscribers; existing manager assertions remain unchanged |
+| 2 | Group/slot/generation store, initialization, fixed mode, boot recovery, destructive-operation gate | Concurrent clients converge on one mode and receipt; restart preserves state; archive/teardown cannot dismantle a transferring group; unknown state freezes only its group |
+| 3 | Role prompt composition, MCP precondition, durable logical handback registration before creating Peers | One shared block and one role; ordinary creation unchanged; handback survives restart and resolves the current owner |
+| 4 | Slot mailbox, serialized admission, execution-time ownership checks and role catalog | Busy mail queues; attachments survive; queued/dispatching/accepted/uncertain recovery follows [delivery](architecture.md#receipts-and-notifications); unknown acceptance is not blindly replayed |
+| 5 | Explicit handoff on both providers: checkpoint, history contract, candidate policy, journal and ordered retirement | Native option overrides cannot grant preparation writes; policy restoration follows the durable switch; Peer survives owner handoff; both archive race orders and crash phases are tested |
+| 6 | Proactive handoff and strict interception for Claude Code and Codex, enabled independently by evidence | P1/P2/P6 and transfer gates pass for each advertised tier; unsupported installations report the exact missing capability; no unproven strict replacement claim |
+| 7 | Supervised mode and UI | Human conversation remains available while Lead works; uncertain delivery, held activation, retired history and unsupported capabilities are visible; browser evidence uses the mock provider |
 
-| PR  | Deliverable                                                                                                                                                    | Exit evidence                                                                                                                                                                                                                                                                                               |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0   | Spike: does widening the foreground lane to cover turn start deadlock, and does any existing test encode today's non-deterministic outcome?                    | A written answer. Not merged.                                                                                                                                                                                                                                                                               |
-| 1   | Foundations, with no SLP concept in three of four items: the admission operation, the journal hoist, dispatch containment, and the persisted handback register | A test that fails on `main` — a schedule fire losing the race no longer cancels the turn that won. Two concurrent admissions yield exactly one winner. A throwing subscriber does not starve a later one. A restart test for the register. And: the agent manager suite passes with zero assertion changes. |
-| 2   | Identity: the SLP store, group/slot/generation records, idempotent initialization, fixed mode, boot recovery                                                   | Concurrent first submissions from N clients produce one group, one mode, one receipt. Restart retains the mode. Seeded uncertain state freezes that group instead of guessing.                                                                                                                              |
-| 3   | Prompt composition and the MCP precondition                                                                                                                    | A recording provider client confirms one shared block plus exactly one role file per generation. **And: ordinary non-SLP creation from both routes is unchanged.**                                                                                                                                          |
-| 4   | Delivery: slot-keyed durable queue, drain inside the lane, ownership checks on the agent-targeting tools, role-scoped catalog                                  | A busy recipient is not interrupted. Two differently scoped MCP clients: Lead may create a Peer, Peer may not. Mail survives restart and arrives once.                                                                                                                                                      |
-| 5   | Explicit handoff: checkpoint capability, per-transfer journal, receive-only candidate, ordered retirement                                                      | A Lead changes generation while an existing Peer continues. Seeded crash state at each phase recovers one writer or freezes visibly.                                                                                                                                                                        |
-| 6   | Automatic handoff, Claude only                                                                                                                                 | Real-provider evidence against local authentication. If the probe is negative, rewrite the compaction-replacement claim in [handoff](handoff.md) before shipping anything.                                                                                                                                  |
-| 7   | Supervised mode and UI                                                                                                                                         | A real browser test with the mock provider. Human conversation stays available while the Lead works; pending outcomes are not shown as completion.                                                                                                                                                          |
-| 8   | Workspace teardown gate                                                                                                                                        | Teardown refuses or drains while a group has an active generation.                                                                                                                                                                                                                                          |
+Keep the target for both providers even when one tier is blocked on an installation. A negative probe records the blocker and next engineering investigation; it does not silently remove Codex from the agreed scope.
 
-Start with one product-writing Peer per checkout. Increase concurrency only with measured need and write-ownership proof. Keep multiple-provider execution separate from changing provider during handoff; the latter is deferred.
+Start with one product-writing Peer per checkout. Increase concurrency only with measured need and write-ownership proof. Changing provider during handoff remains deferred.
 
 ## Probes
 
-| Probe | Question                                                                                                                                           | How                                                                                                                                                                                                                          | Gates                                                                   |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| P1    | Does an in-process PreCompact callback returning a block actually abort compaction in the pinned SDK, and what does the adapter observe afterward? | A real Claude session under **local authentication**. The existing harness routes Claude through OpenRouter and skips it without an OpenRouter key, so it measures a proxy. Adding a local-auth branch is part of the probe. | PR 6                                                                    |
-| P2    | Does the Codex app-server accept a hooks key in the per-thread configuration overlay, and is such a hook trusted?                                  | The overlay the adapter already sends. Land the two adapter riders first or the probe is blind.                                                                                                                              | Whether Codex ever re-enters automatic handoff                          |
-| P3    | Does widening the foreground lane deadlock?                                                                                                        | Spike branch. The lane is a non-reentrant promise tail and one caller already holds it.                                                                                                                                      | The shape of PR 1 only; the additive path does not depend on the answer |
-| P4    | How often, and why, does Claude's steer return unavailable?                                                                                        | Instrument and count. It returns unavailable while compacting, for slash commands, and when the query/input pair was rebuilt.                                                                                                | Whether delivery needs the lane widening at all                         |
-| P5    | Do the role instructions actually produce role behavior?                                                                                           | Run the scenarios below against real Claude, before building more machinery.                                                                                                                                                 | The product thesis. No plumbing fixes a role that does not hold.        |
-| P6    | Where does the context denominator come from?                                                                                                      | Read the intent of the two tests that assert the resolved-window API is never called; they name subagent result handling. A probe once per N turns may be compatible where one per result is not.                            | The threshold in PR 6                                                   |
+| Probe | Question and method | Gate |
+| --- | --- | --- |
+| P1 | In a native/local-auth Claude session, prove the SDK PreCompact result, invocation and correlated stopping boundary | Claude strict interception |
+| P2 | In a native/local-auth Codex session, prove hook configuration, supported trust, session identity, invocation and stop; instrument raw requests and retained abort reasons | Codex strict interception; an absent current integration is not a provider impossibility |
+| P3 | Check foreground-lane reentrancy and group-before-agent lock ordering in a spike | Admission and destructive-operation gate shape |
+| P4 | Measure Claude steer-unavailable cases, including compaction, slash commands and query rebuild | Delivery behavior and safe checkpoint preparation |
+| P5 | Run role scenarios with both providers, then a mixed topology | Role behavior evidence |
+| P6 | Establish each provider's effective budget, telemetry freshness after restart and safe long-turn threshold; do not assume the advertised window equals the compact threshold | Proactive handoff |
+| P7 | Prove receive-only preparation with conflicting native options, denied mutating MCP calls, and restored source policy only after activation | Explicit handoff on each provider |
+| P8 | Prove source-history cursors, complete tail retrieval and blocked recovery for missing/compacted segments | Late recovery on each provider |
 
 ## Role evaluation scenarios
 
@@ -80,12 +78,12 @@ These are fixtures to run with real prompted agents. Expected behaviors are obse
 - Supervisor progress reports do not trigger acknowledgment chains.
 - Peer handback and lifecycle events cannot create duplicate result delivery.
 - A role's preparation or retirement event cannot be mistaken for assignment completion or acceptance.
-- Candidate receive-only mode actually prevents product writes and delegation on both providers.
-- Peer completion and Human messages during a Lead or Supervisor handoff survive and arrive once at the active generation.
-- Existing Peers and their workspace ownership survive parent-generation retirement without archive cascade.
+- Candidate preparation prevents writes and delegation on both providers, including conflicting Codex native options and Claude bypass/auto modes. Activation restores the source policy only after the durable switch.
+- Peer completion and Human messages during handoff retain their IDs and slot destination; confirmed delivery is not repeated, and unknown acceptance remains uncertain until reconciled.
+- Transfer-first archive/teardown is refused; archive-first prevents an invalid transfer. Crashes during partial re-parenting retain the gate until recovery.
 - Crashes before and after candidate creation, active switch and ownership updates restore one writer and account for uncertain receipts.
 - Unknown external effects, pending permissions and native background jobs prevent unsafe replay or retirement.
-- Oversized tool output or a long single turn reaching PreCompact first exercises late recovery; no final-summary retry loop.
+- Oversized output or a long turn reaching PreCompact first exercises late recovery; missing checkpoint tails and compacted segments block activation without a final-summary retry loop.
 - Missing, changed or untrusted hooks fail the certification boundary visibly.
 - Ordinary non-SLP sessions retain their current behavior; disabling the extension preserves state and stops new automatic orchestration.
 
@@ -96,9 +94,9 @@ Read [testing](../testing.md) and [QA](../qa.md) first; these are the facts that
 - **CI runs a hardcoded list.** The server job runs the unit suite plus a short named list of integration files. Everything else in the end-to-end directory has no PR coverage. Add each SLP file to that list by name, in the PR that adds it, and budget for it — that lane runs serially.
 - **Use the mock provider, not the fake.** The default fake has no steering, so every steer assertion written against it silently exercises the replace path and asserts the opposite of its intent. The fake is also prompt-regex driven, which composed role prompts will disturb.
 - **Use the preserved-home restart pattern.** The obvious-looking restart test deletes the home directory and proves nothing about disk. Use the pattern that keeps the home root and disables cleanup, with two daemon instances.
-- **There is no fault injection.** The harness runs the daemon in-process, so nothing can be killed mid-write. Every crash-recovery test is hand-seeded on-disk state plus a graceful reboot. Say so in the PR text so no reviewer over-reads the evidence. This is also why the transfer journal is keyed per transfer: a per-transfer file is the only shape a fixture can hand-write.
+- **Distinguish seeded recovery from crash injection.** Existing in-process restart fixtures do not prove abrupt process death during a write. Seed each journal phase and restart with the preserved home; record that limit in the PR. Add explicit fault injection or subprocess crash tests separately where needed to verify a remaining failure window.
 - Put unit tests in the plain test suffix so the unit run picks them up with no config change.
-- Provider certification has no CI signal under any plan. See [provider support](providers.md#certification-evidence).
+- The current CI lane does not certify real providers. Collect pinned manual evidence until an authenticated automated lane meets [provider evidence](providers.md#certification-evidence).
 
 ## What v1 must not claim
 
@@ -108,7 +106,7 @@ Enumerate the guarantees not yet delivered, in each PR description. Standing ent
 - There is no one-writer guarantee. Refusing a second SLP assignment binds SLP-created writers only, not Human, a schedule, or a non-SLP agent in the same checkout.
 - Mail cannot lose its slot but can lose its turn, until every delivery route's replace policy is closed.
 - Handoff is not lossless memory. Checkpoints select and condense, and there is no Paseo-side transcript to normalize.
-- Provider certification is manual and version-pinned, permanently.
+- Provider certification currently requires recorded manual evidence; automated certification is not yet configured.
 - Crash-recovery tests are seeded state plus a soft reboot, not crashes.
 
 ## Proof and review discipline
@@ -126,8 +124,10 @@ Each implementation slice must define its recoverable write boundary before muta
 ## Outstanding proof
 
 - [ ] Record tested Claude Code and Codex versions and hook trust/setup behavior.
-- [ ] Add a local-authentication branch to the real-provider harness before running P1.
-- [ ] Prove receive-only candidate controls and active-context telemetry semantics.
+- [ ] Add native/local-authentication paths for both provider probes.
+- [ ] Prove preparation-policy precedence, post-switch policy restoration and active-context telemetry semantics.
+- [ ] Prove provider-specific history cutoff/tail completeness and blocked recovery for missing segments.
+- [ ] Prove destructive-operation gating and uncertain-delivery reconciliation.
 - [ ] Settle the context denominator and calibrate the threshold against long turns, output size, token cost and handoff quality.
 - [ ] Implement and verify slot ownership, atomic publication and crash recovery.
 - [ ] Exercise the role evaluation and mixed-provider scenarios.
