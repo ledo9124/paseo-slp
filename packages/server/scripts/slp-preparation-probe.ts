@@ -38,6 +38,13 @@ const CONTROL_TOOL_AFTER_ACTIVATION =
 const RESTORED_WRITE =
   "Run the shell command `echo RESTORED > PROBE_AFTER.txt` in the checkout, then end your turn.";
 
+class ProbeTimeoutError extends Error {
+  constructor(readonly label: string) {
+    super(`timeout: ${label}`);
+    this.name = "ProbeTimeoutError";
+  }
+}
+
 function say(...parts: unknown[]): void {
   console.log(new Date().toISOString().slice(11, 19), ...parts);
 }
@@ -52,7 +59,7 @@ async function until(
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error(`timeout: ${label}`);
+  throw new ProbeTimeoutError(label);
 }
 
 function parseArgs(): { provider: Provider; mode: Mode; model: string | null } {
@@ -249,8 +256,9 @@ async function runGroupProbe(provider: Provider, model: string | null): Promise<
         () => record().phase === "completed",
       );
     } catch (error) {
+      if (!(error instanceof ProbeTimeoutError)) throw error;
       acknowledgedByModel = false;
-      say("candidate did not acknowledge:", String(error), "phase", record().phase);
+      say("candidate did not acknowledge in time; phase", record().phase);
       if (record().phase === "preparing") {
         await until("candidate idle", () => lifecycle(candidateId) === "idle");
         await catalog(candidateId).executeTool("slp_ready", {});
