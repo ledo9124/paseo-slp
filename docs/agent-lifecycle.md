@@ -2,6 +2,8 @@
 
 How an agent is created, runs, becomes a subagent, gets archived, and disappears from the UI. The model spans the daemon (lifecycle, archive) and the client (tabs, the subagents track).
 
+The proposed SLP generation-transfer contract is in [same-role handoff](slp/handoff.md); it is not current agent lifecycle behavior.
+
 ## States
 
 ```

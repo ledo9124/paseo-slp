@@ -4,6 +4,8 @@ Paseo is a client-server system for monitoring and controlling local AI coding a
 
 Your code never leaves your machine. Paseo is local-first.
 
+For this fork's proposed SLP extension, read [SLP architecture](slp/architecture.md). That design is not implemented by the documentation baseline.
+
 ## System overview
 
 ```
