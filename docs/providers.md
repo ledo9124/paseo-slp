@@ -2,6 +2,8 @@
 
 This guide walks through adding a new agent provider end-to-end. There are two integration patterns, and this doc covers both.
 
+For planned Claude Code/Codex SLP integration and its unverified compatibility gates, read [SLP provider support](slp/providers.md).
+
 ## Provider-native session options
 
 `AgentSessionConfig.providerOptions` carries JSON-safe configuration for the selected provider. The
