@@ -313,6 +313,15 @@ export type ActiveTurnSteerDispatchResult =
   | { status: "inactive" | "steered" }
   | { status: "replaced"; iterator: AsyncGenerator<AgentStreamEvent> };
 
+/**
+ * Outcome of {@link AgentManager.admitForegroundTurn}. `busy` never cancels
+ * the run that owns the slot; `turnId` is null while that run is still
+ * starting.
+ */
+export type ForegroundTurnAdmission =
+  | { status: "started" }
+  | { status: "busy"; turnId: string | null };
+
 function stripSteerOptions(options?: AgentSteerOptions): AgentRunOptions | undefined {
   if (!options) return undefined;
   const { clearPendingPermissions: _, ...runOptions } = options;
@@ -2614,6 +2623,54 @@ export class AgentManager {
     });
   }
 
+  /**
+   * Admit a prompt as a new foreground turn only if the agent has no run in
+   * flight. Unlike {@link replaceAgentRun} and {@link steerOrReplaceActiveTurn}
+   * this never cancels: a busy agent is reported, not interrupted.
+   *
+   * Runs inside the per-agent foreground lane so the busy answer is taken
+   * against a settled view (a steer admission or cancel ahead of it has
+   * finished). The operation must not call anything that re-enters the lane
+   * for the same agent; the lane is a promise chain and would deadlock.
+   * See docs/slp/admission.md.
+   */
+  async admitForegroundTurn(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<ForegroundTurnAdmission> {
+    return this.runForegroundMutation(agentId, async () => {
+      const agent = this.requireSessionAgent(agentId);
+      if (this.hasInFlightRun(agentId)) {
+        return {
+          status: "busy",
+          turnId: agent.activeForegroundTurnId ?? this.runs.getTurnId(agentId),
+        };
+      }
+      // INVARIANT: no await between the busy check above and this call.
+      // streamAgent claims the run slot synchronously, before its generator
+      // body exists, so check-and-claim in one tick is atomic against every
+      // other writer in the daemon. An await here reopens the race.
+      const iterator = this.streamAgent(agentId, prompt, options);
+      // A never-iterated generator strands the slot; only its own settle path
+      // releases the pending run. Own the drain so no caller can strand it.
+      this.drainAdmittedRun(agentId, iterator);
+      return { status: "started" };
+    });
+  }
+
+  private drainAdmittedRun(agentId: string, iterator: AsyncGenerator<AgentStreamEvent>): void {
+    void (async () => {
+      try {
+        for await (const _ of iterator) {
+          // Events reach subscribers through dispatchStream.
+        }
+      } catch (error) {
+        this.logger.error({ err: error, agentId }, "Admitted foreground turn failed");
+      }
+    })();
+  }
+
   private async runForegroundMutation<T>(agentId: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.foregroundMutationTails.get(agentId) ?? Promise.resolve();
     const run = previous.catch(() => undefined).then(operation);
@@ -4789,7 +4846,16 @@ export class AgentManager {
       if (!subscriber.agentId && this.eventBelongsToInternalAgent(event)) {
         continue;
       }
-      subscriber.callback(event);
+      // One throwing subscriber must not starve the subscribers after it or
+      // propagate into the provider ingestion path that called dispatch.
+      try {
+        subscriber.callback(event);
+      } catch (error) {
+        this.logger.error(
+          { err: error, eventType: event.type, subscriberAgentId: subscriber.agentId },
+          "Agent manager subscriber threw",
+        );
+      }
     }
   }
 

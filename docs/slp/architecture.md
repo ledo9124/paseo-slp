@@ -71,7 +71,7 @@ Use these SLP directions:
 
 ### Admission
 
-Nothing in the daemon queues a prompt today. `sendPromptToAgent` passes `replaceRunning: true` unconditionally, and its only dispositions are out-of-band, steered and turn-started; `streamAgent` throws when the agent is busy. The one queue in the product is in the client's memory, drained when the client observes an idle turn — the check-then-send shape this document rejects. A live instance of the same anti-pattern sits in the schedule service, where the losing side cancels the turn that won.
+Nothing in the daemon queues a prompt today. `sendPromptToAgent` passes `replaceRunning: true` unconditionally, and its only dispositions are out-of-band, steered and turn-started; `streamAgent` throws when the agent is busy. The one queue in the product is in the client's memory, drained when the client observes an idle turn — the check-then-send shape this document rejects. The schedule service had a live instance of the same anti-pattern, where the losing side cancelled the turn that won; it now goes through `admitForegroundTurn`. [Admission](admission.md) records the lane and lock-order analysis.
 
 Admission has two owners. `agent/agent-prompt.ts` classifies a prompt as SLP mail; `AgentManager` decides. The decision runs inside the agent's foreground mutation lane and reaches `streamAgent` with **no await between the busy check and the call** — `streamAgent` claims the run slot synchronously, before its generator body exists, so a check and a call in one tick are atomic against every writer in the daemon. Comment that invariant at the claim and assert it in a test: a later refactor that makes the function async, or inserts an await before the claim, would remove the guarantee with nothing failing.
 
@@ -91,12 +91,12 @@ Enumerate every delivery route into a slot — the WebSocket send, the MCP send 
 
 Distinguish queued receipt, provider acceptance, execution, handback and engineering acceptance. A mailbox receipt promises retained input, not execution. Use one stable message ID and a separate dispatch-attempt ID.
 
-| State | Meaning and recovery |
-| --- | --- |
-| `queued` | Input is durable; no dispatch attempt has begun. It may be admitted when the slot is available. |
-| `dispatching` | Persist attempt ID, destination generation and known turn correlation before the provider call. A crash here leaves acceptance uncertain. |
-| `accepted` | Provider acceptance is evidenced and recorded. Do not automatically send the input again merely because execution or handback is unfinished. |
-| `uncertain` | Acceptance cannot be proven or disproven. Retain the input and block automatic replay until reconciliation resolves the attempt. |
+| State         | Meaning and recovery                                                                                                                         |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queued`      | Input is durable; no dispatch attempt has begun. It may be admitted when the slot is available.                                              |
+| `dispatching` | Persist attempt ID, destination generation and known turn correlation before the provider call. A crash here leaves acceptance uncertain.    |
+| `accepted`    | Provider acceptance is evidenced and recorded. Do not automatically send the input again merely because execution or handback is unfinished. |
+| `uncertain`   | Acceptance cannot be proven or disproven. Retain the input and block automatic replay until reconciliation resolves the attempt.             |
 
 A synchronous run-slot claim is not provider acceptance. If the provider call took effect before its result was saved, recover `dispatching` as `uncertain`. Return to `queued` only with evidence that the attempt was not accepted; promote to `accepted` only with correlated provider acknowledgment or authoritative history. A missing history entry is insufficient unless the adapter proves the history is complete through that attempt.
 
@@ -136,17 +136,17 @@ Keep project artifacts and decisions under the consumer repository's workflow. L
 
 Read current owning code before implementation; this table identifies boundaries and what already exists, not new API signatures.
 
-| Existing owner                 | What is there today                                                                                                                          | SLP responsibility                                                                                          |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `server/bootstrap.ts`          | Services constructed in dependency order in one function; agent storage and registry recovery already run before the WebSocket server exists | Construct the SLP service there and join that recovery block                                                |
-| `agent/create-agent/create.ts` | The single funnel for both creation routes; its `config` already accepts a partial session config                                            | Bind slot/generation, compose `config.systemPrompt`, enforce role authority                                 |
-| `agent/agent-manager.ts`       | `runForegroundMutation` serializes cancel and steer admission but not turn start; `closeAgent` reaches no cascade                            | Add the admit-or-queue operation and drive the drain from a manager-owned post-settle point inside the lane |
-| `agent/tools/paseo-tools.ts`   | Caller-aware inputs and defaults; no ownership or role enforcement anywhere                                                                  | Role-scoped catalog plus destination checks on the agent-targeting tools                                    |
-| `agent/agent-prompt.ts`        | The mandated funnel for every prompt surface; `setupFinishNotification` binds its destination at subscribe time                              | Classify SLP mail; leave that function alone and own the handback register                                  |
-| `agent/requests/index.ts`      | Fingerprinted, restart-surviving idempotency journal, constructed inside the WebSocket server and unreachable from bootstrap                 | Hoist into the daemon and use its keyed create for group initialization and candidate creation              |
-| Claude adapter                 | In-process SDK hooks are live; the per-event merge helper is written, tested and unused                                                      | Wire the merge and add PreCompact — see [provider support](providers.md)                                    |
-| Codex adapter                  | Context telemetry is mapped; there is no session-scoped hook path                                                                            | See [provider support](providers.md)                                                                        |
-| Protocol/client/composer       | The composer is agent-addressed at every layer, down to the wire message                                                                     | Group addressing, initial mode choice, role timeline and handoff status                                     |
+| Existing owner                 | What is there today                                                                                                                          | SLP responsibility                                                                                        |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `server/bootstrap.ts`          | Services constructed in dependency order in one function; agent storage and registry recovery already run before the WebSocket server exists | Construct the SLP service there and join that recovery block                                              |
+| `agent/create-agent/create.ts` | The single funnel for both creation routes; its `config` already accepts a partial session config                                            | Bind slot/generation, compose `config.systemPrompt`, enforce role authority                               |
+| `agent/agent-manager.ts`       | `runForegroundMutation` serializes cancel, steer admission and `admitForegroundTurn`; `closeAgent` reaches no cascade                        | Add the queue behind admission and drive the drain from a manager-owned post-settle point inside the lane |
+| `agent/tools/paseo-tools.ts`   | Caller-aware inputs and defaults; no ownership or role enforcement anywhere                                                                  | Role-scoped catalog plus destination checks on the agent-targeting tools                                  |
+| `agent/agent-prompt.ts`        | The mandated funnel for every prompt surface; `setupFinishNotification` binds its destination at subscribe time                              | Classify SLP mail; leave that function alone and own the handback register                                |
+| `agent/requests/index.ts`      | Fingerprinted, restart-surviving idempotency journal, constructed in bootstrap and shared with the WebSocket server                          | Use its keyed create for group initialization and candidate creation                                      |
+| Claude adapter                 | In-process SDK hooks are live; the per-event merge helper is written, tested and unused                                                      | Wire the merge and add PreCompact — see [provider support](providers.md)                                  |
+| Codex adapter                  | Context telemetry is mapped; there is no session-scoped hook path                                                                            | See [provider support](providers.md)                                                                      |
+| Protocol/client/composer       | The composer is agent-addressed at every layer, down to the wire message                                                                     | Group addressing, initial mode choice, role timeline and handoff status                                   |
 
 Keep provider session loops in their adapters. Existing provider options are strictly validated and exclude Paseo-owned hooks, and they are JSON over the wire so they structurally cannot carry a callback; integrate hooks through a deliberate internal launch boundary. On Claude that boundary already exists as the single module owning the raw SDK query import. Follow [provider conventions](../providers.md), [protocol compatibility](../protocol-compatibility.md), and [RPC namespacing](../rpc-namespacing.md).
 

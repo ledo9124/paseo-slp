@@ -1,4 +1,4 @@
-import { AgentRequests } from "./agent/requests/index.js";
+import type { AgentRequests } from "./agent/requests/index.js";
 import { WebSocket, WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
 import { join } from "path";
@@ -610,6 +610,7 @@ export class VoiceAssistantWebSocketServer {
     serverId: string,
     agentManager: AgentManager,
     agentStorage: AgentStorage,
+    agentRequests: AgentRequests,
     downloadTokenStore: DownloadTokenStore,
     paseoHome: string,
     daemonConfigStore: DaemonConfigStore,
@@ -668,7 +669,7 @@ export class VoiceAssistantWebSocketServer {
     this.orchestrationSkills = orchestrationSkills;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
-    this.agentRequests = new AgentRequests(join(paseoHome, "agent-requests"));
+    this.agentRequests = agentRequests;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
     this.workspaceLabelService = workspaceLabelService ?? null;

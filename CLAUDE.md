@@ -25,16 +25,17 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | [docs/product.md](docs/product.md)                                   | What Paseo is, who it's for, where it's going                                                                                  |
 | [docs/architecture.md](docs/architecture.md)                         | System design, package layering, WebSocket protocol, agent lifecycle, data flow                                                |
-| [docs/slp/README.md](docs/slp/README.md) | SLP design map, scope and role rationale |
-| [docs/slp/core-definition-v0.1.md](docs/slp/core-definition-v0.1.md) | Original user-provided SLP conceptual definition |
-| [docs/slp/architecture.md](docs/slp/architecture.md) | Proposed SLP identity, fixed workspace mode and runtime boundaries |
-| [docs/slp/handoff.md](docs/slp/handoff.md) | Proposed same-role context transfer, checkpoints and recovery |
-| [docs/slp/providers.md](docs/slp/providers.md) | Claude Code/Codex handoff evidence and certification gates |
-| [docs/slp/roles/common.md](docs/slp/roles/common.md) | Shared SLP role instructions and activation boundary |
-| [docs/slp/roles/supervisor.md](docs/slp/roles/supervisor.md) | Supervisor instruction draft |
-| [docs/slp/roles/lead.md](docs/slp/roles/lead.md) | Lead instruction draft |
-| [docs/slp/roles/peer.md](docs/slp/roles/peer.md) | Peer instruction draft |
-| [docs/slp/implementation-plan.md](docs/slp/implementation-plan.md) | SLP implementation slices and validation scenarios |
+| [docs/slp/README.md](docs/slp/README.md)                             | SLP design map, scope and role rationale                                                                                       |
+| [docs/slp/core-definition-v0.1.md](docs/slp/core-definition-v0.1.md) | Original user-provided SLP conceptual definition                                                                               |
+| [docs/slp/architecture.md](docs/slp/architecture.md)                 | Proposed SLP identity, fixed workspace mode and runtime boundaries                                                             |
+| [docs/slp/admission.md](docs/slp/admission.md)                       | Turn-admission lanes, lock ordering, and the PR 1 outcome                                                                      |
+| [docs/slp/handoff.md](docs/slp/handoff.md)                           | Proposed same-role context transfer, checkpoints and recovery                                                                  |
+| [docs/slp/providers.md](docs/slp/providers.md)                       | Claude Code/Codex handoff evidence and certification gates                                                                     |
+| [docs/slp/roles/common.md](docs/slp/roles/common.md)                 | Shared SLP role instructions and activation boundary                                                                           |
+| [docs/slp/roles/supervisor.md](docs/slp/roles/supervisor.md)         | Supervisor instruction draft                                                                                                   |
+| [docs/slp/roles/lead.md](docs/slp/roles/lead.md)                     | Lead instruction draft                                                                                                         |
+| [docs/slp/roles/peer.md](docs/slp/roles/peer.md)                     | Peer instruction draft                                                                                                         |
+| [docs/slp/implementation-plan.md](docs/slp/implementation-plan.md)   | SLP implementation slices and validation scenarios                                                                             |
 | [docs/agent-lifecycle.md](docs/agent-lifecycle.md)                   | Agent states, parent/child relationships, archive semantics, tabs vs archive, subagents track                                  |
 | [docs/data-model.md](docs/data-model.md)                             | File-based JSON persistence, Zod schemas, atomic writes, no migrations                                                         |
 | [docs/glossary.md](docs/glossary.md)                                 | Authoritative terminology — UI label wins, no synonyms                                                                         |

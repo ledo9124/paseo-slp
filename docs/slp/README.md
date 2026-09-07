@@ -11,6 +11,7 @@ The user chose Supervisor–Lead–Peer to separate Human conversation, project 
 | Document                                      | Owns                                                                               |
 | --------------------------------------------- | ---------------------------------------------------------------------------------- |
 | [Architecture](architecture.md)               | Scope, fixed workspace mode, identity, routing, runtime boundaries and integration |
+| [Admission](admission.md)                     | Turn-admission lanes, lock ordering, and what PR 1 changed                         |
 | [Handoff](handoff.md)                         | Checkpoints, generation transfer, recovery and compaction interception             |
 | [Provider support](providers.md)              | Claude Code/Codex evidence, adapter differences and compatibility proof            |
 | [Shared instructions](roles/common.md)        | Common agent behavior, authority, repository use and handoff behavior              |

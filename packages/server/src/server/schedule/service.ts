@@ -7,11 +7,7 @@ import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
 import { ensureAgentLoaded } from "../agent/agent-loading.js";
-import {
-  formatSystemNotificationPrompt,
-  startAgentRun,
-  type AgentRunController,
-} from "../agent/agent-prompt.js";
+import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
 import { resolveCreateAgentTitles } from "../agent/create-agent-title.js";
 import { type BoundCreateAgentCommand, formatProviderModel } from "../agent/create-agent/create.js";
 import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
@@ -200,24 +196,18 @@ function buildRunOutput(params: {
 }
 
 type ScheduleAgentManager = Pick<
-  AgentRunController,
+  AgentManager,
+  | "admitForegroundTurn"
+  | "steerAgentRun"
   | "getAgent"
-  | "tryRunOutOfBand"
-  | "hasInFlightRun"
-  | "replaceAgentRun"
-  | "steerOrReplaceActiveTurn"
-  | "streamAgent"
-> &
-  Pick<
-    AgentManager,
-    | "createAgent"
-    | "getRegisteredProviderIds"
-    | "hydrateTimelineFromProvider"
-    | "resumeAgentFromPersistence"
-    | "runAgent"
-    | "waitForAgentEvent"
-    | "waitForAgentClose"
-  >;
+  | "createAgent"
+  | "getRegisteredProviderIds"
+  | "hydrateTimelineFromProvider"
+  | "resumeAgentFromPersistence"
+  | "runAgent"
+  | "waitForAgentEvent"
+  | "waitForAgentClose"
+>;
 
 interface ScheduleWorkspaceCreateInput {
   cwd: string;
@@ -832,6 +822,22 @@ export class ScheduleService {
     requireSchedule(updatedSchedule, params.scheduleId);
   }
 
+  /**
+   * Admit-or-steer, never replace. A busy check followed by a later send
+   * cancelled whichever turn won the race; admission decides atomically and
+   * steerAgentRun never falls through to a turn-cancelling replacement.
+   */
+  private async admitOrSteerScheduleFire(agentId: string, prompt: string): Promise<void> {
+    const admission = await this.agentManager.admitForegroundTurn(agentId, prompt);
+    if (admission.status === "started") {
+      return;
+    }
+    const steered = await this.agentManager.steerAgentRun(agentId, prompt);
+    if (steered.status !== "accepted") {
+      throw new Error(`Agent ${agentId} already has an active run`);
+    }
+  }
+
   private async executeSchedule(
     schedule: StoredSchedule,
     runId: string,
@@ -851,13 +857,7 @@ export class ScheduleService {
         agentStorage: this.agentStorage,
         logger: this.logger,
       });
-      if (this.agentManager.hasInFlightRun(agent.id)) {
-        throw new Error(`Agent ${agent.id} already has an active run`);
-      }
-      await startAgentRun(this.agentManager, agent.id, wrappedPrompt, this.logger, {
-        replaceRunning: true,
-        activeTurnBehavior: "steer",
-      });
+      await this.admitOrSteerScheduleFire(agent.id, wrappedPrompt);
       const waitResult = await this.agentManager.waitForAgentEvent(agent.id, {
         waitForActive: true,
       });
