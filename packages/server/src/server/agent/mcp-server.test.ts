@@ -210,6 +210,7 @@ function buildAgentManagerSpies() {
     setTitle: vi.fn().mockResolvedValue(undefined),
     updateAgentMetadata: vi.fn().mockResolvedValue(undefined),
     archiveAgent: vi.fn().mockResolvedValue({ archivedAt: new Date().toISOString() }),
+    assertWorkspaceDestructiveOperationAllowed: vi.fn(),
     notifyAgentState: vi.fn(),
     getAgent: vi.fn(),
     listAgents: vi.fn().mockReturnValue([]),

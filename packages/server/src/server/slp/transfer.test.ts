@@ -316,9 +316,9 @@ describe("SLP same-role handoff", () => {
     // ahead of the handback that queued during the transfer; then the handback drains
     // to the successor, not the retired source.
     const activation = daemon.service.listMail().find((mail) => mail.kind === "activation");
-    expect(activation).toMatchObject({ id: `activation:${transferId}`, slotId: group.leadSlotId });
+    expect(activation).toMatchObject({ id: `activation_${transferId}`, slotId: group.leadSlotId });
     await untilSettled(
-      () => mailState(daemon, `activation:${transferId}`) === "accepted",
+      () => mailState(daemon, `activation_${transferId}`) === "accepted",
       "activation delivered to successor",
     );
     expect(candidate.startPrompts).toHaveLength(2);

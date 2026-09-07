@@ -410,6 +410,17 @@ export class SlpGroupStore {
   }
 }
 
+// Record ids are file names on every platform the daemon runs on; Windows
+// rejects `:` and the other characters this excludes.
+const PORTABLE_FILE_NAME = /^[A-Za-z0-9_.-]+$/;
+
+export class SlpRecordIdError extends Error {
+  constructor(readonly id: string) {
+    super(`SLP record id "${id}" is not a portable file name`);
+    this.name = "SlpRecordIdError";
+  }
+}
+
 /** One file per record; an unparseable file is reported, never silently dropped. */
 export class SlpRecordStore<T extends { id: string }> {
   constructor(
@@ -418,6 +429,7 @@ export class SlpRecordStore<T extends { id: string }> {
   ) {}
 
   async write(record: T): Promise<void> {
+    if (!PORTABLE_FILE_NAME.test(record.id)) throw new SlpRecordIdError(record.id);
     await writeJsonFileAtomic(path.join(this.directory, `${record.id}.json`), record);
   }
 

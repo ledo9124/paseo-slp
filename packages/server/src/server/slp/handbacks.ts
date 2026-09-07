@@ -205,7 +205,7 @@ export class SlpHandbackRegister {
     record: Extract<SlpHandbackRecord, { state: "fired" }>,
   ): Promise<void> {
     const mail = await this.mailbox.enqueue({
-      id: `${record.id}:handback`,
+      id: `${record.id}_handback`,
       groupId: record.groupId,
       slotId: record.ownerSlotId,
       fromSlotId: record.peerSlotId,
@@ -223,9 +223,10 @@ export class SlpHandbackRegister {
   private async notifyInterrupted(
     record: Extract<SlpHandbackRecord, { state: "armed" }>,
   ): Promise<void> {
-    const at = this.now().toISOString();
+    const now = this.now();
+    const at = now.toISOString();
     const mail = await this.mailbox.enqueue({
-      id: `${record.id}:interrupted:${at}`,
+      id: `${record.id}_interrupted_${now.getTime()}`,
       groupId: record.groupId,
       slotId: record.ownerSlotId,
       fromSlotId: record.peerSlotId,

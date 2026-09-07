@@ -293,6 +293,7 @@ function createRealOutcomeHarness(input: {
     } as unknown as AutoArchiveArchiveOptions["workspaceGitService"],
     github: createGitHubServiceStub(),
     agentManager: {
+      assertWorkspaceDestructiveOperationAllowed: () => {},
       listAgents: () => [],
       archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
       archiveSnapshot: vi.fn(async () => {

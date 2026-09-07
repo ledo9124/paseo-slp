@@ -2037,6 +2037,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
           listWorktrees: vi.fn(async () => []),
         },
         agentManager: {
+          assertWorkspaceDestructiveOperationAllowed: () => {},
           listAgents: () => [],
           archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
           archiveSnapshot: vi.fn(async () => {
@@ -2108,6 +2109,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
           listWorktrees: vi.fn(async () => []),
         },
         agentManager: {
+          assertWorkspaceDestructiveOperationAllowed: () => {},
           listAgents: () => [],
           archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
           archiveSnapshot: vi.fn(async () => {
@@ -2184,6 +2186,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
           listWorktrees: vi.fn(async () => []),
         },
         agentManager: {
+          assertWorkspaceDestructiveOperationAllowed: () => {},
           listAgents: () => [],
           archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
           archiveSnapshot: vi.fn(async () => {
@@ -2260,6 +2263,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         listWorktrees: vi.fn(async () => []),
       },
       agentManager: {
+        assertWorkspaceDestructiveOperationAllowed: () => {},
         listAgents: () => [],
         archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
         archiveSnapshot: vi.fn(async () => {

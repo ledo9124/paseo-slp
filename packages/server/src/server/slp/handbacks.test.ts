@@ -182,7 +182,7 @@ describe("SLP Peer creation and handback", () => {
     expect(handback).toMatchObject({
       state: "delivered",
       outcome: { reason: "finished" },
-      mailId: `${handback.id}:handback`,
+      mailId: `${handback.id}_handback`,
     });
     expect(await readHandbackFile(handback.id)).toEqual(handback);
     expect(daemon.service.listMail()).toMatchObject([

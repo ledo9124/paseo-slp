@@ -469,7 +469,7 @@ export class SlpTransfers {
     // Durable before the hold lifts, keyed by the transfer so a roll-forward
     // re-running this step cannot queue a second notice.
     await this.host.mailbox.enqueue({
-      id: `activation:${record.id}`,
+      id: `activation_${record.id}`,
       groupId: group.id,
       slotId: slot.id,
       fromSlotId: null,

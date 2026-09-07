@@ -32,12 +32,12 @@ buildNpmPackage {
       && !(lib.hasPrefix "/packages/app/ios" relPath)
       # Website is unrelated to the desktop app
       && !(lib.hasPrefix "/packages/website" relPath)
-      # Documentation, CI definitions and agent/editor configuration. None of
-      # these reach the build, but every one of them is part of `src`, so a
-      # docs-only or workflow-only commit currently invalidates the whole
-      # desktop derivation and pays for a full Expo export to produce a
-      # byte-identical result.
-      && !(lib.hasPrefix "/docs" relPath)
+      # Documentation, CI definitions and agent/editor configuration. Apart
+      # from the SLP role files, none of these reach the build, but every one of
+      # them is part of `src`, so a docs-only or workflow-only commit currently
+      # invalidates the whole desktop derivation and pays for a full Expo export
+      # to produce a byte-identical result.
+      && (!(lib.hasPrefix "/docs" relPath) || isRoleDoc relPath)
       && !(lib.hasPrefix "/.github" relPath)
       && !(lib.hasPrefix "/.agents" relPath)
       && !(lib.hasPrefix "/.claude" relPath)
