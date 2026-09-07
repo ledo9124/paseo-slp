@@ -8,12 +8,12 @@ Support only Claude Code and Codex for SLP v1. Preserve other upstream providers
 
 Certify capability tiers independently. Both providers remain in the v1 target; no tier is certified by this source review.
 
-| Capability | Claude Code | Codex |
-| --- | --- | --- |
-| Roles, prompt composition, delivery | Implementation and evidence required | Implementation and evidence required |
-| Explicit same-role handoff | Stop, preparation and recovery proof required | Stop, preparation and recovery proof required |
-| Proactive handoff from usage | Current telemetry, budget and long-turn proof required | Current telemetry, budget and long-turn proof required |
-| Strict pre-compaction interception | SDK callback integration; probe P1 pending | Adapter hook integration; probe P2 pending |
+| Capability                          | Claude Code                                            | Codex                                                  |
+| ----------------------------------- | ------------------------------------------------------ | ------------------------------------------------------ |
+| Roles, prompt composition, delivery | Implementation and evidence required                   | Implementation and evidence required                   |
+| Explicit same-role handoff          | Stop, preparation and recovery proof required          | Stop, preparation and recovery proof required          |
+| Proactive handoff from usage        | Current telemetry, budget and long-turn proof required | Current telemetry, budget and long-turn proof required |
+| Strict pre-compaction interception  | SDK callback integration; probe P1 pending             | Adapter hook integration; probe P2 pending             |
 
 Proactive handoff can request a transfer early without proving that native compact is intercepted. It must not be presented as strict replacement. Report each installed capability with its evidence status and reason at group initialization; an unverified interception capability remains disabled. Do not collapse proactive and strict behavior into one ambiguous `automaticHandoff` flag.
 
@@ -50,13 +50,13 @@ Prepare-then-swap is not what the adapter does today. Its restart path tears the
 
 Reviewed on 2026-09-06 and reconciled against fork commit `dee2a8d405e02ada2658e674372407f439788bea` on 2026-09-07. The earlier upstream snapshot was `38c22139bb191f0ad27b11c16776e93504ddd4fd`. Use the fork paths below for implementation; neither snapshot certifies an installed binary.
 
-| Concern                    | Claude Code                                                                    | Codex                                                                                              |
-| -------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| Existing Paseo integration | Claude Agent SDK session                                                       | Codex App Server thread                                                                            |
-| Context telemetry          | Adapter maps active per-request usage and a model window                       | Adapter maps `thread/tokenUsage/updated`, root thread only                                         |
-| PreCompact control         | In-process callback; only top-level continue/decision expressible              | Documented `continue: false`; SLP adapter integration unproven                                           |
+| Concern                    | Claude Code                                                                    | Codex                                                                                        |
+| -------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| Existing Paseo integration | Claude Agent SDK session                                                       | Codex App Server thread                                                                      |
+| Context telemetry          | Adapter maps active per-request usage and a model window                       | Adapter maps `thread/tokenUsage/updated`, root thread only                                   |
+| PreCompact control         | In-process callback; only top-level continue/decision expressible              | Documented `continue: false`; SLP adapter integration unproven                               |
 | Required adapter work      | Wire the existing merge helper, add PreCompact, establish an acknowledged stop | Preserve abort evidence, warn on unhandled requests, and probe installation/trust/invocation |
-| Fresh continuation         | Create a new session; do not resume old context as a substitute                | Start a new thread; do not resume old context as a substitute                                      |
+| Fresh continuation         | Create a new session; do not resume old context as a substitute                | Start a new thread; do not resume old context as a substitute                                |
 
 Evidence:
 

@@ -94,10 +94,10 @@ Both adapters surface completed native compaction. Retain that evidence and neve
 
 Finalize each checkpoint with the source provider session/thread ID, generation, checkpoint revision, last covered delivery IDs, and the provider event/message/turn cursor actually observed. A daemon sequence is valid only within its recorded timeline epoch; it cannot be treated as a provider cursor after restart. Where stable provider event IDs are unavailable, retain an immutable bounded tail snapshot and its fingerprint rather than inventing a portable offset.
 
-| Provider | Retrieval owner | Required evidence |
-| --- | --- | --- |
+| Provider    | Retrieval owner                                           | Required evidence                                                                                                                                             |
+| ----------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Claude Code | Claude adapter history/replay path for the source session | Locate the checkpoint boundary in persisted source history, including relevant tool-use/result correlation. Detect compaction boundaries or missing segments. |
-| Codex | Codex adapter history path for the source thread | Locate covered turns/items and retrieve the subsequent tail with tool outcome correlation. Detect missing or unavailable source history. |
+| Codex       | Codex adapter history path for the source thread          | Locate covered turns/items and retrieve the subsequent tail with tool outcome correlation. Detect missing or unavailable source history.                      |
 
 The provider implementation must define and test exact cursor semantics, pagination/completeness and behavior after compaction before late recovery is enabled. `agent/agent-loading.ts` can hydrate a timeline, but hydration alone does not prove that every event after a cutoff remains available. Retrieve source history without a product turn and without reactivating the retired generation.
 
