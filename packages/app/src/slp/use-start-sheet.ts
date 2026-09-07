@@ -18,6 +18,8 @@ export function useSlpStartSheet(input: {
   isRouteFocused: boolean;
 }): {
   visible: boolean;
+  /** Changes on every open so the sheet mounts fresh: new draft, new message id. */
+  formKey: number;
   open: (() => void) | undefined;
   close: () => void;
   onStarted: (group: SlpGroupSummary) => void;
@@ -25,10 +27,20 @@ export function useSlpStartSheet(input: {
   const { serverId, workspaceId, workspaceDirectory, isRouteFocused } = input;
   const router = useRouter();
   const [visible, setVisible] = useState(false);
+  const [formKey, setFormKey] = useState(0);
   const supported = useHostFeature(serverId, "slpGroups");
   const group = useSlpGroup(serverId, workspaceId);
   const canStart = supported && group === null && workspaceDirectory !== null;
-  const open = useMemo(() => (canStart ? () => setVisible(true) : undefined), [canStart]);
+  const open = useMemo(
+    () =>
+      canStart
+        ? () => {
+            setFormKey((key) => key + 1);
+            setVisible(true);
+          }
+        : undefined,
+    [canStart],
+  );
   const close = useCallback(() => setVisible(false), []);
   const onStarted = useCallback(
     (started: SlpGroupSummary) => {
@@ -38,5 +50,5 @@ export function useSlpStartSheet(input: {
     },
     [router, serverId, workspaceId],
   );
-  return { visible: visible && isRouteFocused, open, close, onStarted };
+  return { visible: visible && isRouteFocused, formKey, open, close, onStarted };
 }

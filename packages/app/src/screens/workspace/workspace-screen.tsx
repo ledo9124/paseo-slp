@@ -4115,6 +4115,7 @@ function WorkspaceScreenContent({
           onImported={navigateToImportedAgent}
         />
         <SlpStartGroupModal
+          key={slpStartSheet.formKey}
           visible={slpStartSheet.visible}
           serverId={normalizedServerId}
           workspaceId={normalizedWorkspaceId}

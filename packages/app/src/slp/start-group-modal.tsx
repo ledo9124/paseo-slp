@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
@@ -20,8 +20,9 @@ type SlpMode = "direct" | "supervised";
  * The one decision an SLP workspace makes before its first message: the
  * mode. It is fixed once the daemon accepts the message, so the sheet asks
  * for mode, provider and that message together and sends them as one
- * request. The message id is minted when the sheet opens, so a retry after
- * a dropped connection converges on the same group instead of a conflict.
+ * request. The message id is minted with the component, so a retry after a
+ * dropped connection converges on the same group instead of a conflict; the
+ * owner remounts the sheet (a new `key`) for each fresh attempt.
  */
 export function SlpStartGroupModal({
   serverId,
@@ -45,19 +46,9 @@ export function SlpStartGroupModal({
   const [mode, setMode] = useState<SlpMode>("direct");
   const [provider, setProvider] = useState<string | null>(null);
   const [text, setText] = useState("");
-  const [messageId, setMessageId] = useState(() => generateMessageId());
+  const [messageId] = useState(() => generateMessageId());
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (visible) return;
-    setMode("direct");
-    setProvider(null);
-    setText("");
-    setMessageId(generateMessageId());
-    setPending(false);
-    setError(null);
-  }, [visible]);
 
   const providerOptions = useMemo<SelectFieldOption<string>[]>(
     () =>

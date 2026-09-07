@@ -15,6 +15,7 @@ import {
   providersSnapshotQueryKey,
   providersSnapshotQueryRoot,
 } from "@/data/providers-snapshot";
+import { slpGroupQueryKey, slpGroupQueryRoot } from "@/data/slp-group";
 
 type ProvidersSnapshotUpdateMessage = Extract<
   SessionOutboundMessage,
@@ -27,12 +28,14 @@ type SubscribeCheckoutDiffResponseMessage = Extract<
 >;
 type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
 type TerminalsChangedMessage = Extract<SessionOutboundMessage, { type: "terminals_changed" }>;
+type SlpGroupUpdateMessage = Extract<SessionOutboundMessage, { type: "slp.group.update" }>;
 type ServerDataEventType =
   | "providers_snapshot_update"
   | "checkout_diff_update"
   | "subscribe_checkout_diff_response"
   | "status"
-  | "terminals_changed";
+  | "terminals_changed"
+  | "slp.group.update";
 type CheckoutDiffResponsePayload = SubscribeCheckoutDiffResponseMessage["payload"];
 type CheckoutDiffCachePayload = Omit<CheckoutDiffResponsePayload, "subscriptionId">;
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
@@ -134,6 +137,12 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
       });
     },
   },
+  {
+    domain: "slpGroup",
+    invalidate: ({ queryClient, serverId }) => {
+      void queryClient.invalidateQueries({ queryKey: slpGroupQueryRoot(serverId) });
+    },
+  },
 ];
 const reconnectSubscriptionRepairsByServerId = new Map<string, Set<() => void>>();
 
@@ -216,6 +225,16 @@ export function applyProvidersSnapshotUpdate(input: {
     queryKey: agentCommandsQueryRoot(input.serverId),
     exact: false,
   });
+}
+
+/** The daemon pushes the whole summary, so the replica is replaced, never merged. */
+export function applySlpGroupUpdate(input: {
+  serverId: string;
+  queryClient: QueryClient;
+  message: SlpGroupUpdateMessage;
+}): void {
+  const group = input.message.payload.group;
+  input.queryClient.setQueryData(slpGroupQueryKey(input.serverId, group.workspaceId), group);
 }
 
 export function mountServerDataPushRouter(input: PushRouterInput): () => void {
@@ -313,6 +332,9 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
       });
     },
   );
+  const unsubscribeSlpGroupUpdate = input.client.on("slp.group.update", (message) => {
+    applySlpGroupUpdate({ queryClient: input.queryClient, serverId: input.serverId, message });
+  });
   const unsubscribeTerminalsChanged = input.client.on("terminals_changed", (message) => {
     applyTerminalsChanged({
       activeCheckoutDiffSubscriptions,
@@ -343,6 +365,7 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     unsubscribeCheckoutDiffUpdate();
     unsubscribeCheckoutDiffResponse();
     unsubscribeTerminalsChanged();
+    unsubscribeSlpGroupUpdate();
     for (const subscriptionId of activeCheckoutDiffSubscriptions.keys()) {
       unsubscribeCheckoutDiff(input.client, subscriptionId);
     }

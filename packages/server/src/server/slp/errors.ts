@@ -133,3 +133,17 @@ export class SlpNoContactError extends Error {
     this.name = "SlpNoContactError";
   }
 }
+
+/**
+ * The refusals group initialization answers to a client by name. Anything
+ * else thrown there is a daemon fault and propagates.
+ */
+export function isSlpInitializationRefusal(error: unknown): error is Error {
+  return (
+    error instanceof SlpInitializationConflictError ||
+    error instanceof SlpGroupFrozenError ||
+    error instanceof SlpGroupHeldError ||
+    error instanceof SlpDelegationUnavailableError ||
+    error instanceof SlpInstructionsUnavailableError
+  );
+}

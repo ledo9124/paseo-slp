@@ -13,7 +13,7 @@ import {
   type FirstAgentContext,
   type SessionInboundMessage,
   type SessionOutboundMessage,
-  type SlpGroupSummary,
+  type SlpGroupInitializeResponse,
   type GitSetupOptions,
   type StartWorkspaceScriptRequest,
   type WorkspaceScriptListRequest,
@@ -85,6 +85,7 @@ import {
   type WorkspaceLabelService,
 } from "./workspace-labels/index.js";
 import type { SlpService } from "./slp/service.js";
+import { isSlpInitializationRefusal } from "./slp/errors.js";
 
 import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
@@ -2633,11 +2634,7 @@ export class Session {
   private async handleSlpGroupInitialize(
     request: Extract<SessionInboundMessage, { type: "slp.group.initialize.request" }>,
   ): Promise<void> {
-    const respond = (payload: {
-      success: boolean;
-      error: { code: string; message: string } | null;
-      group: SlpGroupSummary | null;
-    }) => {
+    const respond = (payload: Omit<SlpGroupInitializeResponse["payload"], "requestId">) => {
       this.emit({
         type: "slp.group.initialize.response",
         payload: { requestId: request.requestId, ...payload },
@@ -2665,13 +2662,16 @@ export class Session {
       });
       respond({ success: true, error: null, group: this.slp.summarize(group) });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const code = error instanceof Error ? error.name : "error";
+      if (!isSlpInitializationRefusal(error)) throw error;
       this.sessionLogger.warn(
         { err: error, workspaceId: request.workspaceId },
         "slp.group.initialize refused",
       );
-      respond({ success: false, error: { code, message }, group: null });
+      respond({
+        success: false,
+        error: { code: error.name, message: error.message },
+        group: null,
+      });
     }
   }
 

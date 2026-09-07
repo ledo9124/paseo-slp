@@ -1,84 +1,31 @@
-import { useEffect } from "react";
-import { create } from "zustand";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { useTranslation } from "react-i18next";
 import type { SlpGroupSummary } from "@getpaseo/protocol/messages";
+import { slpGroupQueryKey } from "@/data/slp-group";
+import { useReplicaQuery } from "@/data/query";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 
 /**
- * One replica of the daemon's SLP groups per host, keyed by workspace. The
- * daemon pushes every change as `slp.group.update`; `slp.group.get` seeds a
- * workspace the first time a screen asks for it. The summary is the daemon's
- * projection, so the store keeps it as is and the selectors below derive
- * per-agent facts from it.
+ * The daemon's SLP group for one workspace, as a replica: `slp.group.get`
+ * seeds it and every `slp.group.update` push replaces it (see the push
+ * router). The summary is the daemon's projection; the selectors below derive
+ * per-agent facts from it rather than keeping any state of their own.
  */
-interface SlpState {
-  groups: Record<string, Record<string, SlpGroupSummary>>;
-  setGroup: (serverId: string, workspaceId: string, group: SlpGroupSummary | null) => void;
-}
-
-export const useSlpStore = create<SlpState>((set) => ({
-  groups: {},
-  setGroup: (serverId, workspaceId, group) =>
-    set((state) => {
-      const host = { ...state.groups[serverId] };
-      if (group) host[workspaceId] = group;
-      else delete host[workspaceId];
-      return { groups: { ...state.groups, [serverId]: host } };
-    }),
-}));
-
-const updateSubscriptions = new Map<string, { count: number; unsubscribe: () => void }>();
-
-/** Keeps one push subscription per host alive while any screen needs it. */
-function retainUpdates(serverId: string, client: DaemonClient): () => void {
-  const existing = updateSubscriptions.get(serverId);
-  if (existing) {
-    existing.count += 1;
-  } else {
-    const unsubscribe = client.on("slp.group.update", (message) => {
-      const group = message.payload.group;
-      useSlpStore.getState().setGroup(serverId, group.workspaceId, group);
-    });
-    updateSubscriptions.set(serverId, { count: 1, unsubscribe });
-  }
-  return () => {
-    const entry = updateSubscriptions.get(serverId);
-    if (!entry) return;
-    entry.count -= 1;
-    if (entry.count === 0) {
-      entry.unsubscribe();
-      updateSubscriptions.delete(serverId);
-    }
-  };
-}
-
 export function useSlpGroup(serverId: string, workspaceId: string): SlpGroupSummary | null {
+  const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const supported = useHostFeature(serverId, "slpGroups");
-  const group = useSlpStore((state) => state.groups[serverId]?.[workspaceId] ?? null);
-
-  useEffect(() => {
-    if (!client || !isConnected || !supported || !workspaceId) return;
-    const release = retainUpdates(serverId, client);
-    let cancelled = false;
-    const seed = async () => {
-      try {
-        const payload = await client.slpGroupGet(workspaceId);
-        if (!cancelled) useSlpStore.getState().setGroup(serverId, workspaceId, payload.group);
-      } catch {
-        // A failed seed leaves the replica empty; the next push or mount retries.
-      }
-    };
-    void seed();
-    return () => {
-      cancelled = true;
-      release();
-    };
-  }, [client, isConnected, supported, serverId, workspaceId]);
-
-  return group;
+  const query = useReplicaQuery({
+    queryKey: slpGroupQueryKey(serverId, workspaceId),
+    pushEvent: "slp.group.update",
+    enabled: Boolean(client && isConnected && supported && workspaceId),
+    queryFn: async () => {
+      if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
+      return (await client.slpGroupGet(workspaceId)).group;
+    },
+  });
+  return query.data ?? null;
 }
 
 export interface SlpTransferView {

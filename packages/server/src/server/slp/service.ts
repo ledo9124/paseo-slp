@@ -257,14 +257,6 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
 
   /** The client-facing projection of a group: see packages/protocol SlpGroupSummarySchema. */
   summarize(group: SlpGroupRecord): SlpGroupSummary {
-    const contact = (() => {
-      try {
-        return this.contactAgentId(group);
-      } catch (error) {
-        if (error instanceof SlpNoContactError) return null;
-        throw error;
-      }
-    })();
     const mail = { queued: 0, dispatching: 0, uncertain: 0 };
     for (const record of this.mailbox.list()) {
       if (record.groupId !== group.id) continue;
@@ -286,7 +278,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
             since: group.hold.since,
           }
         : null,
-      contactAgentId: contact,
+      contactAgentId: findContactAgentId(group),
       initialMessageReceipt: group.initialization.receipt,
       slots: Object.values(group.slots).map((slot) => ({
         id: slot.id,
@@ -653,11 +645,9 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
 
   /** The agent the Human talks to: the Supervisor in supervised mode, else the Lead. */
   contactAgentId(group: SlpGroupRecord): string {
-    const slotId = group.supervisorSlotId ?? group.leadSlotId;
-    const slot = group.slots[slotId];
-    const active = slot?.generations.find((entry) => entry.id === slot.activeGenerationId);
-    if (!active) throw new SlpNoContactError(group.id);
-    return active.agentId;
+    const agentId = findContactAgentId(group);
+    if (!agentId) throw new SlpNoContactError(group.id);
+    return agentId;
   }
 
   /** One root slot's first generation, created under the journal so a retry reuses the id. */
@@ -978,6 +968,12 @@ function relationOf(
   if (targetSlot.role === "supervisor") return "supervisor";
   if (targetSlot.role === "lead") return "lead";
   return "other-member";
+}
+
+/** Null while the contact slot has no active generation (initializing, or inconsistent records). */
+function findContactAgentId(group: SlpGroupRecord): string | null {
+  const slot = group.slots[group.supervisorSlotId ?? group.leadSlotId];
+  return slot?.generations.find((entry) => entry.id === slot.activeGenerationId)?.agentId ?? null;
 }
 
 function transferReason(record: SlpTransferRecord): string | null {

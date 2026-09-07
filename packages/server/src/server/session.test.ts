@@ -27,6 +27,7 @@ import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
+import { SlpInitializationConflictError } from "./slp/errors.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
 import type { SessionOptions } from "./session.js";
@@ -823,15 +824,9 @@ describe("SLP group RPCs", () => {
   });
 
   test("answers a refusal with the runtime's error name, and a disabled host by code", async () => {
-    class SlpInitializationConflictError extends Error {
-      constructor() {
-        super("a group for this workspace already chose a different mode");
-        this.name = "SlpInitializationConflictError";
-      }
-    }
     const { service } = slpStub({
       initializeGroup: async () => {
-        throw new SlpInitializationConflictError();
+        throw new SlpInitializationConflictError("grp_1", "mode");
       },
     });
     const request = {
@@ -857,7 +852,7 @@ describe("SLP group RPCs", () => {
           success: false,
           error: {
             code: "SlpInitializationConflictError",
-            message: "a group for this workspace already chose a different mode",
+            message: "SLP group grp_1 is already initialized with a different mode",
           },
           group: null,
         },
@@ -874,6 +869,32 @@ describe("SLP group RPCs", () => {
         },
       },
     ]);
+  });
+
+  test("a daemon fault inside initialization is not answered as a refusal", async () => {
+    const { service } = slpStub({
+      initializeGroup: async () => {
+        throw new Error("disk full");
+      },
+    });
+    const messages: SessionOutboundMessage[] = [];
+    await createSessionForTest({ messages, slp: service }).handleMessage({
+      type: "slp.group.initialize.request",
+      requestId: "init-3",
+      workspaceId: "wks_1",
+      mode: "direct",
+      cwd: "/repo",
+      provider: "codex",
+      messageId: "msg-1",
+      text: "Login is slow",
+    });
+    expect(messages[0]).toEqual(
+      expect.objectContaining({
+        type: "rpc_error",
+        payload: expect.objectContaining({ requestId: "init-3" }),
+      }),
+    );
+    expect(messages.map((message) => message.type)).not.toContain("slp.group.initialize.response");
   });
 
   test("pushes the current summary whenever the runtime reports a group change", async () => {
