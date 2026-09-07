@@ -201,11 +201,11 @@ One file per message to a slot, holding the provider prompt exactly as it will b
 
 **Path:** `$PASEO_HOME/slp/checkpoints/{slotId}.json` and `{transferId}.json`
 
-The slot's current checkpoint is one file named by the slot, rewritten in place with a rising revision; a transfer copies it under its own id at the switch so the finalized snapshot never changes. The agent-supplied content and the daemon-attached watermark are separate fields. Contract: [docs/slp/handoff.md](slp/handoff.md#checkpoint).
+The slot's current checkpoint is one file named by the slot, rewritten in place with a rising revision; a transfer copies it under its own id at the switch so the finalized snapshot never changes. The agent-supplied content and the daemon-attached fields (mail watermark, timeline cursor) are separate. The cursor is an epoch and sequence in the daemon's timeline, valid only in that epoch. Contract: [docs/slp/handoff.md](slp/handoff.md#checkpoint).
 
 **Path:** `$PASEO_HOME/slp/transfers/{transferId}.json`
 
-One file per same-role handoff, a phase-discriminated journal. It is a manifest, not the commit: the group record's active-generation pointer is the commit, and boot recovery reconciles the two — pointer still at the source restores the source, pointer at the candidate rolls forward, anything else freezes the group. Recovery rule: [docs/slp/handoff.md](slp/handoff.md#the-recovery-rule).
+One file per same-role handoff, a phase-discriminated journal. It is a manifest, not the commit: the group record's active-generation pointer is the commit, and boot recovery reconciles the two — pointer still at the source restores the source, pointer at the candidate rolls forward, anything else freezes the group. From the stop on, the record carries what the stop found (pending permissions and the bounded history tail after the checkpoint); a blocked or aborted record keeps it if it had it. Recovery rule: [docs/slp/handoff.md](slp/handoff.md#the-recovery-rule).
 
 ## 2. Daemon Configuration
 

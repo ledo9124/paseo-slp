@@ -14,6 +14,7 @@ import {
   SlpTransferRefusedError,
 } from "./errors.js";
 import type { SlpHandbackRegister } from "./handbacks.js";
+import { buildHistoryTail } from "./history-tail.js";
 import type { SlpMailbox } from "./mailbox.js";
 import {
   newSlpId,
@@ -23,9 +24,11 @@ import {
   type SlpCheckpointRecord,
   type SlpGenerationRecord,
   type SlpGroupRecord,
+  type SlpMailRecord,
   type SlpSlotRecord,
   type SlpTransferCandidate,
   type SlpTransferRecord,
+  type SlpTransferStop,
 } from "./store.js";
 import { nextTurnBoundary } from "./turn-boundary.js";
 
@@ -59,6 +62,7 @@ export interface SlpTransferHost {
     | "admitForegroundTurn"
     | "getLastAssistantMessage"
     | "archiveSnapshot"
+    | "fetchTimeline"
   >;
   agentStorage: Pick<AgentStorage, "get">;
   agentRequests: Pick<AgentRequests, "create">;
@@ -195,13 +199,14 @@ export class SlpTransfers {
       await this.abort(record, "daemon restarted before the active-generation switch");
       return;
     }
-    if (candidate && slot.activeGenerationId === candidate.generationId) {
+    const stop = stopOf(record);
+    if (candidate && stop && slot.activeGenerationId === candidate.generationId) {
       if (record.phase !== "switched") {
         await this.persist({
           ...record,
           phase: "switched",
           candidate,
-          pendingPermissions: "pendingPermissions" in record ? record.pendingPermissions : 0,
+          stop,
           switchedAt: this.host.now().toISOString(),
         });
       }
@@ -228,6 +233,12 @@ export class SlpTransfers {
   }
 
   /** The manager's acknowledged cancellation is the stop evidence, not the adapter's. */
+  /**
+   * The stop is also when the tail is read: everything the source's timeline
+   * holds after its checkpoint, from the same daemon epoch. A timeline rebuilt
+   * since the checkpoint anchors nothing, so the transfer blocks rather than
+   * guess where the checkpoint fell.
+   */
   private async stop(record: TransferIn<"requested">): Promise<TransferIn<"stopped">> {
     await this.untilNotRunning(record.sourceAgentId);
     const agent = this.host.agentManager.getAgent(record.sourceAgentId);
@@ -249,7 +260,39 @@ export class SlpTransfers {
         "the source agent was archived before the transfer could stop it",
       );
     }
-    return this.persist({ ...record, phase: "stopped", pendingPermissions });
+    const checkpoint = this.requireCheckpoint(record, "stopping");
+    if (!this.host.agentManager.getAgent(record.sourceAgentId)) {
+      throw new SlpTransferBlockedError(record.id, "stopping", "the source agent is not loaded");
+    }
+    const fetched = this.host.agentManager.fetchTimeline(record.sourceAgentId, {
+      direction: "after",
+      cursor: checkpoint.timelineCursor,
+      limit: 0,
+    });
+    if (fetched.staleCursor || fetched.gap) {
+      throw new SlpTransferBlockedError(
+        record.id,
+        "stopping",
+        "the source's history after its checkpoint is unavailable; its timeline was rebuilt since the checkpoint",
+      );
+    }
+    const historyTail = buildHistoryTail(checkpoint.timelineCursor, fetched.epoch, fetched.rows);
+    return this.persist({
+      ...record,
+      phase: "stopped",
+      stop: { pendingPermissions, historyTail },
+    });
+  }
+
+  private requireCheckpoint(
+    record: SlpTransferRecord,
+    phase: "stopping" | "preparing",
+  ): SlpCheckpointRecord {
+    const checkpoint = this.host.checkpoints.current(record.slotId);
+    if (!checkpoint || checkpoint.revision < record.checkpointRevision) {
+      throw new SlpTransferBlockedError(record.id, phase, "the slot's checkpoint is missing");
+    }
+    return checkpoint;
   }
 
   /**
@@ -266,10 +309,7 @@ export class SlpTransfers {
         "preparing",
         "the source agent record is missing",
       );
-    const checkpoint = this.host.checkpoints.current(slot.id);
-    if (!checkpoint || checkpoint.revision < record.checkpointRevision) {
-      throw new SlpTransferBlockedError(record.id, "preparing", "the slot's checkpoint is missing");
-    }
+    const checkpoint = this.requireCheckpoint(record, "preparing");
     const generationNumber = slot.generations.length + 1;
     const prompt = await this.host.composePrompt(group, slot, generationNumber);
     const agentId = await this.host.agentRequests.create({
@@ -447,6 +487,7 @@ export class SlpTransfers {
       ...record,
       phase: "blocked",
       candidate: candidateOf(record),
+      stop: stopOf(record),
       blockedReason: reason,
     });
     this.host.logger.error({ transferId: id, reason }, "SLP transfer blocked");
@@ -468,7 +509,13 @@ export class SlpTransfers {
     if (slot.role === "peer") {
       await this.host.handbacks.setTransferInProgress(record.sourceAgentId, false);
     }
-    await this.persist({ ...record, phase: "aborted", candidate, abortedReason: reason });
+    await this.persist({
+      ...record,
+      phase: "aborted",
+      candidate,
+      stop: stopOf(record),
+      abortedReason: reason,
+    });
     if (candidate && (await this.host.agentStorage.get(candidate.agentId))) {
       await this.host.agentManager.closeAgent(candidate.agentId);
       await this.host.agentManager.archiveSnapshot(
@@ -507,16 +554,17 @@ export class SlpTransfers {
       .filter(
         (mail) => mail.slotId === slot.id && mail.state === "accepted" && !covered.has(mail.id),
       )
-      .map(
-        (mail) =>
-          `- ${mail.kind} ${mail.id}: ${typeof mail.prompt === "string" ? mail.prompt : "(structured prompt)"}`,
-      );
+      .map((mail) => `- ${mail.kind} ${mail.id}: ${describeMailPrompt(mail.prompt)}`);
     const peers = Object.values(group.slots)
       .filter((entry) => entry.ownerSlotId === slot.id)
       .map((entry) => {
         const active = entry.generations.find((gen) => gen.id === entry.activeGenerationId);
         return `- slot ${entry.id}: ${active ? `agent ${active.agentId} (active)` : "no active generation"}`;
       });
+    const tail = record.stop.historyTail;
+    const activity = tail.entries.map((entry) => `- ${entry.text}`);
+    let omitted = "";
+    if (tail.omitted > 0) omitted = ` (${tail.omitted} earlier entries omitted)`;
     const content = checkpoint.content;
     const lines = [
       `SLP handoff ${record.id}: you are the candidate for slot ${slot.id}.`,
@@ -534,10 +582,11 @@ export class SlpTransfers {
       `Next action: ${content.nextAction}`,
       `Notes: ${content.notes ?? "(none)"}`,
       "",
-      `Pending permissions at stop: ${record.pendingPermissions}`,
+      `Pending permissions at stop: ${record.stop.pendingPermissions}`,
       `Source's last message: ${lastMessage ?? "(none)"}`,
-      `Mail accepted after the checkpoint:${uncovered.length ? `\n${uncovered.join("\n")}` : " (none)"}`,
-      `Peers you own; their assignments continue and must not be recreated:${peers.length ? `\n${peers.join("\n")}` : " (none)"}`,
+      `Source activity after the checkpoint${omitted}:${listOrNone(activity)}`,
+      `Mail accepted after the checkpoint:${listOrNone(uncovered)}`,
+      `Peers you own; their assignments continue and must not be recreated:${listOrNone(peers)}`,
     ];
     return formatSystemNotificationPrompt(lines.join("\n"));
   }
@@ -592,4 +641,17 @@ export class SlpTransfers {
 
 function candidateOf(record: SlpTransferRecord): SlpTransferCandidate | null {
   return "candidate" in record ? record.candidate : null;
+}
+
+function stopOf(record: SlpTransferRecord): SlpTransferStop | null {
+  return "stop" in record ? record.stop : null;
+}
+
+function listOrNone(lines: string[]): string {
+  if (lines.length === 0) return " (none)";
+  return `\n${lines.join("\n")}`;
+}
+
+function describeMailPrompt(prompt: SlpMailRecord["prompt"]): string {
+  return typeof prompt === "string" ? prompt : "(structured prompt)";
 }

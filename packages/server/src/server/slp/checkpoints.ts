@@ -5,6 +5,7 @@ import {
   SlpRecordStore,
   type SlpCheckpointContent,
   type SlpCheckpointRecord,
+  type SlpTimelineCursor,
 } from "./store.js";
 
 export interface SlpCheckpointStoreOptions {
@@ -20,6 +21,7 @@ export interface SlpCheckpointWrite {
   agentId: string;
   content: SlpCheckpointContent;
   coveredMailIds: string[];
+  timelineCursor: SlpTimelineCursor;
 }
 
 /**
@@ -70,6 +72,7 @@ export class SlpCheckpointStore {
       revision: (previous?.revision ?? 0) + 1,
       content: input.content,
       coveredMailIds: input.coveredMailIds,
+      timelineCursor: input.timelineCursor,
       createdAt: previous?.createdAt ?? at,
       updatedAt: at,
     };

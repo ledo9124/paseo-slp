@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 
 import type { AgentManager, DestructiveOperationGate } from "../agent/agent-manager.js";
+import type { AgentExecutionPolicy } from "../agent/agent-sdk-types.js";
 import type { AgentRequests } from "../agent/requests/index.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import type { SlpCreationHook, SlpPeerCreation } from "../agent/create-agent/create.js";
@@ -50,6 +51,7 @@ import {
   type SlpInitializationRecord,
   type SlpMailRecord,
   type SlpSlotRecord,
+  type SlpTimelineCursor,
   type SlpTransferRecord,
   type SlpWorkspaceMode,
 } from "./store.js";
@@ -69,7 +71,7 @@ export interface SlpServiceOptions {
   logger: Logger;
   agentManager: SlpMailboxAgentManager &
     SlpTransferHost["agentManager"] &
-    Pick<AgentManager, "setDestructiveOperationGate" | "setTurnAdmissionGate">;
+    Pick<AgentManager, "setDestructiveOperationGate" | "setAdmissionGate">;
   agentStorage: AgentStorage;
   agentRequests: Pick<AgentRequests, "create" | "send">;
   /** Creates one generation's agent under the preassigned id. Bootstrap binds the create funnel. */
@@ -181,14 +183,32 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       createMemberAgent: (input) => this.createMemberAgent(input),
     });
     this.agentManager.setDestructiveOperationGate(this.destructiveOperationGate());
-    this.agentManager.setTurnAdmissionGate({
+    this.agentManager.setAdmissionGate({
       assertTurnAllowed: (agentId) => {
         const group = this.getGroupForAgent(agentId);
         if (group && membershipOf(group, agentId).generation.state === "retired") {
           throw new SlpGenerationRetiredError(agentId, group.id);
         }
       },
+      executionPolicyFor: (agentId) => this.executionPolicyFor(agentId),
     });
+  }
+
+  /**
+   * Receive-only until the durable switch: the answer follows the transfer
+   * journal and the generation state, so lifting the policy is the switch
+   * itself, with no restoration step that a crash could land between.
+   */
+  executionPolicyFor(agentId: string): AgentExecutionPolicy {
+    const transfer = this.transfers.forCandidate(agentId);
+    const group = this.getGroupForAgent(agentId);
+    if (!transfer || !group) return { kind: "authorized" };
+    const { slot, generation } = membershipOf(group, agentId);
+    if (generation.state !== "preparing") return { kind: "authorized" };
+    return {
+      kind: "preparation",
+      reason: `SLP transfer ${transfer.id} is preparing it for slot ${slot.id}`,
+    };
   }
 
   getGroup(groupId: string): SlpGroupRecord | null {
@@ -267,8 +287,14 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
         .list()
         .filter((mail) => mail.slotId === slot.id && mail.state === "accepted")
         .map((mail) => mail.id),
+      timelineCursor: this.timelineCursorOf(callerAgentId),
     });
     return { checkpointId: record.id, revision: record.revision };
+  }
+
+  private timelineCursorOf(agentId: string): SlpTimelineCursor {
+    const tail = this.agentManager.fetchTimeline(agentId, { direction: "tail", limit: 1 });
+    return { epoch: tail.epoch, seq: tail.window.maxSeq };
   }
 
   /**
@@ -285,6 +311,16 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     const checkpoint = this.checkpoints.current(slot.id);
     if (checkpoint?.generationId !== generation.id) {
       throw new SlpTransferRefusedError(slot.id, "write a checkpoint before requesting a handoff");
+    }
+    // An archived source is refused by the transfer; only a loaded one has a timeline to compare.
+    if (
+      this.agentManager.getAgent(callerAgentId) &&
+      checkpoint.timelineCursor.epoch !== this.timelineCursorOf(callerAgentId).epoch
+    ) {
+      throw new SlpTransferRefusedError(
+        slot.id,
+        "the checkpoint predates a rebuild of the agent's history; write a new checkpoint",
+      );
     }
     const transfer = await this.transfers.request({
       group,

@@ -219,6 +219,17 @@ export const SlpCheckpointContentSchema = z.object({
 export type SlpCheckpointContent = z.infer<typeof SlpCheckpointContentSchema>;
 
 /**
+ * A position in the daemon's timeline for one agent. Valid only within its
+ * epoch: a rebuilt timeline (restart, reload from disk) mints a new one and
+ * renumbers, so a cursor from an older epoch anchors nothing.
+ */
+export const SlpTimelineCursorSchema = z.object({
+  epoch: z.string(),
+  seq: z.number().int().nonnegative(),
+});
+export type SlpTimelineCursor = z.infer<typeof SlpTimelineCursorSchema>;
+
+/**
  * One current checkpoint per slot (id = slot id), rewritten in place, plus an
  * immutable copy per transfer (id = transfer id) taken at the switch. The
  * daemon attaches identity and the mail watermark; the agent cannot set them.
@@ -236,12 +247,27 @@ export const SlpCheckpointSchema = z.object({
   content: SlpCheckpointContentSchema,
   /** Mail to this slot already accepted when the checkpoint was written. */
   coveredMailIds: z.array(z.string()),
+  /** Where the writer's timeline stood; what follows it is the tail a transfer carries. */
+  timelineCursor: SlpTimelineCursorSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type SlpCheckpointRecord = z.infer<typeof SlpCheckpointSchema>;
 
 const SlpTransferCandidateSchema = z.object({ generationId: z.string(), agentId: z.string() });
+
+/**
+ * The source's timeline after its checkpoint, captured once it stopped and
+ * bounded (docs/slp/handoff.md#history-recovery-contract). What was omitted
+ * is counted, never summarized.
+ */
+export const SlpHistoryTailSchema = z.object({
+  from: SlpTimelineCursorSchema,
+  to: SlpTimelineCursorSchema,
+  entries: z.array(z.object({ seq: z.number().int().nonnegative(), text: z.string() })),
+  omitted: z.number().int().nonnegative(),
+});
+export type SlpHistoryTail = z.infer<typeof SlpHistoryTailSchema>;
 
 const SlpTransferBaseSchema = z.object({
   id: z.string(),
@@ -261,36 +287,37 @@ const SlpTransferBaseSchema = z.object({
  * active-generation pointer, not this file, is the committed switch, and boot
  * recovery reconciles the two (docs/slp/handoff.md#the-recovery-rule).
  */
+/** What the stop recorded; every later phase carries it, a failure keeps it if it had it. */
+const SlpTransferStopSchema = z.object({
+  pendingPermissions: z.number().int().nonnegative(),
+  historyTail: SlpHistoryTailSchema,
+});
+export type SlpTransferStop = z.infer<typeof SlpTransferStopSchema>;
+const SlpTransferStoppedSchema = SlpTransferBaseSchema.extend({ stop: SlpTransferStopSchema });
+
 export const SlpTransferSchema = z.discriminatedUnion("phase", [
   // Intent persisted, slot held. No external effect yet.
   SlpTransferBaseSchema.extend({ phase: z.literal("requested") }),
-  // The source's stop was acknowledged by the manager.
-  SlpTransferBaseSchema.extend({
-    phase: z.literal("stopped"),
-    pendingPermissions: z.number().int().nonnegative(),
-  }),
+  // The source's stop was acknowledged by the manager and its tail captured.
+  SlpTransferStoppedSchema.extend({ phase: z.literal("stopped") }),
   // A candidate generation exists in the group; its agent is being created or preparing.
-  SlpTransferBaseSchema.extend({
+  SlpTransferStoppedSchema.extend({
     phase: z.literal("preparing"),
-    pendingPermissions: z.number().int().nonnegative(),
     candidate: SlpTransferCandidateSchema,
   }),
   // The candidate acknowledged readiness; its preparation turn is stopped.
-  SlpTransferBaseSchema.extend({
+  SlpTransferStoppedSchema.extend({
     phase: z.literal("ready"),
-    pendingPermissions: z.number().int().nonnegative(),
     candidate: SlpTransferCandidateSchema,
   }),
   // The group pointer moved to the candidate. Everything after this rolls forward.
-  SlpTransferBaseSchema.extend({
+  SlpTransferStoppedSchema.extend({
     phase: z.literal("switched"),
-    pendingPermissions: z.number().int().nonnegative(),
     candidate: SlpTransferCandidateSchema,
     switchedAt: z.string(),
   }),
-  SlpTransferBaseSchema.extend({
+  SlpTransferStoppedSchema.extend({
     phase: z.literal("completed"),
-    pendingPermissions: z.number().int().nonnegative(),
     candidate: SlpTransferCandidateSchema,
     switchedAt: z.string(),
     completedAt: z.string(),
@@ -299,12 +326,14 @@ export const SlpTransferSchema = z.discriminatedUnion("phase", [
   SlpTransferBaseSchema.extend({
     phase: z.literal("blocked"),
     candidate: SlpTransferCandidateSchema.nullable(),
+    stop: SlpTransferStopSchema.nullable(),
     blockedReason: z.string(),
   }),
   // Restored before the switch: the source stayed the owner.
   SlpTransferBaseSchema.extend({
     phase: z.literal("aborted"),
     candidate: SlpTransferCandidateSchema.nullable(),
+    stop: SlpTransferStopSchema.nullable(),
     abortedReason: z.string(),
   }),
 ]);

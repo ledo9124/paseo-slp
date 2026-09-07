@@ -25,6 +25,7 @@ import {
   type AgentCreateSessionOptions,
   type AgentResumeSessionOptions,
   type AgentFeature,
+  type AgentExecutionPolicy,
   type AgentLaunchContext,
   type AgentSlashCommand,
   type AgentMode,
@@ -336,12 +337,15 @@ export interface DestructiveOperationGate {
 }
 
 /**
- * Refuses a turn for an agent that may no longer run product work (a retired
- * SLP generation). Checked synchronously at the run-slot claim, so every
- * route into a turn sees it. Throws to refuse.
+ * What an agent may run right now, decided by daemon-owned state (SLP
+ * generations). `assertTurnAllowed` is checked synchronously at the run-slot
+ * claim, so every route into a turn sees it; it throws to refuse.
+ * `executionPolicyFor` is handed to the provider session through its launch
+ * context and consulted at each of the provider's own policy decisions.
  */
-export interface TurnAdmissionGate {
+export interface AgentAdmissionGate {
   assertTurnAllowed(agentId: string): void;
+  executionPolicyFor(agentId: string): AgentExecutionPolicy;
 }
 
 export interface AdmitForegroundTurnOptions extends AgentRunOptions {
@@ -755,7 +759,7 @@ export class AgentManager {
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
   private destructiveOperationGate: DestructiveOperationGate | null = null;
-  private turnAdmissionGate: TurnAdmissionGate | null = null;
+  private admissionGate: AgentAdmissionGate | null = null;
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
@@ -841,8 +845,8 @@ export class AgentManager {
     this.destructiveOperationGate = gate;
   }
 
-  setTurnAdmissionGate(gate: TurnAdmissionGate): void {
-    this.turnAdmissionGate = gate;
+  setAdmissionGate(gate: AgentAdmissionGate): void {
+    this.admissionGate = gate;
   }
 
   /** Workspace archive and project removal call this before any teardown effect. */
@@ -2374,7 +2378,7 @@ export class AgentManager {
       );
       throw new Error(`Agent ${agentId} already has an active run`);
     }
-    this.turnAdmissionGate?.assertTurnAllowed(agentId);
+    this.admissionGate?.assertTurnAllowed(agentId);
 
     const agent = existingAgent;
     const isReplacement = agent.pendingReplacement;
@@ -5085,6 +5089,10 @@ export class AgentManager {
         PASEO_AGENT_CWD: cwd,
       },
     };
+    const gate = this.admissionGate;
+    if (gate) {
+      context.resolveExecutionPolicy = () => gate.executionPolicyFor(agentId);
+    }
     if (
       this.paseoToolsEnabled &&
       isPaseoToolPolicyEnabled(paseoToolPolicy) &&

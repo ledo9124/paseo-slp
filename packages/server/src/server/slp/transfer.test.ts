@@ -262,6 +262,23 @@ describe("SLP same-role handoff", () => {
     expect(context).toContain(`SLP handoff ${transferId}`);
     expect(context).toContain("Objective: Make login fast");
     expect(context).toContain(`slot ${peerSlot.id}: agent ${peerId} (active)`);
+    // The tail: what the source's timeline holds after the checkpoint, from the same epoch.
+    expect(context).toContain(
+      `Source activity after the checkpoint:\n- assistant: ${HANDBACK_TEXT}`,
+    );
+    const stoppedRecord = transfer(daemon, transferId);
+    if (!("stop" in stoppedRecord)) throw new Error("transfer lost its stop record");
+    const checkpointFile = await readSlpFile(SlpCheckpointSchema, "checkpoints", group.leadSlotId);
+    expect(stoppedRecord.stop.historyTail).toMatchObject({
+      from: checkpointFile.timelineCursor,
+      omitted: 0,
+    });
+    expect(stoppedRecord.stop.historyTail.to.seq).toBeGreaterThan(
+      checkpointFile.timelineCursor.seq,
+    );
+    // The provider session sees receive-only policy until the durable switch.
+    expect(daemon.service.executionPolicyFor(candidateId)).toMatchObject({ kind: "preparation" });
+    expect(daemon.service.executionPolicyFor(leadId)).toEqual({ kind: "authorized" });
     const candidateRecord = await daemon.storage.get(candidateId);
     expect(candidateRecord?.config?.systemPrompt).toContain("- Generation: 2");
     expect(candidateRecord?.config?.systemPrompt).toMatch(/^# Lead instructions$/m);
@@ -288,6 +305,7 @@ describe("SLP same-role handoff", () => {
       ],
     );
     expect(activeAgentId(daemon, group.id, group.leadSlotId)).toBe(candidateId);
+    expect(daemon.service.executionPolicyFor(candidateId)).toEqual({ kind: "authorized" });
     expect(daemon.manager.getAgent(leadId)).toBeNull();
     expect((await daemon.storage.get(peerId))?.labels[PARENT_AGENT_ID_LABEL]).toBe(candidateId);
     expect(candidateRecord?.labels[PARENT_AGENT_ID_LABEL]).toBeUndefined();
@@ -432,12 +450,16 @@ describe("SLP same-role handoff", () => {
     ).toBe("retired");
     expect((await second.storage.get(candidateId))?.archivedAt).toEqual(expect.any(String));
     expect((await second.storage.get(peerId))?.labels[PARENT_AGENT_ID_LABEL]).toBe(leadId);
-    // The source works again and can hand off later.
+    // The source works again and can hand off later, from a checkpoint written
+    // in this daemon's timeline epoch: the old one anchors no tail any more.
     await ensureAgentLoaded(leadId, {
       agentManager: second.manager,
       agentStorage: second.storage,
       logger: createTestLogger(),
     });
+    await expect(second.service.requestHandoff(leadId, "stale checkpoint")).rejects.toThrow(
+      /write a new checkpoint/,
+    );
     const again = await requestHandoffFromTurn(second, leadId, "Second attempt");
     sessionOf(second, leadId).release();
     const successorId = await candidateStarted(second, again);

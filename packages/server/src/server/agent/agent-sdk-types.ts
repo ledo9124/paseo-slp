@@ -625,6 +625,13 @@ export interface AgentSessionConfig {
   internal?: boolean;
 }
 
+/**
+ * What the daemon lets an agent's provider session do right now. `preparation`
+ * is receive-only: reads and the daemon's own control tools, no writes, shell
+ * effects or delegation, whatever the session's own mode and options say.
+ */
+export type AgentExecutionPolicy = { kind: "authorized" } | { kind: "preparation"; reason: string };
+
 export interface AgentLaunchContext {
   agentId?: string;
   env?: Record<string, string>;
@@ -633,6 +640,13 @@ export interface AgentLaunchContext {
    * AgentSessionConfig; providers may adapt it to their native tool surface.
    */
   paseoTools?: PaseoToolCatalog;
+  /**
+   * Consulted at every provider policy decision (turn start, tool use), never
+   * copied: the daemon derives the answer from durable state, so the policy a
+   * session runs under after a restart is the one the state says, with no
+   * stored copy that could disagree.
+   */
+  resolveExecutionPolicy?: () => AgentExecutionPolicy;
 }
 
 export interface AgentCreateSessionOptions {
