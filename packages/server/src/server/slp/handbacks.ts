@@ -1,31 +1,23 @@
 import type { Logger } from "pino";
 
-import { ensureAgentLoaded, type AgentLoaderManager } from "../agent/agent-loading.js";
 import type { AgentManager } from "../agent/agent-manager.js";
 import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
-import type { AgentRequests } from "../agent/requests/index.js";
+import type { SlpMailbox } from "./mailbox.js";
 import {
   newSlpId,
-  SlpHandbackStore,
+  SlpHandbackSchema,
+  SlpRecordStore,
   type SlpHandbackOutcome,
   type SlpHandbackRecord,
 } from "./store.js";
 
-export type SlpHandbackAgentManager = AgentLoaderManager &
-  Pick<
-    AgentManager,
-    "subscribe" | "getLastAssistantMessage" | "admitForegroundTurn" | "waitForAgentEvent"
-  >;
-
 export interface SlpHandbackRegisterOptions {
   directory: string;
   logger: Logger;
-  agentManager: SlpHandbackAgentManager;
-  agentStorage: AgentStorage;
-  agentRequests: Pick<AgentRequests, "send">;
-  /** The slot's current active agent, read at delivery time. Null while the slot has no active generation. */
-  resolveSlotAgent: (groupId: string, slotId: string) => string | null;
+  agentManager: Pick<AgentManager, "subscribe" | "getLastAssistantMessage">;
+  agentStorage: Pick<AgentStorage, "get">;
+  mailbox: Pick<SlpMailbox, "enqueue">;
   now: () => Date;
 }
 
@@ -37,40 +29,32 @@ export interface SlpHandbackRegistration {
   ownerSlotId: string;
 }
 
-/** The message a record currently owes its owner. */
-interface OwedMessage {
-  messageId: string;
-  kind: "handback" | "interrupted";
-}
-
 /**
  * The durable logical handback: registered before the Peer exists, re-armed
- * at boot, addressed to a slot rather than an agent, and delivered through
- * turn admission so a handback never cancels the owner's live turn. This
- * replaces `setupFinishNotification` for SLP Peers; see
+ * at boot, and addressed to the owner slot's mailbox so it can never cancel
+ * the owner's live turn or bind to a retired generation. This replaces
+ * `setupFinishNotification` for SLP Peers; see
  * docs/slp/handoff.md#relationships-and-background-work for why that channel
  * cannot carry it.
  */
 export class SlpHandbackRegister {
-  private readonly store: SlpHandbackStore;
+  private readonly store: SlpRecordStore<SlpHandbackRecord>;
   private readonly logger: Logger;
-  private readonly agentManager: SlpHandbackAgentManager;
-  private readonly agentStorage: AgentStorage;
-  private readonly agentRequests: Pick<AgentRequests, "send">;
-  private readonly resolveSlotAgent: SlpHandbackRegisterOptions["resolveSlotAgent"];
+  private readonly agentManager: SlpHandbackRegisterOptions["agentManager"];
+  private readonly agentStorage: SlpHandbackRegisterOptions["agentStorage"];
+  private readonly mailbox: SlpHandbackRegisterOptions["mailbox"];
   private readonly now: () => Date;
   private readonly records = new Map<string, SlpHandbackRecord>();
   private readonly watchers = new Map<string, () => void>();
-  /** Serializes every state change and delivery for one handback. */
+  /** Serializes every state change for one handback. */
   private readonly lanes = new Map<string, Promise<unknown>>();
 
   constructor(options: SlpHandbackRegisterOptions) {
-    this.store = new SlpHandbackStore(options.directory);
+    this.store = new SlpRecordStore(options.directory, SlpHandbackSchema);
     this.logger = options.logger;
     this.agentManager = options.agentManager;
     this.agentStorage = options.agentStorage;
-    this.agentRequests = options.agentRequests;
-    this.resolveSlotAgent = options.resolveSlotAgent;
+    this.mailbox = options.mailbox;
     this.now = options.now;
   }
 
@@ -97,9 +81,9 @@ export class SlpHandbackRegister {
       createdAt: at,
       updatedAt: at,
     };
-    await this.persist(record);
+    const persisted = await this.persist(record);
     this.arm(record.id, record.peerAgentId);
-    return record;
+    return persisted;
   }
 
   /** The Peer was never created; nothing will ever hand back. */
@@ -119,8 +103,8 @@ export class SlpHandbackRegister {
   /**
    * Boot: an armed handback whose Peer was never created is abandoned; one
    * whose Peer exists lost its turn with the daemon, so the owner is told and
-   * the watch is re-armed; a fired handback whose delivery is still owed is
-   * delivered to the slot's current agent.
+   * the watch is re-armed; a fired handback whose mail was not yet queued is
+   * queued now.
    */
   async recover(peerExists: (record: SlpHandbackRecord) => boolean): Promise<void> {
     for (const { id, result } of await this.store.list()) {
@@ -135,17 +119,9 @@ export class SlpHandbackRegister {
         await this.abandon(record.peerAgentId);
       } else if (record.state === "armed") {
         this.arm(record.id, record.peerAgentId);
-        await this.inLane(record.id, async () => {
-          if (record.notice?.receipt === "pending") return;
-          const at = this.now().toISOString();
-          await this.persist({
-            ...record,
-            notice: { messageId: `${record.id}:interrupted:${at}`, receipt: "pending" },
-          });
-        });
-        void this.inLane(record.id, () => this.deliver(record.id));
+        await this.inLane(record.id, () => this.notifyInterrupted(record));
       } else if (record.state === "fired") {
-        void this.inLane(record.id, () => this.deliver(record.id));
+        await this.inLane(record.id, () => this.queueHandback(record));
       }
     }
   }
@@ -189,135 +165,58 @@ export class SlpHandbackRegister {
     void this.inLane(id, async () => {
       const record = this.records.get(id);
       if (record?.state !== "armed") return;
-      await this.persist({
+      const fired: SlpHandbackRecord = {
         ...baseOf(record),
         state: "fired",
         outcome: { reason, at: this.now().toISOString() },
-        delivery: { messageId: `${record.id}:handback` },
-      });
-      await this.deliver(id);
+      };
+      await this.persist(fired);
+      await this.queueHandback(fired);
     });
   }
 
-  /**
-   * Resolve the owner now, not at registration. A busy owner that cannot be
-   * steered keeps the delivery pending and retries when it goes idle; the
-   * journal discards the declined attempt, so no receipt turns uncertain.
-   */
-  private async deliver(id: string): Promise<void> {
-    const record = this.records.get(id);
-    const owed = record ? owedMessage(record) : null;
-    if (!record || !owed) return;
-    const ownerAgentId = this.resolveSlotAgent(record.groupId, record.ownerSlotId);
-    if (!ownerAgentId) {
-      this.logger.warn(
-        { handbackId: record.id, ownerSlotId: record.ownerSlotId },
-        "SLP handback owner slot has no active generation; delivery stays pending",
-      );
-      return;
-    }
-    const body = await this.describe(record, owed.kind);
-    let result: "sent" | "declined";
-    try {
-      result = await this.agentRequests.send({
-        agentId: ownerAgentId,
-        messageId: owed.messageId,
-        request: { handbackId: record.id, kind: owed.kind },
-        prepare: async () => {
-          await ensureAgentLoaded(ownerAgentId, {
-            agentManager: this.agentManager,
-            agentStorage: this.agentStorage,
-            logger: this.logger,
-          });
-        },
-        send: async () => {
-          const admission = await this.agentManager.admitForegroundTurn(ownerAgentId, body, {
-            steer: true,
-            clientMessageId: owed.messageId,
-          });
-          return admission.status === "busy" ? "declined" : undefined;
-        },
-      });
-    } catch (error) {
-      if (error instanceof Error && error.message === "agent_request_outcome_unknown") {
-        await this.settle(record, owed, "uncertain");
-        this.logger.warn(
-          { handbackId: record.id, ownerAgentId },
-          "SLP handback acceptance is uncertain",
-        );
-        return;
-      }
-      this.logger.error(
-        { handbackId: record.id, ownerAgentId, err: error },
-        "SLP handback delivery failed",
-      );
-      return;
-    }
-    if (result === "declined") {
-      this.retryWhenIdle(record.id, ownerAgentId);
-      return;
-    }
-    await this.settle(record, owed, "accepted");
-  }
-
-  private async settle(
-    record: SlpHandbackRecord,
-    owed: OwedMessage,
-    receipt: "accepted" | "uncertain",
+  /** The mail id is derived from the handback, so re-queueing after a crash is a no-op. */
+  private async queueHandback(
+    record: Extract<SlpHandbackRecord, { state: "fired" }>,
   ): Promise<void> {
-    if (record.state === "fired") {
-      await this.persist({
-        ...baseOf(record),
-        state: "delivered",
-        outcome: record.outcome,
-        delivery: { messageId: owed.messageId, receipt },
-      });
-    } else if (record.state === "armed") {
-      await this.persist({ ...record, notice: { messageId: owed.messageId, receipt } });
-    }
+    const mail = await this.mailbox.enqueue({
+      id: `${record.id}:handback`,
+      groupId: record.groupId,
+      slotId: record.ownerSlotId,
+      fromSlotId: record.peerSlotId,
+      kind: "handback",
+      prompt: await this.describe(record, describeOutcome(record.outcome.reason)),
+    });
+    await this.persist({
+      ...baseOf(record),
+      state: "delivered",
+      outcome: record.outcome,
+      mailId: mail.id,
+    });
   }
 
-  /**
-   * The owner's turn is over when the manager reports it not busy with no
-   * foreground run pending; a pending permission is reported instead of
-   * waited on, so that case waits for the permission to clear first.
-   */
-  private retryWhenIdle(id: string, ownerAgentId: string): void {
-    void this.awaitOwnerTurnEnd(ownerAgentId)
-      .then(() => this.inLane(id, () => this.deliver(id)))
-      .catch((error: unknown) => {
-        this.logger.error(
-          { handbackId: id, ownerAgentId, err: error },
-          "SLP handback retry failed",
-        );
-      });
+  private async notifyInterrupted(
+    record: Extract<SlpHandbackRecord, { state: "armed" }>,
+  ): Promise<void> {
+    const at = this.now().toISOString();
+    const mail = await this.mailbox.enqueue({
+      id: `${record.id}:interrupted:${at}`,
+      groupId: record.groupId,
+      slotId: record.ownerSlotId,
+      fromSlotId: record.peerSlotId,
+      kind: "interrupted",
+      prompt: await this.describe(
+        record,
+        "interrupted. The daemon restarted before this Peer's turn completed; the turn is lost. Re-drive the Peer or replace the assignment. Its handback will still arrive when a later turn ends.",
+      ),
+    });
+    await this.persist({ ...record, notice: { mailId: mail.id, at } });
   }
 
-  private async awaitOwnerTurnEnd(ownerAgentId: string): Promise<void> {
-    for (;;) {
-      const result = await this.agentManager.waitForAgentEvent(ownerAgentId);
-      if (!result.permission) return;
-      await new Promise<void>((resolve) => {
-        const stop = this.agentManager.subscribe(
-          (event) => {
-            if (event.type !== "agent_state" || event.agent.pendingPermissions.size > 0) return;
-            stop();
-            resolve();
-          },
-          { agentId: ownerAgentId, replayState: false },
-        );
-      });
-    }
-  }
-
-  private async describe(record: SlpHandbackRecord, kind: OwedMessage["kind"]): Promise<string> {
+  private async describe(record: SlpHandbackRecord, outcome: string): Promise<string> {
     const peer = await this.agentStorage.get(record.peerAgentId);
     const title = peer?.title ?? record.peerAgentId;
     const lastMessage = await this.agentManager.getLastAssistantMessage(record.peerAgentId);
-    const outcome =
-      record.state === "fired" && kind === "handback"
-        ? describeOutcome(record.outcome.reason)
-        : "interrupted. The daemon restarted before this Peer's turn completed; the turn is lost. Re-drive the Peer or replace the assignment. Its handback will still arrive when a later turn ends.";
     const lines = [
       `SLP handback ${record.id}`,
       `Peer: ${title} (${record.peerAgentId})`,
@@ -327,10 +226,11 @@ export class SlpHandbackRegister {
     return formatSystemNotificationPrompt(lines.join("\n"));
   }
 
-  private async persist(record: SlpHandbackRecord): Promise<void> {
+  private async persist(record: SlpHandbackRecord): Promise<SlpHandbackRecord> {
     const next = { ...record, updatedAt: this.now().toISOString() };
     await this.store.write(next);
     this.records.set(next.id, next);
+    return next;
   }
 
   private inLane<T>(id: string, operation: () => Promise<T>): Promise<T> {
@@ -347,20 +247,6 @@ export class SlpHandbackRegister {
       if (this.lanes.get(id) === tail) this.lanes.delete(id);
     });
     return run;
-  }
-}
-
-function owedMessage(record: SlpHandbackRecord): OwedMessage | null {
-  switch (record.state) {
-    case "fired":
-      return { messageId: record.delivery.messageId, kind: "handback" };
-    case "armed":
-      return record.notice?.receipt === "pending"
-        ? { messageId: record.notice.messageId, kind: "interrupted" }
-        : null;
-    case "delivered":
-    case "abandoned":
-      return null;
   }
 }
 

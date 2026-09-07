@@ -95,6 +95,7 @@ import type {
   PaseoToolDefinition,
   PaseoToolExecutionContext,
   PaseoToolResult,
+  SlpToolAuthority,
 } from "./types.js";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
@@ -135,7 +136,7 @@ export interface PaseoToolHostDependencies {
   browserToolsEnabled?: boolean;
   browserToolsBroker?: BrowserToolsBroker | null;
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
-  slp?: SlpCreationHook | null;
+  slp?: (SlpCreationHook & SlpToolAuthority) | null;
   paseoHome?: string;
   worktreesRoot?: string;
   /**
@@ -587,13 +588,28 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     if (!isPaseoToolEnabled(options.paseoToolPolicy, name)) {
       return;
     }
+    const slp = options.slp;
+    if (callerAgentId && slp && !slp.isToolAllowed(callerAgentId, name)) {
+      return;
+    }
+    // Execution-time ownership check: the target is whatever agent id the
+    // parsed input names, so a role cannot act on an agent outside its scope.
+    const guarded: PaseoToolDefinition["handler"] =
+      callerAgentId && slp
+        ? async (input, context) => {
+            const target = Reflect.get(Object(input), "agentId");
+            if (typeof target === "string")
+              slp.assertAgentTargetAllowed(callerAgentId, name, target);
+            return handler(input, context);
+          }
+        : (handler as PaseoToolDefinition["handler"]);
     tools.set(name, {
       name,
       title: config.title,
       description: config.description ?? name,
       inputSchema: config.inputSchema,
       outputSchema: config.outputSchema,
-      handler: handler as PaseoToolDefinition["handler"],
+      handler: guarded,
     });
   };
   const toCatalog = (): PaseoToolCatalog => ({
@@ -1885,6 +1901,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         lastMessage: z.string().nullable().optional(),
         permission: AgentPermissionRequestPayloadSchema.nullable().optional(),
         guidance: z.string().optional(),
+        mailId: z.string().optional(),
       },
     },
     async ({
@@ -1894,6 +1911,24 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       background = Boolean(callerAgentId),
       notifyOnFinish = Boolean(callerAgentId),
     }) => {
+      const mail =
+        callerAgentId && options.slp
+          ? await options.slp.routeSend({ callerAgentId, targetAgentId: agentId, prompt })
+          : null;
+      if (mail) {
+        return {
+          content: [],
+          structuredContent: ensureValidJson({
+            success: true,
+            status: agentManager.getAgent(agentId)?.lifecycle ?? "idle",
+            lastMessage: null,
+            permission: null,
+            mailId: mail.mailId,
+            guidance:
+              "Queued as SLP mail. It is delivered when the recipient's current turn ends; replies and handbacks arrive the same way. Do not poll.",
+          }),
+        };
+      }
       const shouldNotifyOnFinish = Boolean(callerAgentId && notifyOnFinish && background);
 
       await sendPromptToAgent({

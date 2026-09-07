@@ -3,6 +3,9 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 
+import { AgentAttachmentSchema } from "@getpaseo/protocol/messages";
+
+import type { AgentPromptInput } from "../agent/agent-sdk-types.js";
 import { writeJsonFileAtomic } from "../atomic-file.js";
 
 export const SlpWorkspaceModeSchema = z.enum(["direct", "supervised"]);
@@ -109,35 +112,82 @@ const SlpHandbackOutcomeSchema = z.object({
 });
 export type SlpHandbackOutcome = z.infer<typeof SlpHandbackOutcomeSchema>;
 
-/** Receipt semantics: architecture.md#receipts-and-notifications. */
-const SlpHandbackReceiptSchema = z.enum(["accepted", "uncertain"]);
-
 export const SlpHandbackSchema = z.discriminatedUnion("state", [
-  // Waiting for the Peer. A daemon restart owes the owner an interruption notice.
+  // Waiting for the Peer. After a daemon restart the owner is told once per boot.
   SlpHandbackBaseSchema.extend({
     state: z.literal("armed"),
-    notice: z
-      .object({
-        messageId: z.string(),
-        receipt: z.enum(["pending", ...SlpHandbackReceiptSchema.options]),
-      })
-      .nullable(),
+    notice: z.object({ mailId: z.string(), at: z.string() }).nullable(),
   }),
-  // The Peer's outcome is recorded and the handback is owed to the owner slot.
-  SlpHandbackBaseSchema.extend({
-    state: z.literal("fired"),
-    outcome: SlpHandbackOutcomeSchema,
-    delivery: z.object({ messageId: z.string() }),
-  }),
+  // The Peer's outcome is recorded; its mail is not yet queued.
+  SlpHandbackBaseSchema.extend({ state: z.literal("fired"), outcome: SlpHandbackOutcomeSchema }),
+  // The handback is in the owner slot's mailbox; that record carries the delivery state.
   SlpHandbackBaseSchema.extend({
     state: z.literal("delivered"),
     outcome: SlpHandbackOutcomeSchema,
-    delivery: z.object({ messageId: z.string(), receipt: SlpHandbackReceiptSchema }),
+    mailId: z.string(),
   }),
   // The Peer was never created.
   SlpHandbackBaseSchema.extend({ state: z.literal("abandoned"), abandonedAt: z.string() }),
 ]);
 export type SlpHandbackRecord = z.infer<typeof SlpHandbackSchema>;
+
+/**
+ * The provider prompt exactly as it will be dispatched: text, image blocks
+ * and attachments. Attachments are tried first because a text attachment and
+ * a plain text block share `type: "text"`, and the block schema would strip
+ * the attachment's fields.
+ */
+const SlpMailPromptSchema: z.ZodType<AgentPromptInput> = z.union([
+  z.string(),
+  z.array(
+    z.union([
+      AgentAttachmentSchema,
+      z.object({ type: z.literal("text"), text: z.string() }),
+      z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string() }),
+    ]),
+  ),
+]);
+
+const SlpMailAttemptSchema = z.object({
+  id: z.string(),
+  generationId: z.string(),
+  agentId: z.string(),
+  at: z.string(),
+});
+
+const SlpMailBaseSchema = z.object({
+  id: z.string(),
+  groupId: z.string(),
+  slotId: z.string(),
+  fromSlotId: z.string().nullable(),
+  kind: z.enum(["message", "handback", "interrupted"]),
+  prompt: SlpMailPromptSchema,
+  /** Dispatch order within the slot. */
+  sequence: z.number().int().nonnegative(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+/**
+ * One durable message addressed to a slot. States follow
+ * docs/slp/architecture.md#receipts-and-notifications; a crash while
+ * `dispatching` is recovered as `uncertain` and never replayed automatically.
+ */
+export const SlpMailSchema = z.discriminatedUnion("state", [
+  SlpMailBaseSchema.extend({ state: z.literal("queued") }),
+  SlpMailBaseSchema.extend({ state: z.literal("dispatching"), attempt: SlpMailAttemptSchema }),
+  SlpMailBaseSchema.extend({
+    state: z.literal("accepted"),
+    attempt: SlpMailAttemptSchema,
+    acceptedAt: z.string(),
+  }),
+  SlpMailBaseSchema.extend({
+    state: z.literal("uncertain"),
+    attempt: SlpMailAttemptSchema,
+    reason: z.string(),
+  }),
+]);
+export type SlpMailRecord = z.infer<typeof SlpMailSchema>;
 
 export type SlpStoredGroup =
   | { kind: "valid"; record: SlpGroupRecord }
@@ -148,7 +198,7 @@ export function newSlpGroupId(): string {
   return `grp_${randomBytes(8).toString("hex")}`;
 }
 
-export function newSlpId(prefix: "slot" | "gen" | "hb"): string {
+export function newSlpId(prefix: "slot" | "gen" | "hb" | "mail" | "attempt"): string {
   return `${prefix}_${randomBytes(8).toString("hex")}`;
 }
 
@@ -206,16 +256,18 @@ export class SlpGroupStore {
   }
 }
 
-/** One file per handback under `$PASEO_HOME/slp/handbacks/`. */
-export class SlpHandbackStore {
-  constructor(private readonly directory: string) {}
+/** One file per record; an unparseable file is reported, never silently dropped. */
+export class SlpRecordStore<T extends { id: string }> {
+  constructor(
+    private readonly directory: string,
+    private readonly schema: z.ZodType<T>,
+  ) {}
 
-  async write(record: SlpHandbackRecord): Promise<void> {
+  async write(record: T): Promise<void> {
     await writeJsonFileAtomic(path.join(this.directory, `${record.id}.json`), record);
   }
 
-  /** An unparseable handback is a boot error, never a silent drop. */
-  async list(): Promise<Array<{ id: string; result: SlpHandbackRecord | Error }>> {
+  async list(): Promise<Array<{ id: string; result: T | Error }>> {
     let names: string[];
     try {
       names = await readdir(this.directory);
@@ -223,13 +275,13 @@ export class SlpHandbackStore {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
       throw error;
     }
-    const results: Array<{ id: string; result: SlpHandbackRecord | Error }> = [];
+    const results: Array<{ id: string; result: T | Error }> = [];
     for (const name of names) {
       if (!name.endsWith(".json") || name.startsWith(".")) continue;
       const id = name.slice(0, -".json".length);
       try {
         const raw: unknown = JSON.parse(await readFile(path.join(this.directory, name), "utf8"));
-        results.push({ id, result: SlpHandbackSchema.parse(raw) });
+        results.push({ id, result: this.schema.parse(raw) });
       } catch (error) {
         results.push({ id, result: error instanceof Error ? error : new Error(String(error)) });
       }

@@ -55,8 +55,10 @@ $PASEO_HOME/
 ├── slp/
 │   ├── groups/
 │   │   └── {groupId}.json               # One SLP group: slots, generations, hold, initialization
-│   └── handbacks/
-│       └── {handbackId}.json            # One Peer handback: owner slot, outcome, delivery receipt
+│   ├── handbacks/
+│   │   └── {handbackId}.json            # One Peer handback: owner slot, outcome, mail id
+│   └── mail/
+│       └── {mailId}.json                # One slot message: prompt, dispatch attempt, delivery state
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── projects/
@@ -187,7 +189,11 @@ One file per group holds the group, its slots and their generations, so a multi-
 
 **Path:** `$PASEO_HOME/slp/handbacks/{handbackId}.json`
 
-One file per Peer generation, written before the Peer agent exists and addressed to the owner slot rather than an agent. The record holds the Peer's outcome and the receipt of the message owed to the owner; the composed instruction text itself lives in the agent record's `config.systemPrompt`, not here. Why the built-in finish notification cannot be reused: [docs/slp/handoff.md](slp/handoff.md#relationships-and-background-work).
+One file per Peer generation, written before the Peer agent exists and addressed to the owner slot rather than an agent. The record holds the Peer's outcome and the id of the mail that carries it; the composed instruction text itself lives in the agent record's `config.systemPrompt`, not here. Why the built-in finish notification cannot be reused: [docs/slp/handoff.md](slp/handoff.md#relationships-and-background-work).
+
+**Path:** `$PASEO_HOME/slp/mail/{mailId}.json`
+
+One file per message to a slot, holding the provider prompt exactly as it will be dispatched (text, image blocks, attachments) so a queued receipt promises retained input. The dispatch attempt is written before the provider is asked; a record found `dispatching` at boot becomes `uncertain` and is retained, never replayed. States and their meaning: [docs/slp/architecture.md](slp/architecture.md#receipts-and-notifications).
 
 ## 2. Daemon Configuration
 

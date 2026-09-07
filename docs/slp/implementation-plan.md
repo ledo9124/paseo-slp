@@ -1,6 +1,6 @@
 # SLP implementation plan
 
-Status: PR 0 through PR 3 landed on `slp/admission-foundations` (see [admission](admission.md) and `packages/server/src/server/slp/`); PR 4 onward NOT_STARTED; live provider proof NOT_RUN. There is no client entrypoint yet: group initialization is reachable from boot recovery and tests until the RPC lands, and a Peer is created by the Lead's `create_agent` call.
+Status: PR 0 through PR 4 landed on `slp/admission-foundations` (see [admission](admission.md) and `packages/server/src/server/slp/`); PR 5 onward NOT_STARTED; live provider proof NOT_RUN. There is no client entrypoint yet: group initialization is reachable from boot recovery and tests until the RPC lands. A Peer is created by the Lead's `create_agent` call, and agent-to-agent sends inside a group go through the slot mailbox.
 
 This plan records the agreed work sequence. Merging documentation does not prove SLP works or authorize deployment. Use [architecture](architecture.md), [handoff](handoff.md), and [provider support](providers.md) as the design owners. Follow the repository's existing development, validation and PR workflow; no external harness installation is part of this plan.
 

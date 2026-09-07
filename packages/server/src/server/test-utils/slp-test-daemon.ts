@@ -91,12 +91,22 @@ export function slpLeadAgentId(group: SlpGroupRecord): string {
   return slot.generations.find((generation) => generation.id === slot.activeGenerationId)!.agentId;
 }
 
-/** Yields until `condition` holds; bounded so a wrong expectation fails instead of hanging. */
+/** Every message in the daemon's mailbox is back to `queued` (no attempt in flight). */
+export function allMailQueued(daemon: SlpTestDaemon): boolean {
+  return daemon.service.listMail().every((mail) => mail.state === "queued");
+}
+
+/**
+ * Yields until `condition` holds. The deadline is a failure guard so a wrong
+ * expectation reports its label instead of hitting the test timeout; a passing
+ * test never depends on it.
+ */
 export async function untilSettled(
   condition: () => boolean | Promise<boolean>,
   label: string,
 ): Promise<void> {
-  for (let i = 0; i < 10_000; i += 1) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
     if (await condition()) return;
     await new Promise<void>((resolve) => setImmediate(resolve));
   }

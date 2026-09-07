@@ -5,6 +5,13 @@ import type { AgentManager, DestructiveOperationGate } from "../agent/agent-mana
 import type { AgentRequests } from "../agent/requests/index.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import type { SlpCreationHook, SlpPeerCreation } from "../agent/create-agent/create.js";
+import type { SlpToolAuthority } from "../agent/tools/types.js";
+import {
+  isTargetAllowed,
+  isToolVisibleToRole,
+  SLP_AGENT_TARGET_TOOLS,
+  type SlpRelation,
+} from "./authority.js";
 import {
   SlpDelegationUnavailableError,
   SlpGroupFrozenError,
@@ -12,7 +19,13 @@ import {
   SlpInitializationConflictError,
   SlpRoleAuthorityError,
 } from "./errors.js";
-import { SlpHandbackRegister, type SlpHandbackAgentManager } from "./handbacks.js";
+import { SlpHandbackRegister } from "./handbacks.js";
+import {
+  SlpMailbox,
+  type SlpMailboxAgentManager,
+  type SlpMailInput,
+  type SlpSlotDestination,
+} from "./mailbox.js";
 import {
   composeSlpSystemPrompt,
   loadSlpInstructions,
@@ -27,6 +40,7 @@ import {
   type SlpGroupRecord,
   type SlpHandbackRecord,
   type SlpInitializationRecord,
+  type SlpMailRecord,
   type SlpSlotRecord,
   type SlpWorkspaceMode,
 } from "./store.js";
@@ -51,8 +65,8 @@ export interface SlpLeadCreationInput {
 export interface SlpServiceOptions {
   paseoHome: string;
   logger: Logger;
-  agentManager: SlpHandbackAgentManager &
-    Pick<AgentManager, "admitForegroundTurn" | "getAgent" | "setDestructiveOperationGate">;
+  agentManager: SlpMailboxAgentManager &
+    Pick<AgentManager, "getAgent" | "getLastAssistantMessage" | "setDestructiveOperationGate">;
   agentStorage: AgentStorage;
   agentRequests: Pick<AgentRequests, "create" | "send">;
   /** Creates the Lead agent under the preassigned id. Bootstrap binds the create funnel. */
@@ -80,8 +94,9 @@ interface FrozenUnknownGroup {
  * destructive-operation gate. Membership is authority; labels are only a
  * projection. See docs/slp/architecture.md.
  */
-export class SlpService implements SlpCreationHook {
+export class SlpService implements SlpCreationHook, SlpToolAuthority {
   private readonly store: SlpGroupStore;
+  private readonly mailbox: SlpMailbox;
   private readonly handbacks: SlpHandbackRegister;
   private readonly logger: Logger;
   private readonly agentManager: SlpServiceOptions["agentManager"];
@@ -107,13 +122,20 @@ export class SlpService implements SlpCreationHook {
     this.isDelegationToolingEnabled = options.isDelegationToolingEnabled;
     this.instructionsDir = options.instructionsDir ?? resolveBundledSlpRolesDir();
     this.now = options.now ?? (() => new Date());
+    this.mailbox = new SlpMailbox({
+      directory: `${options.paseoHome}/slp/mail`,
+      logger: this.logger,
+      agentManager: options.agentManager,
+      agentStorage: options.agentStorage,
+      resolveSlot: (groupId, slotId) => this.resolveSlot(groupId, slotId),
+      now: this.now,
+    });
     this.handbacks = new SlpHandbackRegister({
       directory: `${options.paseoHome}/slp/handbacks`,
       logger: this.logger,
       agentManager: options.agentManager,
       agentStorage: options.agentStorage,
-      agentRequests: options.agentRequests,
-      resolveSlotAgent: (groupId, slotId) => this.resolveSlotAgent(groupId, slotId),
+      mailbox: this.mailbox,
       now: this.now,
     });
     this.agentManager.setDestructiveOperationGate(this.destructiveOperationGate());
@@ -139,6 +161,60 @@ export class SlpService implements SlpCreationHook {
 
   listHandbacks(): SlpHandbackRecord[] {
     return this.handbacks.list();
+  }
+
+  listMail(): SlpMailRecord[] {
+    return this.mailbox.list();
+  }
+
+  /** Queue mail for a slot. The receipt promises retained input, not execution. */
+  deliverMail(input: SlpMailInput): Promise<SlpMailRecord> {
+    return this.mailbox.enqueue(input);
+  }
+
+  isToolAllowed(callerAgentId: string, tool: string): boolean {
+    const group = this.getGroupForAgent(callerAgentId);
+    return group ? isToolVisibleToRole(membershipOf(group, callerAgentId).slot.role, tool) : true;
+  }
+
+  assertAgentTargetAllowed(callerAgentId: string, tool: string, targetAgentId: string): void {
+    if (!SLP_AGENT_TARGET_TOOLS.has(tool)) return;
+    const group = this.getGroupForAgent(callerAgentId);
+    if (!group) return;
+    const caller = membershipOf(group, callerAgentId);
+    const relation = relationOf(group, caller.slot, targetAgentId);
+    if (!isTargetAllowed(caller.slot.role, tool, relation)) {
+      throw new SlpRoleAuthorityError(
+        callerAgentId,
+        caller.slot.role,
+        `${tool} on ${targetAgentId} (${relation})`,
+      );
+    }
+  }
+
+  /**
+   * Agent-to-agent sends inside a group are mail to the target's slot, so a
+   * retired generation's id still reaches the current owner and a busy
+   * recipient is never interrupted. Direction policy lives in authority.ts.
+   */
+  async routeSend(input: {
+    callerAgentId: string;
+    targetAgentId: string;
+    prompt: string;
+  }): Promise<{ mailId: string } | null> {
+    const group = this.getGroupForAgent(input.callerAgentId);
+    if (!group) return null;
+    this.assertAgentTargetAllowed(input.callerAgentId, "send_agent_prompt", input.targetAgentId);
+    const caller = membershipOf(group, input.callerAgentId);
+    const target = membershipOf(group, input.targetAgentId);
+    const mail = await this.mailbox.enqueue({
+      groupId: group.id,
+      slotId: target.slot.id,
+      fromSlotId: caller.slot.id,
+      kind: "message",
+      prompt: input.prompt,
+    });
+    return { mailId: mail.id };
   }
 
   /** Stops watching agents. Tests use it to end a daemon; bootstrap never needs it. */
@@ -331,6 +407,7 @@ export class SlpService implements SlpCreationHook {
     record.status = "ready";
     record.hold = null;
     await this.persist(record);
+    this.mailbox.pump(record.id, record.leadSlotId);
     return record;
   }
 
@@ -400,6 +477,7 @@ export class SlpService implements SlpCreationHook {
     generation.activatedAt = this.now().toISOString();
     slot.activeGenerationId = generation.id;
     await this.persist(group);
+    this.mailbox.pump(group.id, slot.id);
   }
 
   async peerCreationFailed(agentId: string, error: unknown): Promise<void> {
@@ -462,6 +540,7 @@ export class SlpService implements SlpCreationHook {
         await this.freeze(record, `initialization recovery failed: ${describe(error)}`);
       }
     }
+    await this.mailbox.recover();
     await this.handbacks.recover((handback) => {
       const group = this.groups.get(handback.groupId);
       const generation = group?.slots[handback.peerSlotId]?.generations.find(
@@ -501,9 +580,16 @@ export class SlpService implements SlpCreationHook {
     return this.instructionsLoad;
   }
 
-  private resolveSlotAgent(groupId: string, slotId: string): string | null {
-    const slot = this.groups.get(groupId)?.slots[slotId];
-    return slot ? (activeGeneration(slot)?.agentId ?? null) : null;
+  private resolveSlot(groupId: string, slotId: string): SlpSlotDestination {
+    const group = this.groups.get(groupId);
+    const slot = group?.slots[slotId];
+    if (!group || !slot) return { status: "empty" };
+    if (group.status === "frozen") return { status: "held", reason: "frozen" };
+    if (group.hold) return { status: "held", reason: group.hold.kind };
+    const generation = activeGeneration(slot);
+    return generation
+      ? { status: "active", agentId: generation.agentId, generationId: generation.id }
+      : { status: "empty" };
   }
 
   private async persist(record: SlpGroupRecord): Promise<void> {
@@ -560,6 +646,25 @@ function membershipOf(
     if (generation) return { slot, generation };
   }
   throw new Error(`Agent ${agentId} is not a member of SLP group ${group.id}`);
+}
+
+function relationOf(
+  group: SlpGroupRecord,
+  callerSlot: SlpSlotRecord,
+  targetAgentId: string,
+): SlpRelation {
+  if (callerSlot.generations.some((generation) => generation.agentId === targetAgentId)) {
+    return "self";
+  }
+  const targetSlot = Object.values(group.slots).find((slot) =>
+    slot.generations.some((generation) => generation.agentId === targetAgentId),
+  );
+  if (!targetSlot) return "outside";
+  if (targetSlot.id === callerSlot.ownerSlotId) return "owner";
+  if (targetSlot.ownerSlotId === callerSlot.id) return "own-peer";
+  if (targetSlot.role === "supervisor") return "supervisor";
+  if (targetSlot.role === "lead") return "lead";
+  return "other-member";
 }
 
 function groupAgentIds(group: SlpGroupRecord): string[] {

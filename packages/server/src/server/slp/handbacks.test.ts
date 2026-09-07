@@ -8,6 +8,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { ensureAgentLoaded } from "../agent/agent-loading.js";
 import type { CreateAgentFromMcpInput } from "../agent/create-agent/create.js";
 import {
+  allMailQueued,
   slpLeadAgentId as leadAgentId,
   startSlpTestDaemon,
   type SlpTestDaemon as Daemon,
@@ -87,6 +88,17 @@ describe("SLP Peer creation and handback", () => {
     return record;
   }
 
+  function mailStateFor(daemon: Daemon, mailId: string): string {
+    const mail = daemon.service.listMail().find((candidate) => candidate.id === mailId);
+    return mail?.state ?? "missing";
+  }
+
+  /** The handback reached the owner's mailbox and that mail was admitted. */
+  function accepted(daemon: Daemon, peerAgentId: string): boolean {
+    const record = handbackFor(daemon, peerAgentId);
+    return record.state === "delivered" && mailStateFor(daemon, record.mailId) === "accepted";
+  }
+
   async function readHandbackFile(id: string): Promise<SlpHandbackRecord> {
     return JSON.parse(
       await readFile(path.join(paseoHome, "slp", "handbacks", `${id}.json`), "utf8"),
@@ -157,10 +169,7 @@ describe("SLP Peer creation and handback", () => {
     const peer = daemon.client.sessions[1]!;
 
     peer.release();
-    await untilSettled(
-      () => handbackFor(daemon, created.snapshot.id).state === "delivered",
-      "handback delivered",
-    );
+    await untilSettled(() => accepted(daemon, created.snapshot.id), "handback delivered");
 
     expect(lead.startPrompts).toHaveLength(2);
     const delivered = lead.startPrompts[1]!;
@@ -173,57 +182,52 @@ describe("SLP Peer creation and handback", () => {
     expect(handback).toMatchObject({
       state: "delivered",
       outcome: { reason: "finished" },
-      delivery: { receipt: "accepted" },
+      mailId: `${handback.id}:handback`,
     });
-    const persistedAsDelivered = async () =>
-      (await readHandbackFile(handback.id)).state === "delivered";
-    await untilSettled(persistedAsDelivered, "handback persisted");
     expect(await readHandbackFile(handback.id)).toEqual(handback);
+    expect(daemon.service.listMail()).toMatchObject([
+      { id: handback.mailId, kind: "handback", slotId: group.leadSlotId, state: "accepted" },
+    ]);
   });
 
-  test("a busy Lead is steered when possible and otherwise waits for its turn to end", async () => {
+  test("a busy Lead is never steered or interrupted; handbacks arrive in order after its turn", async () => {
     const daemon = await startDaemon();
     const group = await readyGroup(daemon);
     const leadId = leadAgentId(group);
     const lead = daemon.client.sessions[0]!;
-
-    // First Peer: Lead is mid-turn and accepts steering.
-    const first = await daemon.createAgent(peerCreation(leadId));
-    await holdTurn(daemon, leadId);
     lead.steerBehavior = "accepted";
+
+    const first = await daemon.createAgent(peerCreation(leadId));
+    const second = await daemon.createAgent(peerCreation(leadId));
+    await holdTurn(daemon, leadId);
+    // Release in order and let each handback reach the mailbox before the
+    // next, so mailbox order is the order under test rather than event timing.
     daemon.client.sessions[1]!.release();
     await untilSettled(
       () => handbackFor(daemon, first.snapshot.id).state === "delivered",
-      "Lead was steered",
+      "first handback queued",
     );
-    expect(lead.steerPrompts).toHaveLength(1);
-    expect(lead.steerPrompts[0]).toContain(HANDBACK_TEXT);
-
-    // Second Peer: steering is unavailable, so the handback waits, then lands
-    // as the Lead's next turn without cancelling the live one.
-    lead.steerBehavior = "unavailable";
-    const second = await daemon.createAgent(peerCreation(leadId));
     daemon.client.sessions[2]!.release();
     await untilSettled(
-      () => handbackFor(daemon, second.snapshot.id).state === "fired",
-      "second handback fired",
+      () => handbackFor(daemon, second.snapshot.id).state === "delivered",
+      "second handback queued",
     );
-    await untilSettled(() => lead.steerPrompts.length === 2, "second steer attempted");
-    expect(handbackFor(daemon, second.snapshot.id).state).toBe("fired");
+    // Each attempt is durable before admission; a busy answer returns it to queued.
+    await untilSettled(() => allMailQueued(daemon), "both handbacks returned to queued");
+    expect(lead.steerPrompts).toEqual([]);
     expect(lead.interruptCount).toBe(0);
     expect(lead.startPrompts).toHaveLength(2);
 
     lead.release();
-    await untilSettled(
-      () => handbackFor(daemon, second.snapshot.id).state === "delivered",
-      "Lead received the second handback",
-    );
+    await untilSettled(() => accepted(daemon, first.snapshot.id), "first handback admitted");
     expect(lead.startPrompts).toHaveLength(3);
-    expect(lead.startPrompts[2]).toContain(`(${second.snapshot.id})`);
-    expect(handbackFor(daemon, second.snapshot.id)).toMatchObject({
-      state: "delivered",
-      delivery: { receipt: "accepted" },
-    });
+    expect(lead.startPrompts[2]).toContain(`(${first.snapshot.id})`);
+    // One message per turn: the second waits for the turn the first started.
+    expect(accepted(daemon, second.snapshot.id)).toBe(false);
+    lead.release();
+    await untilSettled(() => accepted(daemon, second.snapshot.id), "second handback admitted");
+    expect(lead.startPrompts).toHaveLength(4);
+    expect(lead.startPrompts[3]).toContain(`(${second.snapshot.id})`);
   });
 
   test("a handback owed across a restart reaches the slot's current owner", async () => {
@@ -235,8 +239,13 @@ describe("SLP Peer creation and handback", () => {
     await holdTurn(first, leadId);
     const created = await first.createAgent(peerCreation(leadId));
     first.client.sessions[1]!.release();
-    await untilSettled(() => lead.steerPrompts.length === 1, "delivery attempted");
-    expect(handbackFor(first, created.snapshot.id).state).toBe("fired");
+    await untilSettled(
+      () => handbackFor(first, created.snapshot.id).state === "delivered",
+      "handback queued",
+    );
+    await untilSettled(() => allMailQueued(first), "handback returned to queued");
+    expect(lead.steerPrompts).toEqual([]);
+    expect(first.service.listMail()).toHaveLength(1);
     // A successor Lead takes over the slot while the daemon is down, the way
     // a same-role handoff will: new generation active, old one retired.
     const successor = await first.manager.createAgent({ provider: "codex", cwd }, undefined, {
@@ -264,7 +273,7 @@ describe("SLP Peer creation and handback", () => {
 
     const second = await startDaemon();
     await untilSettled(
-      () => handbackFor(second, created.snapshot.id).state === "delivered",
+      () => accepted(second, created.snapshot.id),
       "handback delivered after restart",
     );
     const resumed = second.client.sessions[0]!;
@@ -272,9 +281,9 @@ describe("SLP Peer creation and handback", () => {
     expect(resumed.startPrompts).toHaveLength(1);
     expect(resumed.startPrompts[0]).toContain(`(${created.snapshot.id})`);
     expect(second.manager.getAgent(leadId)).toBeNull();
-    expect(handbackFor(second, created.snapshot.id)).toMatchObject({
-      state: "delivered",
-      delivery: { receipt: "accepted" },
+    expect(second.service.listMail()[0]).toMatchObject({
+      state: "accepted",
+      attempt: { agentId: successor.id, generationId: "gen_successor" },
     });
   });
 
@@ -289,17 +298,18 @@ describe("SLP Peer creation and handback", () => {
     const second = await startDaemon();
     const noticeAccepted = () => {
       const record = handbackFor(second, created.snapshot.id);
-      return record.state === "armed" && record.notice?.receipt === "accepted";
+      return (
+        record.state === "armed" &&
+        record.notice !== null &&
+        mailStateFor(second, record.notice.mailId) === "accepted"
+      );
     };
     await untilSettled(noticeAccepted, "interruption notice delivered");
     const lead = second.client.sessions[0]!;
     expect(lead.startPrompts).toHaveLength(1);
     expect(lead.startPrompts[0]).toContain("Outcome: interrupted");
     expect(lead.startPrompts[0]).toContain(`(${created.snapshot.id})`);
-    expect(handbackFor(second, created.snapshot.id)).toMatchObject({
-      state: "armed",
-      notice: { receipt: "accepted" },
-    });
+    expect(second.service.listMail()).toMatchObject([{ kind: "interrupted", state: "accepted" }]);
     lead.release();
     await second.manager.waitForAgentEvent(leadId, { waitForActive: true });
 
@@ -313,7 +323,7 @@ describe("SLP Peer creation and handback", () => {
     const peer = second.client.sessions[1]!;
     peer.release();
     await untilSettled(
-      () => handbackFor(second, created.snapshot.id).state === "delivered",
+      () => accepted(second, created.snapshot.id),
       "handback delivered after re-drive",
     );
     expect(lead.startPrompts).toHaveLength(2);
@@ -321,7 +331,6 @@ describe("SLP Peer creation and handback", () => {
     expect(handbackFor(second, created.snapshot.id)).toMatchObject({
       state: "delivered",
       outcome: { reason: "finished" },
-      delivery: { receipt: "accepted" },
     });
   });
 
