@@ -286,6 +286,11 @@ describe("SLP slot mailbox", () => {
     expect(peerTools.getTool("cancel_agent")).toBeUndefined();
     expect(peerTools.getTool("send_agent_prompt")).toBeDefined();
     expect(outsiderTools.getTool("create_agent")).toBeDefined();
+    // The SLP control channel exists only for members.
+    expect(leadTools.getTool("slp_checkpoint")).toBeDefined();
+    expect(peerTools.getTool("slp_request_handoff")).toBeDefined();
+    expect(outsiderTools.getTool("slp_checkpoint")).toBeUndefined();
+    expect(outsiderTools.getTool("slp_ready")).toBeUndefined();
 
     // A Peer writes only to its Lead; the Lead writes only to its Peers and cannot reach a stranger.
     await expect(

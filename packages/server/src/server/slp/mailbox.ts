@@ -5,15 +5,10 @@ import type { AgentManager } from "../agent/agent-manager.js";
 import type { AgentPromptInput } from "../agent/agent-sdk-types.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import { newSlpId, SlpMailSchema, SlpRecordStore, type SlpMailRecord } from "./store.js";
+import { nextTurnBoundary } from "./turn-boundary.js";
 
 export type SlpMailboxAgentManager = AgentLoaderManager &
   Pick<AgentManager, "admitForegroundTurn" | "subscribe">;
-
-const TURN_TERMINAL_EVENTS: ReadonlySet<string> = new Set([
-  "turn_completed",
-  "turn_failed",
-  "turn_canceled",
-]);
 
 /** What the slot looks like at dispatch time. */
 export type SlpSlotDestination =
@@ -157,7 +152,7 @@ export class SlpMailbox {
         return;
       }
       // Subscribed before the attempt so a boundary crossed during it is not missed.
-      const boundary = this.nextTurnBoundary(destination.agentId);
+      const boundary = nextTurnBoundary(this.agentManager, destination.agentId);
       try {
         const outcome = await this.dispatch(next, destination);
         if (outcome === "busy") await boundary.reached;
@@ -165,29 +160,6 @@ export class SlpMailbox {
         boundary.stop();
       }
     }
-  }
-
-  /**
-   * A wake-up, not a check: admission alone decides. The agent's terminal
-   * stream event is dispatched after its run is settled, so waking on it
-   * guarantees the next attempt sees the slot free; the earlier idle state
-   * event may precede the settle and cost one more busy answer.
-   */
-  private nextTurnBoundary(agentId: string): { reached: Promise<void>; stop: () => void } {
-    let resolve: () => void = () => {};
-    const reached = new Promise<void>((done) => {
-      resolve = done;
-    });
-    const stop = this.agentManager.subscribe(
-      (event) => {
-        const crossed =
-          (event.type === "agent_state" && event.agent.lifecycle !== "running") ||
-          (event.type === "agent_stream" && TURN_TERMINAL_EVENTS.has(event.event.type));
-        if (crossed) resolve();
-      },
-      { agentId, replayState: false },
-    );
-    return { reached, stop };
   }
 
   private nextQueued(groupId: string, slotId: string): SlpMailRecord | null {

@@ -10,14 +10,20 @@ import {
   isTargetAllowed,
   isToolVisibleToRole,
   SLP_AGENT_TARGET_TOOLS,
+  SLP_CONTROL_TOOLS,
+  SLP_PREPARATION_TOOLS,
   type SlpRelation,
 } from "./authority.js";
+import { SlpCheckpointStore } from "./checkpoints.js";
 import {
   SlpDelegationUnavailableError,
+  SlpGenerationRetiredError,
   SlpGroupFrozenError,
   SlpGroupHeldError,
   SlpInitializationConflictError,
+  SlpPreparationPolicyError,
   SlpRoleAuthorityError,
+  SlpTransferRefusedError,
 } from "./errors.js";
 import { SlpHandbackRegister } from "./handbacks.js";
 import {
@@ -35,17 +41,21 @@ import {
 import {
   newSlpGroupId,
   newSlpId,
+  SLP_GROUP_LABEL,
   SlpGroupStore,
+  type SlpCheckpointContent,
   type SlpGenerationRecord,
   type SlpGroupRecord,
   type SlpHandbackRecord,
   type SlpInitializationRecord,
   type SlpMailRecord,
   type SlpSlotRecord,
+  type SlpTransferRecord,
   type SlpWorkspaceMode,
 } from "./store.js";
+import { SlpTransfers, type SlpMemberCreationInput, type SlpTransferHost } from "./transfer.js";
 
-export const SLP_GROUP_LABEL = "paseo.slp-group-id";
+export { SLP_GROUP_LABEL } from "./store.js";
 
 export interface SlpInitializeGroupInput {
   workspaceId: string;
@@ -54,23 +64,16 @@ export interface SlpInitializeGroupInput {
   lead: SlpInitializationRecord["lead"];
 }
 
-export interface SlpLeadCreationInput {
-  agentId: string;
-  groupId: string;
-  workspaceId: string;
-  lead: SlpInitializationRecord["lead"];
-  systemPrompt: string;
-}
-
 export interface SlpServiceOptions {
   paseoHome: string;
   logger: Logger;
   agentManager: SlpMailboxAgentManager &
-    Pick<AgentManager, "getAgent" | "getLastAssistantMessage" | "setDestructiveOperationGate">;
+    SlpTransferHost["agentManager"] &
+    Pick<AgentManager, "setDestructiveOperationGate" | "setTurnAdmissionGate">;
   agentStorage: AgentStorage;
   agentRequests: Pick<AgentRequests, "create" | "send">;
-  /** Creates the Lead agent under the preassigned id. Bootstrap binds the create funnel. */
-  createLeadAgent: (input: SlpLeadCreationInput) => Promise<void>;
+  /** Creates one generation's agent under the preassigned id. Bootstrap binds the create funnel. */
+  createMemberAgent: (input: SlpMemberCreationInput) => Promise<void>;
   /**
    * Whether created agents receive Paseo tools. A Lead without them has no
    * delegation route, so group initialization refuses instead of producing one.
@@ -98,11 +101,13 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   private readonly store: SlpGroupStore;
   private readonly mailbox: SlpMailbox;
   private readonly handbacks: SlpHandbackRegister;
+  private readonly checkpoints: SlpCheckpointStore;
+  private readonly transfers: SlpTransfers;
   private readonly logger: Logger;
   private readonly agentManager: SlpServiceOptions["agentManager"];
   private readonly agentStorage: SlpServiceOptions["agentStorage"];
   private readonly agentRequests: SlpServiceOptions["agentRequests"];
-  private readonly createLeadAgent: SlpServiceOptions["createLeadAgent"];
+  private readonly createMemberAgent: SlpServiceOptions["createMemberAgent"];
   private readonly isDelegationToolingEnabled: SlpServiceOptions["isDelegationToolingEnabled"];
   private readonly instructionsDir: string;
   private instructionsLoad: Promise<SlpInstructions> | null = null;
@@ -118,7 +123,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     this.agentManager = options.agentManager;
     this.agentStorage = options.agentStorage;
     this.agentRequests = options.agentRequests;
-    this.createLeadAgent = options.createLeadAgent;
+    this.createMemberAgent = options.createMemberAgent;
     this.isDelegationToolingEnabled = options.isDelegationToolingEnabled;
     this.instructionsDir = options.instructionsDir ?? resolveBundledSlpRolesDir();
     this.now = options.now ?? (() => new Date());
@@ -138,7 +143,52 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       mailbox: this.mailbox,
       now: this.now,
     });
+    this.checkpoints = new SlpCheckpointStore({
+      directory: `${options.paseoHome}/slp/checkpoints`,
+      logger: this.logger,
+      now: this.now,
+    });
+    this.transfers = new SlpTransfers(`${options.paseoHome}/slp/transfers`, {
+      logger: this.logger,
+      now: this.now,
+      agentManager: options.agentManager,
+      agentStorage: options.agentStorage,
+      agentRequests: options.agentRequests,
+      handbacks: this.handbacks,
+      mailbox: this.mailbox,
+      checkpoints: this.checkpoints,
+      getGroup: (groupId) => {
+        const group = this.groups.get(groupId);
+        if (!group) throw new Error(`unknown SLP group ${groupId}`);
+        return group;
+      },
+      persistGroup: (group) => this.persist(group),
+      freezeGroup: (group, reason) => this.freeze(group, reason),
+      composePrompt: async (group, slot, generationNumber) => {
+        const instructions = await this.instructions();
+        return {
+          instructionsVersion: instructions.version,
+          systemPrompt: composeSlpSystemPrompt(instructions, {
+            role: slot.role,
+            groupId: group.id,
+            workspaceId: group.workspaceId,
+            slotId: slot.id,
+            generationNumber,
+            mode: group.mode,
+          }),
+        };
+      },
+      createMemberAgent: (input) => this.createMemberAgent(input),
+    });
     this.agentManager.setDestructiveOperationGate(this.destructiveOperationGate());
+    this.agentManager.setTurnAdmissionGate({
+      assertTurnAllowed: (agentId) => {
+        const group = this.getGroupForAgent(agentId);
+        if (group && membershipOf(group, agentId).generation.state === "retired") {
+          throw new SlpGenerationRetiredError(agentId, group.id);
+        }
+      },
+    });
   }
 
   getGroup(groupId: string): SlpGroupRecord | null {
@@ -167,6 +217,10 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     return this.mailbox.list();
   }
 
+  listTransfers(): SlpTransferRecord[] {
+    return this.transfers.list();
+  }
+
   /** Queue mail for a slot. The receipt promises retained input, not execution. */
   deliverMail(input: SlpMailInput): Promise<SlpMailRecord> {
     return this.mailbox.enqueue(input);
@@ -174,7 +228,77 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
 
   isToolAllowed(callerAgentId: string, tool: string): boolean {
     const group = this.getGroupForAgent(callerAgentId);
-    return group ? isToolVisibleToRole(membershipOf(group, callerAgentId).slot.role, tool) : true;
+    if (!group) return !SLP_CONTROL_TOOLS.has(tool);
+    return isToolVisibleToRole(membershipOf(group, callerAgentId).slot.role, tool);
+  }
+
+  assertToolExecutionAllowed(callerAgentId: string, tool: string): void {
+    const group = this.getGroupForAgent(callerAgentId);
+    if (!group) return;
+    const { generation } = membershipOf(group, callerAgentId);
+    if (generation.state === "retired")
+      throw new SlpGenerationRetiredError(callerAgentId, group.id);
+    if (generation.state === "preparing" && !SLP_PREPARATION_TOOLS.has(tool)) {
+      throw new SlpPreparationPolicyError(callerAgentId, tool);
+    }
+  }
+
+  /** The agent supplies the content; the daemon attaches identity and the mail watermark. */
+  async recordCheckpoint(
+    callerAgentId: string,
+    content: SlpCheckpointContent,
+  ): Promise<{ checkpointId: string; revision: number }> {
+    const group = this.requireGroupForAgent(callerAgentId);
+    const { slot, generation } = membershipOf(group, callerAgentId);
+    if (slot.activeGenerationId !== generation.id) {
+      throw new SlpRoleAuthorityError(
+        callerAgentId,
+        slot.role,
+        "write a checkpoint while inactive",
+      );
+    }
+    const record = await this.checkpoints.writeCurrent({
+      groupId: group.id,
+      slotId: slot.id,
+      generationId: generation.id,
+      agentId: callerAgentId,
+      content,
+      coveredMailIds: this.mailbox
+        .list()
+        .filter((mail) => mail.slotId === slot.id && mail.state === "accepted")
+        .map((mail) => mail.id),
+    });
+    return { checkpointId: record.id, revision: record.revision };
+  }
+
+  /**
+   * Explicit same-role handoff of the caller's own slot. The caller must
+   * hold the slot and have written a checkpoint as this generation; the
+   * transfer starts from that checkpoint, never from a prompt for one.
+   */
+  async requestHandoff(callerAgentId: string, reason: string): Promise<{ transferId: string }> {
+    const group = this.requireGroupForAgent(callerAgentId);
+    const { slot, generation } = membershipOf(group, callerAgentId);
+    if (slot.activeGenerationId !== generation.id) {
+      throw new SlpRoleAuthorityError(callerAgentId, slot.role, "hand off a slot it does not hold");
+    }
+    const checkpoint = this.checkpoints.current(slot.id);
+    if (checkpoint?.generationId !== generation.id) {
+      throw new SlpTransferRefusedError(slot.id, "write a checkpoint before requesting a handoff");
+    }
+    const transfer = await this.transfers.request({
+      group,
+      slot,
+      source: generation,
+      checkpoint,
+      reason,
+    });
+    return { transferId: transfer.id };
+  }
+
+  async acknowledgeReadiness(callerAgentId: string): Promise<{ transferId: string }> {
+    const transfer = await this.transfers.acknowledgeReadiness(callerAgentId);
+    return { transferId: transfer.id };
   }
 
   assertAgentTargetAllowed(callerAgentId: string, tool: string, targetAgentId: string): void {
@@ -230,9 +354,13 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
    */
   private destructiveOperationGate(): DestructiveOperationGate {
     return {
-      assertAgentOperationAllowed: (agentId) => {
+      assertAgentOperationAllowed: (agentId, operation) => {
         const group = this.getGroupForAgent(agentId);
-        if (group) this.assertGroupNotHeld(group);
+        // Creation under a preassigned id clears that id's state first. A
+        // preparing generation has no agent yet, so that clear destroys nothing.
+        const preparing =
+          group !== null && membershipOf(group, agentId).generation.state === "preparing";
+        if (group && !(operation === "delete" && preparing)) this.assertGroupNotHeld(group);
         for (const unknown of this.unknownGroups.values()) {
           if (unknown.agentIds.includes(agentId)) {
             throw new SlpGroupHeldError(unknown.groupId, "frozen", unknown.reason);
@@ -249,6 +377,12 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
         }
       },
     };
+  }
+
+  /** A transfer holds only its own slot; initialization and a freeze hold every slot. */
+  private assertSlotNotHeld(group: SlpGroupRecord, slotId: string): void {
+    if (group.hold?.kind === "transfer" && group.hold.slotId !== slotId) return;
+    this.assertGroupNotHeld(group);
   }
 
   private assertGroupNotHeld(group: SlpGroupRecord): void {
@@ -348,12 +482,14 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
           this.agentManager.getAgent(agentId) != null ||
           (await this.agentStorage.get(agentId)) !== null,
         create: (agentId) =>
-          this.createLeadAgent({
+          this.createMemberAgent({
             agentId,
             groupId: record.id,
             workspaceId: record.workspaceId,
-            lead: record.initialization.lead,
+            title: "Lead",
+            source: { ...record.initialization.lead, providerOptions: null },
             systemPrompt,
+            labels: { [SLP_GROUP_LABEL]: record.id },
           }),
       });
       const at = this.now().toISOString();
@@ -421,11 +557,11 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   async preparePeerCreation(input: { callerAgentId: string }): Promise<SlpPeerCreation | null> {
     const group = this.getGroupForAgent(input.callerAgentId);
     if (!group) return null;
-    this.assertGroupNotHeld(group);
     const { slot: callerSlot, generation: callerGeneration } = membershipOf(
       group,
       input.callerAgentId,
     );
+    this.assertSlotNotHeld(group, callerSlot.id);
     if (callerSlot.role !== "lead" || callerSlot.activeGenerationId !== callerGeneration.id) {
       throw new SlpRoleAuthorityError(input.callerAgentId, callerSlot.role, "create agents");
     }
@@ -502,6 +638,8 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
    * same bootstrap block as agent storage recovery, before the WebSocket server.
    */
   async recover(): Promise<void> {
+    await this.checkpoints.recover();
+    await this.transfers.recover();
     for (const stored of await this.store.list()) {
       if (stored.kind === "unreadable") {
         this.unknownGroups.set(stored.groupId, {
@@ -528,11 +666,15 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       }
       const record = stored.record;
       this.groups.set(record.id, record);
+      await this.settlePreparingPeers(record);
       if (record.hold?.kind === "transfer") {
-        await this.freeze(record, "transfer recovery is not implemented");
+        try {
+          await this.transfers.reconcile(record, record.hold.transferId);
+        } catch (error) {
+          await this.freeze(record, `transfer recovery failed: ${describe(error)}`);
+        }
         continue;
       }
-      await this.settlePreparingPeers(record);
       if (record.status !== "initializing") continue;
       try {
         await this.serializeByWorkspace(record.workspaceId, () => this.runInitialization(record));
@@ -572,6 +714,12 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     this.logger.error({ groupId: record.id, reason }, "SLP group frozen");
   }
 
+  private requireGroupForAgent(agentId: string): SlpGroupRecord {
+    const group = this.getGroupForAgent(agentId);
+    if (!group) throw new Error(`Agent ${agentId} is not a member of any SLP group`);
+    return group;
+  }
+
   private instructions(): Promise<SlpInstructions> {
     this.instructionsLoad ??= loadSlpInstructions(this.instructionsDir).catch((error: unknown) => {
       this.instructionsLoad = null;
@@ -585,7 +733,9 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     const slot = group?.slots[slotId];
     if (!group || !slot) return { status: "empty" };
     if (group.status === "frozen") return { status: "held", reason: "frozen" };
-    if (group.hold) return { status: "held", reason: group.hold.kind };
+    if (group.hold && (group.hold.kind !== "transfer" || group.hold.slotId === slotId)) {
+      return { status: "held", reason: group.hold.kind };
+    }
     const generation = activeGeneration(slot);
     return generation
       ? { status: "active", agentId: generation.agentId, generationId: generation.id }

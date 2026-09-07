@@ -86,6 +86,28 @@ export class SlpHandbackRegister {
     return persisted;
   }
 
+  /**
+   * A transfer of the Peer slot starts: the retiring generation's close must
+   * not fire as a failure. Cleared by supersede or by the transfer's abort.
+   */
+  async setTransferInProgress(peerAgentId: string, inProgress: boolean): Promise<void> {
+    const record = this.getForPeer(peerAgentId);
+    if (!record || record.state !== "armed") return;
+    await this.inLane(record.id, async () => {
+      await this.persist({ ...record, transferInProgress: inProgress });
+    });
+  }
+
+  /** The Peer generation was replaced; its successor registers its own record. */
+  async supersede(peerAgentId: string, transferId: string): Promise<void> {
+    const record = this.getForPeer(peerAgentId);
+    if (!record || record.state !== "armed") return;
+    this.stopWatching(record.id);
+    await this.inLane(record.id, async () => {
+      await this.persist({ ...baseOf(record), state: "superseded", transferId });
+    });
+  }
+
   /** The Peer was never created; nothing will ever hand back. */
   async abandon(peerAgentId: string): Promise<void> {
     const record = this.getForPeer(peerAgentId);
@@ -142,11 +164,14 @@ export class SlpHandbackRegister {
           if (event.agent.pendingPermissions.size === 0) hasSeenRunning = true;
           return;
         }
+        // A stop, close or error while the Peer's slot is being handed off is
+        // transfer-related, not a result; the successor's own record fires later.
+        if (this.records.get(id)?.transferInProgress) return;
         if (lifecycle === "error") {
           this.fire(id, "errored");
         } else if (lifecycle === "idle" && hasSeenRunning) {
           this.fire(id, "finished");
-        } else if (lifecycle === "closed" && !this.records.get(id)?.transferInProgress) {
+        } else if (lifecycle === "closed") {
           this.fire(id, "closed");
         }
       },

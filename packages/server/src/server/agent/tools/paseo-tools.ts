@@ -99,6 +99,7 @@ import type {
 } from "./types.js";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
+import { SlpCheckpointContentSchema, type SlpCheckpointContent } from "../../slp/store.js";
 
 export interface PaseoToolHostDependencies {
   agentManager: AgentManager;
@@ -597,6 +598,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     const guarded: PaseoToolDefinition["handler"] =
       callerAgentId && slp
         ? async (input, context) => {
+            slp.assertToolExecutionAllowed(callerAgentId, name);
             const target = Reflect.get(Object(input), "agentId");
             if (typeof target === "string")
               slp.assertAgentTargetAllowed(callerAgentId, name, target);
@@ -1886,6 +1888,55 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       default:
         throw new Error("unreachable");
     }
+  }
+
+  // SLP control channel. Visible only to group members (the authority hides
+  // them elsewhere); the handlers act on the caller's own slot, never on a target.
+  if (callerAgentId && options.slp) {
+    const slp = options.slp;
+    const slpCallerId = callerAgentId;
+    registerTool(
+      "slp_checkpoint",
+      {
+        title: "SLP checkpoint",
+        description:
+          "Rewrite your slot's current checkpoint: objective, constraints, decisions and reasons, work done and remaining, evidence and artifact references, unknowns, next action. Update it at material decisions and before long work; a same-role handoff starts from it.",
+        inputSchema: SlpCheckpointContentSchema.shape,
+        outputSchema: { checkpointId: z.string(), revision: z.number() },
+      },
+      async (input: SlpCheckpointContent) => ({
+        content: [],
+        structuredContent: ensureValidJson(await slp.recordCheckpoint(slpCallerId, input)),
+      }),
+    );
+    registerTool(
+      "slp_request_handoff",
+      {
+        title: "SLP request handoff",
+        description:
+          "Hand your slot to a fresh same-role generation. Write your final checkpoint first; then call this and end your turn without further product work. Your successor is prepared from the checkpoint and activated after you stop.",
+        inputSchema: { reason: z.string().describe("Why the handoff is needed now.") },
+        outputSchema: { transferId: z.string() },
+      },
+      async ({ reason }: { reason: string }) => ({
+        content: [],
+        structuredContent: ensureValidJson(await slp.requestHandoff(slpCallerId, reason)),
+      }),
+    );
+    registerTool(
+      "slp_ready",
+      {
+        title: "SLP ready",
+        description:
+          "As a handoff candidate: you have read the supplied handoff context and are ready to be activated. End your turn after calling this; product work starts only after activation.",
+        inputSchema: {},
+        outputSchema: { transferId: z.string() },
+      },
+      async () => ({
+        content: [],
+        structuredContent: ensureValidJson(await slp.acknowledgeReadiness(slpCallerId)),
+      }),
+    );
   }
 
   registerTool(

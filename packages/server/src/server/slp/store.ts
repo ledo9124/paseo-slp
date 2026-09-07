@@ -8,6 +8,9 @@ import { AgentAttachmentSchema } from "@getpaseo/protocol/messages";
 import type { AgentPromptInput } from "../agent/agent-sdk-types.js";
 import { writeJsonFileAtomic } from "../atomic-file.js";
 
+/** Projection of membership onto agent labels, for discovery only; membership is authority. */
+export const SLP_GROUP_LABEL = "paseo.slp-group-id";
+
 export const SlpWorkspaceModeSchema = z.enum(["direct", "supervised"]);
 export type SlpWorkspaceMode = z.infer<typeof SlpWorkspaceModeSchema>;
 
@@ -53,11 +56,21 @@ const SlpInitializationSchema = z.object({
 });
 export type SlpInitializationRecord = z.infer<typeof SlpInitializationSchema>;
 
-const SlpHoldSchema = z.object({
-  kind: z.enum(["initialization", "transfer"]),
-  slotId: z.string().nullable(),
-  since: z.string(),
-});
+/**
+ * Why the group is held. Initialization holds every slot; a transfer holds
+ * only the slot it moves, so the rest of the group keeps receiving mail. The
+ * destructive-operation gate refuses on either, group-wide.
+ */
+const SlpHoldSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("initialization"), slotId: z.string(), since: z.string() }),
+  z.object({
+    kind: z.literal("transfer"),
+    slotId: z.string(),
+    transferId: z.string(),
+    since: z.string(),
+  }),
+]);
+export type SlpHoldRecord = z.infer<typeof SlpHoldSchema>;
 
 export const SlpGroupSchema = z.object({
   id: z.string(),
@@ -128,6 +141,8 @@ export const SlpHandbackSchema = z.discriminatedUnion("state", [
   }),
   // The Peer was never created.
   SlpHandbackBaseSchema.extend({ state: z.literal("abandoned"), abandonedAt: z.string() }),
+  // The Peer generation was replaced by a same-role handoff; the successor has its own record.
+  SlpHandbackBaseSchema.extend({ state: z.literal("superseded"), transferId: z.string() }),
 ]);
 export type SlpHandbackRecord = z.infer<typeof SlpHandbackSchema>;
 
@@ -189,6 +204,113 @@ export const SlpMailSchema = z.discriminatedUnion("state", [
 ]);
 export type SlpMailRecord = z.infer<typeof SlpMailSchema>;
 
+/** The agent-supplied part of a checkpoint. Role-specific detail goes in `notes`. */
+export const SlpCheckpointContentSchema = z.object({
+  objective: z.string(),
+  constraints: z.string().nullable().default(null),
+  decisions: z.string().nullable().default(null),
+  workDone: z.string().nullable().default(null),
+  workRemaining: z.string().nullable().default(null),
+  evidence: z.string().nullable().default(null),
+  unknowns: z.string().nullable().default(null),
+  nextAction: z.string(),
+  notes: z.string().nullable().default(null),
+});
+export type SlpCheckpointContent = z.infer<typeof SlpCheckpointContentSchema>;
+
+/**
+ * One current checkpoint per slot (id = slot id), rewritten in place, plus an
+ * immutable copy per transfer (id = transfer id) taken at the switch. The
+ * daemon attaches identity and the mail watermark; the agent cannot set them.
+ * See docs/slp/handoff.md#checkpoint.
+ */
+export const SlpCheckpointSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["current", "finalized"]),
+  groupId: z.string(),
+  slotId: z.string(),
+  generationId: z.string(),
+  agentId: z.string(),
+  /** Increases with every rewrite of the slot's current checkpoint. */
+  revision: z.number().int().positive(),
+  content: SlpCheckpointContentSchema,
+  /** Mail to this slot already accepted when the checkpoint was written. */
+  coveredMailIds: z.array(z.string()),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SlpCheckpointRecord = z.infer<typeof SlpCheckpointSchema>;
+
+const SlpTransferCandidateSchema = z.object({ generationId: z.string(), agentId: z.string() });
+
+const SlpTransferBaseSchema = z.object({
+  id: z.string(),
+  groupId: z.string(),
+  slotId: z.string(),
+  sourceGenerationId: z.string(),
+  sourceAgentId: z.string(),
+  reason: z.string(),
+  /** The current checkpoint's revision when the transfer was requested. */
+  checkpointRevision: z.number().int().positive(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+/**
+ * The transfer journal, one file per transfer. Phases in order; the group's
+ * active-generation pointer, not this file, is the committed switch, and boot
+ * recovery reconciles the two (docs/slp/handoff.md#the-recovery-rule).
+ */
+export const SlpTransferSchema = z.discriminatedUnion("phase", [
+  // Intent persisted, slot held. No external effect yet.
+  SlpTransferBaseSchema.extend({ phase: z.literal("requested") }),
+  // The source's stop was acknowledged by the manager.
+  SlpTransferBaseSchema.extend({
+    phase: z.literal("stopped"),
+    pendingPermissions: z.number().int().nonnegative(),
+  }),
+  // A candidate generation exists in the group; its agent is being created or preparing.
+  SlpTransferBaseSchema.extend({
+    phase: z.literal("preparing"),
+    pendingPermissions: z.number().int().nonnegative(),
+    candidate: SlpTransferCandidateSchema,
+  }),
+  // The candidate acknowledged readiness; its preparation turn is stopped.
+  SlpTransferBaseSchema.extend({
+    phase: z.literal("ready"),
+    pendingPermissions: z.number().int().nonnegative(),
+    candidate: SlpTransferCandidateSchema,
+  }),
+  // The group pointer moved to the candidate. Everything after this rolls forward.
+  SlpTransferBaseSchema.extend({
+    phase: z.literal("switched"),
+    pendingPermissions: z.number().int().nonnegative(),
+    candidate: SlpTransferCandidateSchema,
+    switchedAt: z.string(),
+  }),
+  SlpTransferBaseSchema.extend({
+    phase: z.literal("completed"),
+    pendingPermissions: z.number().int().nonnegative(),
+    candidate: SlpTransferCandidateSchema,
+    switchedAt: z.string(),
+    completedAt: z.string(),
+  }),
+  // Held visibly: the slot stays held until someone repairs it.
+  SlpTransferBaseSchema.extend({
+    phase: z.literal("blocked"),
+    candidate: SlpTransferCandidateSchema.nullable(),
+    blockedReason: z.string(),
+  }),
+  // Restored before the switch: the source stayed the owner.
+  SlpTransferBaseSchema.extend({
+    phase: z.literal("aborted"),
+    candidate: SlpTransferCandidateSchema.nullable(),
+    abortedReason: z.string(),
+  }),
+]);
+export type SlpTransferRecord = z.infer<typeof SlpTransferSchema>;
+export type SlpTransferCandidate = z.infer<typeof SlpTransferCandidateSchema>;
+
 export type SlpStoredGroup =
   | { kind: "valid"; record: SlpGroupRecord }
   | { kind: "unknown"; groupId: string; workspaceId: string; agentIds: string[]; error: string }
@@ -198,7 +320,9 @@ export function newSlpGroupId(): string {
   return `grp_${randomBytes(8).toString("hex")}`;
 }
 
-export function newSlpId(prefix: "slot" | "gen" | "hb" | "mail" | "attempt"): string {
+export function newSlpId(
+  prefix: "slot" | "gen" | "hb" | "mail" | "attempt" | "tr" | "ckpt",
+): string {
   return `${prefix}_${randomBytes(8).toString("hex")}`;
 }
 

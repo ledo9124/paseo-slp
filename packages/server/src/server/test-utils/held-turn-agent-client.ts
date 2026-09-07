@@ -42,6 +42,11 @@ export interface HeldTurnClientOptions {
   releaseText?: string;
 }
 
+interface HeldTurnSessionOptions extends HeldTurnClientOptions {
+  /** A resumed session keeps its handle's id so a test can find it by the agent's persistence. */
+  id?: string;
+}
+
 /**
  * A session whose turns finish only when the test calls `release()`, so busy
  * windows are deterministic rather than timer-shaped. `turn_started` is
@@ -50,7 +55,7 @@ export interface HeldTurnClientOptions {
 export class HeldTurnSession implements AgentSession {
   readonly provider: AgentProvider;
   readonly capabilities = HELD_TURN_CAPABILITIES;
-  readonly id = randomUUID();
+  readonly id: string;
   startCount = 0;
   interruptCount = 0;
   startPrompts: string[] = [];
@@ -68,8 +73,9 @@ export class HeldTurnSession implements AgentSession {
   private activeTurnId: string | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
 
-  constructor(options: HeldTurnClientOptions) {
+  constructor(options: HeldTurnSessionOptions) {
     this.provider = options.provider;
+    this.id = options.id ?? randomUUID();
     this.releaseText = options.releaseText;
     const start = createDeferred();
     const steer = createDeferred();
@@ -189,8 +195,10 @@ export class HeldTurnClient implements AgentClient {
     return session;
   }
 
-  async resumeSession(_handle: AgentPersistenceHandle): Promise<AgentSession> {
-    return this.createSession({ provider: this.provider, cwd: process.cwd() });
+  async resumeSession(handle: AgentPersistenceHandle): Promise<AgentSession> {
+    const session = new HeldTurnSession({ ...this.options, id: handle.sessionId });
+    this.sessions.push(session);
+    return session;
   }
 
   async fetchCatalog(): Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }> {

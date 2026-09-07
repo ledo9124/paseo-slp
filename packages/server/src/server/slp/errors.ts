@@ -72,3 +72,56 @@ export class SlpRoleAuthorityError extends Error {
     this.name = "SlpRoleAuthorityError";
   }
 }
+
+/** A retired generation may not run a turn, use a tool or receive product work. */
+export class SlpGenerationRetiredError extends Error {
+  constructor(
+    public readonly agentId: string,
+    public readonly groupId: string,
+  ) {
+    super(`SLP agent ${agentId} is a retired generation of group ${groupId}; it is history only`);
+    this.name = "SlpGenerationRetiredError";
+  }
+}
+
+/** A candidate in receive-only preparation tried something other than reading and acknowledging. */
+export class SlpPreparationPolicyError extends Error {
+  constructor(
+    public readonly agentId: string,
+    public readonly tool: string,
+  ) {
+    super(`SLP candidate ${agentId} is in receive-only preparation; ${tool} is not permitted`);
+    this.name = "SlpPreparationPolicyError";
+  }
+}
+
+/** A handoff was requested in a state it cannot start from. */
+export class SlpTransferRefusedError extends Error {
+  constructor(
+    public readonly slotId: string,
+    public readonly detail: string,
+  ) {
+    super(`SLP handoff for slot ${slotId} refused: ${detail}`);
+    this.name = "SlpTransferRefusedError";
+  }
+}
+
+/** A started transfer cannot continue; the slot stays held until a restart reconciles it. */
+export class SlpTransferBlockedError extends Error {
+  constructor(
+    public readonly transferId: string,
+    public readonly phase: string,
+    public readonly detail: string,
+  ) {
+    super(`SLP transfer ${transferId} blocked while ${phase}: ${detail}`);
+    this.name = "SlpTransferBlockedError";
+  }
+}
+
+/** `slp_ready` from an agent that is not any transfer's candidate. */
+export class SlpNotCandidateError extends Error {
+  constructor(public readonly agentId: string) {
+    super(`SLP agent ${agentId} is not a handoff candidate`);
+    this.name = "SlpNotCandidateError";
+  }
+}

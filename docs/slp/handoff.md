@@ -1,6 +1,6 @@
 # Same-role context handoff
 
-Status: target contract. Provider interception and recovery have not been demonstrated in this fork. [Provider support](providers.md#support-boundary) separates explicit handoff, proactive handoff and strict compaction interception for both supported providers.
+Status: explicit same-role handoff is implemented in `packages/server/src/server/slp/transfer.ts` and proven with the mock provider; provider-side preparation policy, proactive preparation, interception and late history recovery are target contract. [Provider support](providers.md#support-boundary) separates explicit handoff, proactive handoff and strict compaction interception for both supported providers.
 
 ## Outcome
 
@@ -22,13 +22,15 @@ Mark preparation requested once per generation. Stop admitting normal mail and f
 
 ## Checkpoint
 
-`slp_checkpoint` is the proposed capability name, not an existing tool. Store one current checkpoint plus immutable finalized transfer snapshots under daemon-owned SLP data. Use the role-specific fields in [Supervisor](roles/supervisor.md#checkpoint-content), [Lead](roles/lead.md#checkpoint-content), and [Peer](roles/peer.md#checkpoint-content).
+`slp_checkpoint` rewrites the caller slot's current checkpoint (`slp/checkpoints.ts`, one current record per slot); a transfer copies it under the transfer id at the switch, so the finalized snapshot is immutable. Only the slot's active generation may write it. Use the role-specific fields in [Supervisor](roles/supervisor.md#checkpoint-content), [Lead](roles/lead.md#checkpoint-content), and [Peer](roles/peer.md#checkpoint-content).
 
-The agent supplies objective, constraints, decisions/reasons, work done and remaining, evidence and artifact references, unknowns and next action. The daemon attaches verified identity, generation, ownership, message watermark, delegation references and delivery state. A checkpoint cannot alter permissions or role membership.
+The agent supplies objective, constraints, decisions/reasons, work done and remaining, evidence and artifact references, unknowns and next action. The daemon attaches identity, generation and the mail watermark (the slot's accepted mail ids), so the candidate is shown exactly the mail accepted after the checkpoint. A checkpoint cannot alter permissions or role membership.
 
 Update at material decisions, assignment changes, meaningful validated progress and before long work; do not checkpoint every tool or mirror a project task database. Finalize with a history/message cutoff so later events can be reconciled. Preserve referenced attachments or mark unavailable ones explicitly.
 
 ## Transfer sequence
+
+An agent starts the transfer of its own slot with `slp_request_handoff`, which is refused unless the caller holds the slot and wrote the slot's current checkpoint as this generation. There is no runtime-initiated request yet: nothing asks a source to checkpoint, so a source that never wrote one cannot hand off. The hold is slot-scoped — a Lead transfer holds the Lead's mailbox and the destructive-operation gate for the whole group, while Peers keep draining; a Peer transfer leaves the Lead working.
 
 1. Persist transfer intent for the source slot/generation. Hold normal mail. Mark lifecycle notifications as transfer-related before asking the source to stop.
 2. Obtain the final checkpoint, or identify the most recent usable checkpoint and uncovered history. Record pending permissions, external effects and background jobs. Verify the source has stopped product execution.
@@ -36,9 +38,11 @@ Update at material decisions, assignment changes, meaningful validated progress 
 4. Let the candidate reconcile checkpoint references, uncovered events and uncertain operations. A readiness acknowledgment is not an engineering acceptance verdict or proof that nothing was forgotten. If essential context or operation status remains missing, keep the candidate inactive and report the gap.
 5. Persist the active-generation switch with a new generation number. Reconcile ownership and delivery mappings, complete ordered retirement, and verify the restored execution policy before publishing runnable activation. Drain mail using the delivery receipt contract. Reject late work from the retired generation and retain its history.
 
+As implemented: the stop is the source ending the turn it requested from, confirmed by the manager's acknowledged cancellation, which also records how many permissions were pending and denies them. The candidate is created through the create funnel under the creation journal, copying the source's provider, model, mode, options and cwd, with its preparation context delivered as its first turn. Readiness is `slp_ready` from inside that turn; the runtime then stops the turn, copies the checkpoint, writes the group pointer, re-points owned Peers and reads each back, closes the source, moves the handback and lifts the hold. A retired generation cannot start a turn on any route: the manager consults a `TurnAdmissionGate` at the run-slot claim, and its tools refuse at execution.
+
 Use the keyed creation journal in `agent/requests/index.ts` for the candidate identity. It persists the intended agent ID before creation and can reconcile an existing record, but record existence alone does not prove that candidate preparation completed. Verify its config, preparation state and provider availability before continuing. A pending receipt with no confirmed candidate remains uncertain; do not assume creation retries automatically after every crash. The send journal intentionally returns `agent_request_outcome_unknown` when acceptance cannot be proved. Preserve that safety rule in the SLP receipt states defined in [architecture](architecture.md#receipts-and-notifications); do not delete an uncertain key to force replay.
 
-Only one generation has product execution authority. Enforce candidate preparation with provider controls and runtime tool policy. Keep two explicit configurations: the source's execution settings to restore after activation, and a temporary preparation policy that permits only required reads and the readiness/checkpoint control channel.
+Only one generation has product execution authority. Enforce candidate preparation with provider controls and runtime tool policy. Keep two explicit configurations: the source's execution settings to restore after activation, and a temporary preparation policy that permits only required reads and the readiness/checkpoint control channel. Today only the runtime half exists: a preparing generation may execute `slp_ready` and nothing else in the Paseo catalog, decided per call so activation needs no catalog refresh; the provider controls below are PR 5b, and until they land the candidate runs the source's execution settings.
 
 For Codex, setting `modeId: "read-only"` alone is insufficient. `providerOptions.sandbox_mode` and `providerOptions.approval_policy` take precedence over the preset at thread start and turn admission. The preparation policy must override conflicting native options as well as the mode, prohibit write-enabling approvals, and deny mutating MCP tools and delegation. Verify effective policy on thread creation, resume and each preparation turn. Test a source with `sandbox_mode: "danger-full-access"`; copying it must not preserve write access.
 
@@ -72,7 +76,7 @@ Test archive-first, transfer-first, workspace teardown during transfer, and a cr
 
 ## Relationships and background work
 
-Notify the logical owner slot when a Peer returns. Do not close over the old Lead's agent ID. A Lead handoff does not cancel/recreate Peers or repeat their assignments. Transfer or resolve Paseo parentage before retiring the old parent so archive cannot cascade unexpectedly.
+Notify the logical owner slot when a Peer returns. Do not close over the old Lead's agent ID. A Lead handoff does not cancel/recreate Peers or repeat their assignments. Transfer or resolve Paseo parentage before retiring the old parent so archive cannot cascade unexpectedly. A Peer handoff marks the old generation's handback transfer-in-progress, which suppresses every outcome — the stop, the close and an error are the transfer's, not a result — then supersedes it and registers a fresh record for the successor, so the slot still hands back exactly once.
 
 The existing completion channel cannot carry this. It binds the destination at subscribe time, drops the notification silently when that agent is archived, classifies a closed child as a terminal failure — the exact misclassification a handoff produces — is registered only at creation, and lives in memory with no re-registration on resume. SLP owns a handback register instead (`packages/server/src/server/slp/handbacks.ts`, one record per Peer generation under `$PASEO_HOME/slp/handbacks/`): persisted before the Peer exists, re-armed by the boot sweep, destination resolved through the slot at delivery time, carrying a transfer-in-progress flag so a close during a switch is not read as a failure, and delivered through turn admission so a handback cannot cancel the owner's live turn. SLP-created Peers set the built-in finish notification off.
 
@@ -117,10 +121,10 @@ Before retirement, persist the verified bounded tail required for this transfer 
 
 ### The recovery rule
 
-Keep one journal per transfer under `$PASEO_HOME/slp/`, recovered by a directory scan at boot. This bounds each recovery operation and allows independent transfer fixtures without rewriting unrelated journals.
+Keep one journal per transfer under `$PASEO_HOME/slp/transfers/`, recovered by a directory scan at boot. This bounds each recovery operation and allows independent transfer fixtures without rewriting unrelated journals.
 
 Do not copy the workspace-label journal's recovery direction. That store recovers by rolling back to before-images over data files it fully owns. A transfer's effects are external and irreversible: a created candidate agent, a re-pointed label, a closed generation. The right precedent is the skills transaction, which reconciles its manifest against an independently durable pointer and takes three branches — the pointer has already advanced to the after-image, so discard and roll forward; the pointer is still at the before-image, so restore; the pointer matches neither, so refuse to guess. Apply it literally: the durable active-generation pointer in the group record is the committed pointer, the transfer file is the manifest, and a transfer matching neither image sets the freeze rather than picking a winner. Carry a phase meaning nothing external was touched yet, so a crash before any effect needs no undo.
 
-Scope the freeze to one group and persist it. Freezing every SLP workspace on one stuck transfer is wrong, and unlike the label store, restart is not SLP's recovery.
+Scope the freeze to one group and persist it. Freezing every SLP workspace on one stuck transfer is wrong, and unlike the label store, restart is not SLP's recovery. The one exception is a transfer that failed after it started: it stays `blocked` with its slot held, and the next boot reconciles it by the pointer like any other phase, so a restart is its repair.
 
 Retain checkpoint, history references, operation uncertainty and transfer outcome for diagnosis. Handoff is never evidence that an assignment was accepted or a project finished.

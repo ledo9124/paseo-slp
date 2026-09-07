@@ -168,7 +168,12 @@ describe("SlpService", () => {
     const group = await daemon.service.initializeGroup(input());
     daemon.client.sessions[0]!.release();
     await daemon.manager.waitForAgentEvent(leadAgentId(group), { waitForActive: true });
-    const hold = { kind, slotId: group.leadSlotId, since: new Date().toISOString() };
+    const hold = {
+      kind,
+      slotId: group.leadSlotId,
+      transferId: "tr_missing",
+      since: new Date().toISOString(),
+    };
     await writeFile(
       path.join(paseoHome, "slp", "groups", `${group.id}.json`),
       JSON.stringify({ ...group, hold }),
@@ -198,7 +203,7 @@ describe("SlpService", () => {
     const agentId = leadAgentId(group);
 
     const second = await startDaemon();
-    // A transfer hold with no transfer recovery implemented freezes only this group.
+    // A transfer hold whose journal record is missing freezes only this group.
     expect(second.service.getGroup(group.id)?.status).toBe("frozen");
     await expect(second.manager.archiveSnapshot(agentId, new Date().toISOString())).rejects.toThrow(
       SlpGroupHeldError,

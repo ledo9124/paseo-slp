@@ -57,8 +57,12 @@ $PASEO_HOME/
 │   │   └── {groupId}.json               # One SLP group: slots, generations, hold, initialization
 │   ├── handbacks/
 │   │   └── {handbackId}.json            # One Peer handback: owner slot, outcome, mail id
-│   └── mail/
-│       └── {mailId}.json                # One slot message: prompt, dispatch attempt, delivery state
+│   ├── mail/
+│   │   └── {mailId}.json                # One slot message: prompt, dispatch attempt, delivery state
+│   ├── checkpoints/
+│   │   └── {slotId|transferId}.json     # A slot's current checkpoint, or the copy a transfer took
+│   └── transfers/
+│       └── {transferId}.json            # One same-role handoff: phase, source, candidate
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── projects/
@@ -194,6 +198,14 @@ One file per Peer generation, written before the Peer agent exists and addressed
 **Path:** `$PASEO_HOME/slp/mail/{mailId}.json`
 
 One file per message to a slot, holding the provider prompt exactly as it will be dispatched (text, image blocks, attachments) so a queued receipt promises retained input. The dispatch attempt is written before the provider is asked; a record found `dispatching` at boot becomes `uncertain` and is retained, never replayed. States and their meaning: [docs/slp/architecture.md](slp/architecture.md#receipts-and-notifications).
+
+**Path:** `$PASEO_HOME/slp/checkpoints/{slotId}.json` and `{transferId}.json`
+
+The slot's current checkpoint is one file named by the slot, rewritten in place with a rising revision; a transfer copies it under its own id at the switch so the finalized snapshot never changes. The agent-supplied content and the daemon-attached watermark are separate fields. Contract: [docs/slp/handoff.md](slp/handoff.md#checkpoint).
+
+**Path:** `$PASEO_HOME/slp/transfers/{transferId}.json`
+
+One file per same-role handoff, a phase-discriminated journal. It is a manifest, not the commit: the group record's active-generation pointer is the commit, and boot recovery reconciles the two — pointer still at the source restores the source, pointer at the candidate rolls forward, anything else freezes the group. Recovery rule: [docs/slp/handoff.md](slp/handoff.md#the-recovery-rule).
 
 ## 2. Daemon Configuration
 

@@ -131,7 +131,7 @@ import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { AgentRequests } from "./agent/requests/index.js";
-import { SLP_GROUP_LABEL, SlpService } from "./slp/service.js";
+import { SlpService } from "./slp/service.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -1178,17 +1178,22 @@ export async function createPaseoDaemon(
     agentManager,
     agentStorage,
     agentRequests,
-    createLeadAgent: async (input) => {
+    createMemberAgent: async (input) => {
       await createAgent({
         kind: "mcp",
         agentId: input.agentId,
-        provider: formatProviderModel(input.lead.provider, input.lead.model),
-        title: "Lead",
-        cwd: input.lead.cwd,
+        provider: formatProviderModel(input.source.provider, input.source.model),
+        title: input.title,
+        cwd: input.source.cwd,
         workspaceId: input.workspaceId,
-        mode: input.lead.modeId ?? undefined,
-        config: { systemPrompt: input.systemPrompt },
-        labels: { [SLP_GROUP_LABEL]: input.groupId },
+        mode: input.source.modeId ?? undefined,
+        config: {
+          systemPrompt: input.systemPrompt,
+          ...(input.source.providerOptions
+            ? { providerOptions: input.source.providerOptions }
+            : {}),
+        },
+        labels: input.labels,
         background: true,
         notifyOnFinish: false,
       });

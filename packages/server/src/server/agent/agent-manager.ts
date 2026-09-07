@@ -335,6 +335,15 @@ export interface DestructiveOperationGate {
   assertWorkspaceOperationAllowed(workspaceId: string, operation: "archive"): void;
 }
 
+/**
+ * Refuses a turn for an agent that may no longer run product work (a retired
+ * SLP generation). Checked synchronously at the run-slot claim, so every
+ * route into a turn sees it. Throws to refuse.
+ */
+export interface TurnAdmissionGate {
+  assertTurnAllowed(agentId: string): void;
+}
+
 export interface AdmitForegroundTurnOptions extends AgentRunOptions {
   /** When the slot is busy, deliver into the live turn instead of reporting busy. */
   steer?: boolean;
@@ -746,6 +755,7 @@ export class AgentManager {
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
   private destructiveOperationGate: DestructiveOperationGate | null = null;
+  private turnAdmissionGate: TurnAdmissionGate | null = null;
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
@@ -829,6 +839,10 @@ export class AgentManager {
 
   setDestructiveOperationGate(gate: DestructiveOperationGate): void {
     this.destructiveOperationGate = gate;
+  }
+
+  setTurnAdmissionGate(gate: TurnAdmissionGate): void {
+    this.turnAdmissionGate = gate;
   }
 
   /** Workspace archive and project removal call this before any teardown effect. */
@@ -2360,6 +2374,7 @@ export class AgentManager {
       );
       throw new Error(`Agent ${agentId} already has an active run`);
     }
+    this.turnAdmissionGate?.assertTurnAllowed(agentId);
 
     const agent = existingAgent;
     const isReplacement = agent.pendingReplacement;

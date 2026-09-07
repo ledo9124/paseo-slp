@@ -51,16 +51,20 @@ export async function startSlpTestDaemon(options: SlpTestDaemonOptions): Promise
     agentManager: manager,
     agentStorage: storage,
     agentRequests,
-    createLeadAgent: async (creation) => {
-      await manager.createAgent(
-        {
-          provider: creation.lead.provider,
-          cwd: creation.lead.cwd,
-          systemPrompt: creation.systemPrompt,
-        },
-        creation.agentId,
-        { workspaceId: creation.workspaceId },
-      );
+    createMemberAgent: async (creation) => {
+      await createAgent({
+        kind: "mcp",
+        agentId: creation.agentId,
+        provider: creation.source.provider,
+        title: creation.title,
+        cwd: creation.source.cwd,
+        workspaceId: creation.workspaceId,
+        mode: creation.source.modeId ?? undefined,
+        config: { systemPrompt: creation.systemPrompt },
+        labels: creation.labels,
+        background: true,
+        notifyOnFinish: false,
+      });
     },
     isDelegationToolingEnabled: options.isDelegationToolingEnabled ?? (() => true),
     ...(options.instructionsDir ? { instructionsDir: options.instructionsDir } : {}),
