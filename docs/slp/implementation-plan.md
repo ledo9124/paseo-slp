@@ -1,6 +1,6 @@
 # SLP implementation plan
 
-Status: PR 0 and PR 1 landed on `slp/admission-foundations` (see [admission](admission.md)); PR 2 onward NOT_STARTED; live provider proof NOT_RUN.
+Status: PR 0, PR 1 and PR 2 landed on `slp/admission-foundations` (see [admission](admission.md) and `packages/server/src/server/slp/`); PR 3 onward NOT_STARTED; live provider proof NOT_RUN. PR 2 has no client entrypoint yet: group initialization is reachable from boot recovery and tests until the RPC lands.
 
 This plan records the agreed work sequence. Merging documentation does not prove SLP works or authorize deployment. Use [architecture](architecture.md), [handoff](handoff.md), and [provider support](providers.md) as the design owners. Follow the repository's existing development, validation and PR workflow; no external harness installation is part of this plan.
 
@@ -18,7 +18,7 @@ Two of the original slice boundaries were wrong. Provider feasibility does not b
 
 The keyed creation journal is constructed in bootstrap and subscriber errors are contained at dispatch (PR 1). Register new integration tests in the current CI script.
 
-Install the [group destructive-operation gate](handoff.md#retirement) with group identity, before groups become runnable. Cover individual archive, cascade, scheduled archive and workspace teardown; a label-only exception is insufficient.
+The [group destructive-operation gate](handoff.md#retirement) is installed in `AgentManager` (archive, snapshot archive, cascade through both, delete) and at `archiveByScope` and project removal for workspace teardown; scheduled archive goes through `archiveByScope`. It keys on daemon-owned membership, not labels.
 
 Provider probes run alongside foundations. Hook probes gate strict interception, telemetry probes gate proactive thresholds, and preparation/history probes gate the corresponding explicit and recovery paths. Record the result before enabling each capability.
 

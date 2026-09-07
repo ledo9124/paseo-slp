@@ -325,6 +325,16 @@ export type ForegroundTurnAdmission =
   | { status: "steered" }
   | { status: "busy"; turnId: string | null };
 
+/**
+ * Group-level refusal for destructive operations. Installed by the SLP
+ * service; checked before the per-agent lifecycle lane is entered, never
+ * from inside one. Throws to refuse.
+ */
+export interface DestructiveOperationGate {
+  assertAgentOperationAllowed(agentId: string, operation: "archive" | "delete"): void;
+  assertWorkspaceOperationAllowed(workspaceId: string, operation: "archive"): void;
+}
+
 export interface AdmitForegroundTurnOptions extends AgentRunOptions {
   /** When the slot is busy, deliver into the live turn instead of reporting busy. */
   steer?: boolean;
@@ -735,6 +745,7 @@ export class AgentManager {
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
+  private destructiveOperationGate: DestructiveOperationGate | null = null;
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
@@ -814,6 +825,22 @@ export class AgentManager {
 
   setAgentArchivedCallback(callback: AgentArchivedCallback): void {
     this.onAgentArchived = callback;
+  }
+
+  setDestructiveOperationGate(gate: DestructiveOperationGate): void {
+    this.destructiveOperationGate = gate;
+  }
+
+  /** Workspace archive and project removal call this before any teardown effect. */
+  assertWorkspaceDestructiveOperationAllowed(workspaceId: string): void {
+    this.destructiveOperationGate?.assertWorkspaceOperationAllowed(workspaceId, "archive");
+  }
+
+  private assertAgentDestructiveOperationAllowed(
+    agentId: string,
+    operation: "archive" | "delete",
+  ): void {
+    this.destructiveOperationGate?.assertAgentOperationAllowed(agentId, operation);
   }
 
   setMcpBaseUrl(url: string | null): void {
@@ -1673,6 +1700,7 @@ export class AgentManager {
   }
 
   private async archiveAgentUnlocked(agentId: string): Promise<{ archivedAt: string }> {
+    this.assertAgentDestructiveOperationAllowed(agentId, "archive");
     const agent = this.requireAgent(agentId);
     if (!this.registry) {
       throw new Error("Agent storage is not configured");
@@ -2019,6 +2047,7 @@ export class AgentManager {
   }
 
   async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
+    this.assertAgentDestructiveOperationAllowed(agentId, "archive");
     const registry = this.requireRegistry();
     const liveAgent = this.getAgent(agentId);
     if (liveAgent) {
@@ -3084,6 +3113,7 @@ export class AgentManager {
   }
 
   async deleteAgentState(agentId: string): Promise<void> {
+    this.assertAgentDestructiveOperationAllowed(agentId, "delete");
     this.discardRetainedAgentState(agentId);
     await this.deleteCommittedTimeline(agentId);
   }

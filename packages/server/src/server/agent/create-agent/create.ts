@@ -79,6 +79,8 @@ export interface CreateAgentFromSessionInput {
 
 export interface CreateAgentFromMcpInput {
   kind: "mcp";
+  /** Preassigned id, for callers that journal the id before creation. */
+  agentId?: string;
   provider: string;
   title: string;
   initialPrompt?: string;
@@ -182,7 +184,7 @@ export async function createAgentCommand(
 
   const snapshot = await dependencies.agentManager.createAgent(
     resolved.config,
-    input.kind === "session" ? input.agentId : undefined,
+    input.agentId,
     resolved.createOptions,
   );
 

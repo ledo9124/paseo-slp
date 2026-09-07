@@ -52,6 +52,9 @@ $PASEO_HOME/
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
+├── slp/
+│   └── groups/
+│       └── {groupId}.json               # One SLP group: slots, generations, hold, initialization
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── projects/
@@ -173,6 +176,12 @@ Terminals are live daemon state, not persisted JSON records. A terminal carries 
 Terminal activity contributes to the workspace status bucket **per `workspaceId`**: a working terminal drives `running` onto the workspace it carries only. Same-`cwd` siblings are untouched; terminal visibility is likewise `workspaceId`-scoped.
 
 ---
+
+## 1b. SLP Group Record
+
+**Path:** `$PASEO_HOME/slp/groups/{groupId}.json`
+
+One file per group holds the group, its slots and their generations, so a multi-record transition inside a group is one atomic rename. Schema: `packages/server/src/server/slp/store.ts`. The `hold` field is the persisted destructive-operation gate: while it is set, or while `status` is `frozen`, every archive, cascade, delete and workspace teardown touching a member agent or the workspace is refused. Boot recovery resumes an `initializing` group through the agent request journal; a record it cannot parse keeps its gate from the id and membership it can read and is frozen. Design: [docs/slp/architecture.md](slp/architecture.md#stable-identity).
 
 ## 2. Daemon Configuration
 

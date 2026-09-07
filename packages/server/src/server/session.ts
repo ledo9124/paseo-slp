@@ -3236,6 +3236,9 @@ export class Session {
         .filter((workspace) => !workspace.archivedAt)
         .map((workspace) => workspace.workspaceId);
 
+      for (const workspaceId of activeWorkspaceIds) {
+        this.agentManager.assertWorkspaceDestructiveOperationAllowed(workspaceId);
+      }
       if (activeWorkspaceIds.length > 0) {
         this.markWorkspaceArchiving(activeWorkspaceIds, new Date().toISOString());
         await this.emitWorkspaceUpdatesForWorkspaceIds(activeWorkspaceIds);

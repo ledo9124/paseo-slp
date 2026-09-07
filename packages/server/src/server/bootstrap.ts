@@ -131,6 +131,7 @@ import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { AgentRequests } from "./agent/requests/index.js";
+import { SlpService } from "./slp/service.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -214,6 +215,7 @@ import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
 import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
 import {
   createAgentCommand,
+  formatProviderModel,
   type CreateAgentCommandDependencies,
 } from "./agent/create-agent/create.js";
 import { archiveAgentCommand, cancelAgentRunCommand } from "./agent/lifecycle-command.js";
@@ -1167,6 +1169,32 @@ export async function createPaseoDaemon(
   };
   const createAgent = (input: Parameters<typeof createAgentCommand>[1]) =>
     createAgentCommand(createAgentCommandDependencies, input);
+  // SLP groups join the recovery that already ran for agent storage and the
+  // workspace registries; this sits after the create funnel is bound because
+  // resuming an interrupted initialization may have to create the Lead.
+  const slpService = new SlpService({
+    paseoHome: config.paseoHome,
+    logger,
+    agentManager,
+    agentStorage,
+    agentRequests,
+    createLeadAgent: async (input) => {
+      await createAgent({
+        kind: "mcp",
+        agentId: input.agentId,
+        provider: formatProviderModel(input.lead.provider, input.lead.model),
+        title: "Lead",
+        cwd: input.lead.cwd,
+        workspaceId: input.workspaceId,
+        mode: input.lead.modeId ?? undefined,
+        labels: { "paseo.slp-group-id": input.groupId },
+        background: true,
+        notifyOnFinish: false,
+      });
+    },
+  });
+  await slpService.recover();
+  logger.info({ elapsed: elapsed() }, "SLP groups recovered");
   const archiveWorkspaceByIdExternal = (workspaceId: string, requestId: string) =>
     archiveByScope(
       {
