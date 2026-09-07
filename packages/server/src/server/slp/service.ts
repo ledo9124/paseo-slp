@@ -25,6 +25,7 @@ import {
   SlpPreparationPolicyError,
   SlpRoleAuthorityError,
   SlpTransferRefusedError,
+  SlpNoContactError,
 } from "./errors.js";
 import { SlpHandbackRegister } from "./handbacks.js";
 import {
@@ -56,6 +57,8 @@ import {
   type SlpWorkspaceMode,
 } from "./store.js";
 import { SlpTransfers, type SlpMemberCreationInput, type SlpTransferHost } from "./transfer.js";
+
+import type { SlpGroupSummary } from "../messages.js";
 
 export { SLP_GROUP_LABEL } from "./store.js";
 
@@ -118,6 +121,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   /** Records recovery could not fully parse. They keep their gate and nothing else. */
   private readonly unknownGroups = new Map<string, FrozenUnknownGroup>();
   private readonly workspaceTails = new Map<string, Promise<unknown>>();
+  private readonly listeners = new Set<(groupId: string) => void>();
 
   constructor(options: SlpServiceOptions) {
     this.store = new SlpGroupStore(`${options.paseoHome}/slp/groups`);
@@ -136,6 +140,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       agentStorage: options.agentStorage,
       resolveSlot: (groupId, slotId) => this.resolveSlot(groupId, slotId),
       now: this.now,
+      onChange: (groupId) => this.changed(groupId),
     });
     this.handbacks = new SlpHandbackRegister({
       directory: `${options.paseoHome}/slp/handbacks`,
@@ -166,6 +171,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       },
       persistGroup: (group) => this.persist(group),
       freezeGroup: (group, reason) => this.freeze(group, reason),
+      onGroupChanged: (groupId) => this.changed(groupId),
       composePrompt: async (group, slot, generationNumber) => {
         const instructions = await this.instructions();
         return {
@@ -235,6 +241,91 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
 
   listMail(): SlpMailRecord[] {
     return this.mailbox.list();
+  }
+
+  /**
+   * Fires with the group id after every durable change to a group, one of
+   * its transfers or its mail. Listeners read the current state back through
+   * `getGroup` and `summarize`; a change is a wake-up, not a payload.
+   */
+  subscribe(listener: (groupId: string) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  /** The client-facing projection of a group: see packages/protocol SlpGroupSummarySchema. */
+  summarize(group: SlpGroupRecord): SlpGroupSummary {
+    const contact = (() => {
+      try {
+        return this.contactAgentId(group);
+      } catch (error) {
+        if (error instanceof SlpNoContactError) return null;
+        throw error;
+      }
+    })();
+    const mail = { queued: 0, dispatching: 0, uncertain: 0 };
+    for (const record of this.mailbox.list()) {
+      if (record.groupId !== group.id) continue;
+      if (record.state === "queued") mail.queued += 1;
+      if (record.state === "dispatching") mail.dispatching += 1;
+      if (record.state === "uncertain") mail.uncertain += 1;
+    }
+    return {
+      id: group.id,
+      workspaceId: group.workspaceId,
+      mode: group.mode,
+      status: group.status,
+      freezeReason: group.freeze?.reason ?? null,
+      hold: group.hold
+        ? {
+            kind: group.hold.kind,
+            slotId: group.hold.slotId,
+            transferId: group.hold.kind === "transfer" ? group.hold.transferId : null,
+            since: group.hold.since,
+          }
+        : null,
+      contactAgentId: contact,
+      initialMessageReceipt: group.initialization.receipt,
+      slots: Object.values(group.slots).map((slot) => ({
+        id: slot.id,
+        role: slot.role,
+        ownerSlotId: slot.ownerSlotId,
+        activeAgentId:
+          slot.generations.find((entry) => entry.id === slot.activeGenerationId)?.agentId ?? null,
+        generations: slot.generations.map((entry) => ({
+          id: entry.id,
+          number: entry.number,
+          agentId: entry.agentId,
+          state: entry.state,
+        })),
+      })),
+      transfers: this.transfers
+        .list()
+        .filter((record) => record.groupId === group.id)
+        .map((record) => ({
+          id: record.id,
+          slotId: record.slotId,
+          phase: record.phase,
+          sourceAgentId: record.sourceAgentId,
+          candidateAgentId: "candidate" in record ? (record.candidate?.agentId ?? null) : null,
+          reason: transferReason(record),
+          updatedAt: record.updatedAt,
+        })),
+      mail,
+      updatedAt: group.updatedAt,
+    };
+  }
+
+  private changed(groupId: string): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(groupId);
+      } catch (error) {
+        this.logger.error({ groupId, err: error }, "SLP change listener failed");
+      }
+    }
   }
 
   listTransfers(): SlpTransferRecord[] {
@@ -463,6 +554,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       await this.instructions();
       const at = this.now().toISOString();
       const leadSlotId = newSlpId("slot");
+      const supervisorSlotId = input.mode === "supervised" ? newSlpId("slot") : null;
       const record: SlpGroupRecord = {
         id: newSlpGroupId(),
         workspaceId: input.workspaceId,
@@ -475,18 +567,16 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
           text: input.initialMessage.text,
           lead: input.lead,
           leadAgentId: null,
+          supervisorAgentId: null,
           receipt: "pending",
         },
         leadSlotId,
-        supervisorSlotId: null,
+        supervisorSlotId,
         slots: {
-          [leadSlotId]: {
-            id: leadSlotId,
-            role: "lead",
-            ownerSlotId: null,
-            activeGenerationId: null,
-            generations: [],
-          },
+          [leadSlotId]: emptySlot(leadSlotId, "lead"),
+          ...(supervisorSlotId
+            ? { [supervisorSlotId]: emptySlot(supervisorSlotId, "supervisor") }
+            : {}),
         },
         createdAt: at,
         updatedAt: at,
@@ -497,62 +587,40 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     });
   }
 
-  /** Idempotent: every external effect is journaled, so it is safe to re-enter. */
+  /**
+   * Idempotent: every external effect is journaled, so it is safe to re-enter.
+   * The Supervisor, when the mode has one, exists before the Lead and is the
+   * Human's contact: the first message goes to it, and the Lead hears only
+   * what the Supervisor relays through its mailbox.
+   */
   private async runInitialization(record: SlpGroupRecord): Promise<SlpGroupRecord> {
-    const leadSlot = record.slots[record.leadSlotId]!;
-    if (!leadSlot.activeGenerationId) {
-      const instructions = await this.instructions();
-      const generationNumber = leadSlot.generations.length + 1;
-      const systemPrompt = composeSlpSystemPrompt(instructions, {
-        role: "lead",
-        groupId: record.id,
-        workspaceId: record.workspaceId,
-        slotId: leadSlot.id,
-        generationNumber,
-        mode: record.mode,
-      });
-      const leadAgentId = await this.agentRequests.create({
-        key: `slp-lead:${record.id}`,
-        request: { groupId: record.id, lead: record.initialization.lead },
-        findAgent: async (agentId) =>
-          this.agentManager.getAgent(agentId) != null ||
-          (await this.agentStorage.get(agentId)) !== null,
-        create: (agentId) =>
-          this.createMemberAgent({
-            agentId,
-            groupId: record.id,
-            workspaceId: record.workspaceId,
-            title: "Lead",
-            source: { ...record.initialization.lead, providerOptions: null },
-            systemPrompt,
-            labels: { [SLP_GROUP_LABEL]: record.id },
-          }),
-      });
-      const at = this.now().toISOString();
-      const generation = newGeneration({
-        number: generationNumber,
-        agentId: leadAgentId,
-        instructionsVersion: instructions.version,
-        at,
-      });
-      generation.state = "active";
-      generation.activatedAt = at;
-      leadSlot.generations.push(generation);
-      leadSlot.activeGenerationId = generation.id;
-      record.initialization.leadAgentId = leadAgentId;
+    if (record.supervisorSlotId && !record.initialization.supervisorAgentId) {
+      record.initialization.supervisorAgentId = await this.createRootGeneration(
+        record,
+        record.supervisorSlotId,
+        "supervisor",
+      );
+      await this.persist(record);
+    }
+    if (!record.initialization.leadAgentId) {
+      record.initialization.leadAgentId = await this.createRootGeneration(
+        record,
+        record.leadSlotId,
+        "lead",
+      );
       await this.persist(record);
     }
 
     if (record.initialization.receipt === "pending") {
-      const leadAgentId = record.initialization.leadAgentId!;
+      const contactAgentId = this.contactAgentId(record);
       try {
         const result = await this.agentRequests.send({
-          agentId: leadAgentId,
+          agentId: contactAgentId,
           messageId: record.initialization.messageId,
           request: { groupId: record.id, text: record.initialization.text },
           send: async () => {
             const admission = await this.agentManager.admitForegroundTurn(
-              leadAgentId,
+              contactAgentId,
               record.initialization.text,
               { clientMessageId: record.initialization.messageId },
             );
@@ -560,7 +628,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
           },
         });
         if (result === "declined") {
-          throw new Error(`Lead ${leadAgentId} was busy before its first message`);
+          throw new Error(`agent ${contactAgentId} was busy before its first message`);
         }
         record.initialization.receipt = "accepted";
       } catch (error) {
@@ -570,7 +638,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
         // The send may have taken effect before the daemon died. Never repeat it.
         record.initialization.receipt = "uncertain";
         this.logger.warn(
-          { groupId: record.id, agentId: leadAgentId },
+          { groupId: record.id, agentId: contactAgentId },
           "SLP initial message acceptance is uncertain after restart",
         );
       }
@@ -579,8 +647,66 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     record.status = "ready";
     record.hold = null;
     await this.persist(record);
-    this.mailbox.pump(record.id, record.leadSlotId);
+    for (const slotId of Object.keys(record.slots)) this.mailbox.pump(record.id, slotId);
     return record;
+  }
+
+  /** The agent the Human talks to: the Supervisor in supervised mode, else the Lead. */
+  contactAgentId(group: SlpGroupRecord): string {
+    const slotId = group.supervisorSlotId ?? group.leadSlotId;
+    const slot = group.slots[slotId];
+    const active = slot?.generations.find((entry) => entry.id === slot.activeGenerationId);
+    if (!active) throw new SlpNoContactError(group.id);
+    return active.agentId;
+  }
+
+  /** One root slot's first generation, created under the journal so a retry reuses the id. */
+  private async createRootGeneration(
+    record: SlpGroupRecord,
+    slotId: string,
+    role: "supervisor" | "lead",
+  ): Promise<string> {
+    const slot = record.slots[slotId];
+    if (!slot) throw new Error(`SLP group ${record.id} has no ${role} slot ${slotId}`);
+    const instructions = await this.instructions();
+    const generationNumber = slot.generations.length + 1;
+    const systemPrompt = composeSlpSystemPrompt(instructions, {
+      role,
+      groupId: record.id,
+      workspaceId: record.workspaceId,
+      slotId,
+      generationNumber,
+      mode: record.mode,
+    });
+    const agentId = await this.agentRequests.create({
+      key: `slp-${role}:${record.id}`,
+      request: { groupId: record.id, lead: record.initialization.lead },
+      findAgent: async (candidate) =>
+        this.agentManager.getAgent(candidate) != null ||
+        (await this.agentStorage.get(candidate)) !== null,
+      create: (candidate) =>
+        this.createMemberAgent({
+          agentId: candidate,
+          groupId: record.id,
+          workspaceId: record.workspaceId,
+          title: role === "lead" ? "Lead" : "Supervisor",
+          source: { ...record.initialization.lead, providerOptions: null },
+          systemPrompt,
+          labels: { [SLP_GROUP_LABEL]: record.id },
+        }),
+    });
+    const at = this.now().toISOString();
+    const generation = newGeneration({
+      number: generationNumber,
+      agentId,
+      instructionsVersion: instructions.version,
+      at,
+    });
+    generation.state = "active";
+    generation.activatedAt = at;
+    slot.generations.push(generation);
+    slot.activeGenerationId = generation.id;
+    return agentId;
   }
 
   /**
@@ -782,6 +908,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     record.updatedAt = this.now().toISOString();
     await this.store.write(record);
     this.groups.set(record.id, record);
+    this.changed(record.id);
   }
 
   private serializeByWorkspace<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
@@ -851,6 +978,16 @@ function relationOf(
   if (targetSlot.role === "supervisor") return "supervisor";
   if (targetSlot.role === "lead") return "lead";
   return "other-member";
+}
+
+function transferReason(record: SlpTransferRecord): string | null {
+  if (record.phase === "blocked") return record.blockedReason;
+  if (record.phase === "aborted") return record.abortedReason;
+  return null;
+}
+
+function emptySlot(id: string, role: "supervisor" | "lead"): SlpSlotRecord {
+  return { id, role, ownerSlotId: null, activeGenerationId: null, generations: [] };
 }
 
 function groupAgentIds(group: SlpGroupRecord): string[] {

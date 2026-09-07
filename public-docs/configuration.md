@@ -127,6 +127,26 @@ Or persist it in `config.json`:
 
 When enabled, open the daemon HTTP origin, for example `http://localhost:6767/`, to load the web app. Static UI files load without daemon auth; API and WebSocket requests still require the configured password.
 
+## SLP groups
+
+Supervisor–Lead–Peer groups are on by default. Turn them off to hide the feature from clients and refuse new groups; groups that already exist keep their recovery and archive gates.
+
+```bash
+PASEO_SLP_ENABLED=false paseo daemon start
+```
+
+Or persist it in `config.json`:
+
+```json
+{
+  "features": {
+    "slp": {
+      "enabled": false
+    }
+  }
+}
+```
+
 ## Logging
 
 Daemon logging uses separate console and file sinks by default:

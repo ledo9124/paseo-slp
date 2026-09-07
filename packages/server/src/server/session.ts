@@ -13,6 +13,7 @@ import {
   type FirstAgentContext,
   type SessionInboundMessage,
   type SessionOutboundMessage,
+  type SlpGroupSummary,
   type GitSetupOptions,
   type StartWorkspaceScriptRequest,
   type WorkspaceScriptListRequest,
@@ -83,6 +84,7 @@ import {
   WorkspaceLabelStorageUncertainError,
   type WorkspaceLabelService,
 } from "./workspace-labels/index.js";
+import type { SlpService } from "./slp/service.js";
 
 import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
@@ -467,6 +469,8 @@ export interface SessionOptions {
   workspaceRegistry: WorkspaceRegistry;
   directorySync?: DirectorySyncService;
   workspaceLabelService?: WorkspaceLabelService;
+  /** Present only when SLP groups are enabled for this daemon. */
+  slp?: SlpService;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
   checkoutDiffManager: CheckoutDiffManager;
@@ -633,6 +637,10 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
  * It owns all state management, orchestration logic, and message processing.
  * Session has no knowledge of WebSockets - it only emits and receives messages.
  */
+function resolveSlpService(service: SlpService | undefined): SlpService | null {
+  return service ?? null;
+}
+
 function resolveWorkspaceLabelService(
   service: WorkspaceLabelService | undefined,
 ): WorkspaceLabelService | null {
@@ -707,6 +715,8 @@ export class Session {
   private readonly agentUpdates: AgentUpdatesService;
   private workspaceUpdatesSubscription: WorkspaceUpdatesSubscriptionState | null = null;
   private readonly workspaceLabelService: WorkspaceLabelService | null;
+  private readonly slp: SlpService | null;
+  private unsubscribeSlp: (() => void) | null = null;
   private workspaceLabelSubscription: {
     owner: object;
     id: string;
@@ -775,6 +785,7 @@ export class Session {
       workspaceRegistry,
       directorySync,
       workspaceLabelService,
+      slp,
       filesystem,
       scheduleService,
       checkoutDiffManager,
@@ -849,6 +860,8 @@ export class Session {
     this.workspaceRegistry = workspaceRegistry;
     this.directorySync = resolveDirectorySync(directorySync);
     this.workspaceLabelService = resolveWorkspaceLabelService(workspaceLabelService);
+    this.slp = resolveSlpService(slp);
+    this.unsubscribeSlp = this.subscribeToSlpChanges(this.slp);
     this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.github = github ?? createGitHubService();
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
@@ -2000,6 +2013,7 @@ export class Session {
       this.dispatchPluginMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
       this.dispatchScheduleMessage(msg) ??
+      this.dispatchSlpMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
   }
@@ -2575,6 +2589,90 @@ export class Session {
       return this.handleWorkspaceSetupRunRequest(msg);
     }
     return undefined;
+  }
+
+  private subscribeToSlpChanges(service: SlpService | null): (() => void) | null {
+    if (!service) return null;
+    return service.subscribe((groupId) => {
+      const group = service.getGroup(groupId);
+      if (group) {
+        this.emit({ type: "slp.group.update", payload: { group: service.summarize(group) } });
+      }
+    });
+  }
+
+  private dispatchSlpMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "slp.group.get.request":
+        return this.handleSlpGroupGet(msg);
+      case "slp.group.initialize.request":
+        return this.handleSlpGroupInitialize(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private async handleSlpGroupGet(
+    request: Extract<SessionInboundMessage, { type: "slp.group.get.request" }>,
+  ): Promise<void> {
+    const group = this.slp?.getGroupForWorkspace(request.workspaceId) ?? null;
+    this.emit({
+      type: "slp.group.get.response",
+      payload: {
+        requestId: request.requestId,
+        group: group && this.slp ? this.slp.summarize(group) : null,
+      },
+    });
+  }
+
+  /**
+   * Refusals are answered, not thrown: the group runtime names each one
+   * (conflicting mode, held or frozen group, no delegation tooling) and the
+   * client shows that name. See docs/slp/architecture.md.
+   */
+  private async handleSlpGroupInitialize(
+    request: Extract<SessionInboundMessage, { type: "slp.group.initialize.request" }>,
+  ): Promise<void> {
+    const respond = (payload: {
+      success: boolean;
+      error: { code: string; message: string } | null;
+      group: SlpGroupSummary | null;
+    }) => {
+      this.emit({
+        type: "slp.group.initialize.response",
+        payload: { requestId: request.requestId, ...payload },
+      });
+    };
+    if (!this.slp) {
+      respond({
+        success: false,
+        error: { code: "slp_unavailable", message: "SLP groups are disabled on this host" },
+        group: null,
+      });
+      return;
+    }
+    try {
+      const group = await this.slp.initializeGroup({
+        workspaceId: request.workspaceId,
+        mode: request.mode,
+        initialMessage: { messageId: request.messageId, text: request.text },
+        lead: {
+          provider: request.provider,
+          cwd: request.cwd,
+          model: request.model ?? null,
+          modeId: request.providerModeId ?? null,
+        },
+      });
+      respond({ success: true, error: null, group: this.slp.summarize(group) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = error instanceof Error ? error.name : "error";
+      this.sessionLogger.warn(
+        { err: error, workspaceId: request.workspaceId },
+        "slp.group.initialize refused",
+      );
+      respond({ success: false, error: { code, message }, group: null });
+    }
   }
 
   private dispatchWorkspaceLabelMessage(msg: SessionInboundMessage): Promise<void> | undefined {
@@ -7756,6 +7854,8 @@ export class Session {
     this.unsubscribeWorkspaceMutations = null;
     this.workspaceLabelSubscription?.unsubscribe();
     this.workspaceLabelSubscription = null;
+    this.unsubscribeSlp?.();
+    this.unsubscribeSlp = null;
     this.agentUpdates.dispose();
     await this.hubExecutionController?.cleanup();
     if (this.unsubscribeTerminalWorkspaceContributionEvents) {

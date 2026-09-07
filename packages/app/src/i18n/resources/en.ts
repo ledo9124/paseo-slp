@@ -214,6 +214,50 @@ export const en = {
       proposedPlan: "Proposed plan",
     },
   },
+  slp: {
+    roles: {
+      supervisor: "Supervisor",
+      lead: "Lead",
+      peer: "Peer",
+    },
+    modes: {
+      direct: "Direct",
+      supervised: "Supervised",
+    },
+    start: {
+      menu: "Start SLP group",
+      title: "Start SLP group",
+      modeLabel: "Workspace mode",
+      modeHint: {
+        direct: "You talk to the Lead. It does small work itself or delegates to Peers.",
+        supervised: "You talk to a Supervisor. The Lead coordinates the engineering.",
+      },
+      providerLabel: "Provider",
+      providerPlaceholder: "Choose a provider",
+      providerEmpty: "No providers available",
+      messageLabel: "First message",
+      messagePlaceholder: "What should the group work on?",
+      submit: "Start group",
+      starting: "Starting…",
+      failed: "The host refused to start the group.",
+    },
+    banner: {
+      title: "{{role}} · {{mode}} mode · generation {{number}}",
+      contact: "your contact for this workspace",
+      initializing: "The group is still initializing; its first message is being delivered.",
+      receiptUncertain:
+        "After a restart, the host cannot tell whether the first message reached this agent. Check its history before resending.",
+      frozen: "This group is frozen: {{reason}}",
+      transferSource:
+        "Handing off: this agent stops after its checkpoint and retires once its successor is ready.",
+      transferCandidate: "Preparing to take over: read-only until the host activates it.",
+      transferBlocked: "Handoff blocked: {{reason}}. Restart the host to reconcile it.",
+      retired: "Retired generation. The slot's current agent continues the work.",
+      openCurrent: "Open current {{role}}",
+      mailUncertain: "Messages with uncertain delivery: {{count}}",
+      mailQueued: "Messages waiting for a turn: {{count}}",
+    },
+  },
   agentPanel: {
     states: {
       notFound: "Agent not found",

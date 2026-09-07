@@ -217,6 +217,50 @@ export const ptBR: TranslationResources = {
       proposedPlan: "Plano proposto",
     },
   },
+  slp: {
+    roles: {
+      supervisor: "Supervisor",
+      lead: "Líder",
+      peer: "Par",
+    },
+    modes: {
+      direct: "Direto",
+      supervised: "Supervisionado",
+    },
+    start: {
+      menu: "Iniciar grupo SLP",
+      title: "Iniciar grupo SLP",
+      modeLabel: "Modo do workspace",
+      modeHint: {
+        direct: "Você fala com o Líder. Ele faz tarefas pequenas ou delega a Pares.",
+        supervised: "Você fala com um Supervisor. O Líder coordena a engenharia.",
+      },
+      providerLabel: "Provedor",
+      providerPlaceholder: "Escolha um provedor",
+      providerEmpty: "Nenhum provedor disponível",
+      messageLabel: "Primeira mensagem",
+      messagePlaceholder: "No que o grupo deve trabalhar?",
+      submit: "Iniciar grupo",
+      starting: "Iniciando…",
+      failed: "O host recusou iniciar o grupo.",
+    },
+    banner: {
+      title: "{{role}} · modo {{mode}} · geração {{number}}",
+      contact: "seu contato neste workspace",
+      initializing: "O grupo ainda está inicializando; sua primeira mensagem está sendo entregue.",
+      receiptUncertain:
+        "Após um reinício, o host não consegue saber se a primeira mensagem chegou a este agente. Verifique o histórico antes de reenviar.",
+      frozen: "Este grupo está congelado: {{reason}}",
+      transferSource:
+        "Transferência em andamento: este agente para após o checkpoint e se aposenta quando o sucessor estiver pronto.",
+      transferCandidate: "Preparando-se para assumir: somente leitura até o host ativá-lo.",
+      transferBlocked: "Transferência bloqueada: {{reason}}. Reinicie o host para reconciliá-la.",
+      retired: "Geração aposentada. O agente atual da vaga continua o trabalho.",
+      openCurrent: "Abrir {{role}} atual",
+      mailUncertain: "Mensagens com entrega incerta: {{count}}",
+      mailQueued: "Mensagens aguardando um turno: {{count}}",
+    },
+  },
   agentPanel: {
     states: {
       notFound: "Agente não encontrado",

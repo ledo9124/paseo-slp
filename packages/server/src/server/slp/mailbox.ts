@@ -23,6 +23,8 @@ export interface SlpMailboxOptions {
   agentStorage: AgentStorage;
   resolveSlot: (groupId: string, slotId: string) => SlpSlotDestination;
   now: () => Date;
+  /** Called after every durable mail-state change; the service fans it out to clients. */
+  onChange?: (groupId: string) => void;
 }
 
 export interface SlpMailInput {
@@ -48,6 +50,7 @@ export class SlpMailbox {
   private readonly agentStorage: AgentStorage;
   private readonly resolveSlot: SlpMailboxOptions["resolveSlot"];
   private readonly now: () => Date;
+  private readonly onChange: (groupId: string) => void;
   private readonly records = new Map<string, SlpMailRecord>();
   /** One dispatch loop per slot; a second pump while one runs is a no-op. */
   private readonly pumps = new Map<string, Promise<void>>();
@@ -60,6 +63,7 @@ export class SlpMailbox {
     this.agentStorage = options.agentStorage;
     this.resolveSlot = options.resolveSlot;
     this.now = options.now;
+    this.onChange = options.onChange ?? (() => undefined);
   }
 
   list(): SlpMailRecord[] {
@@ -223,6 +227,7 @@ export class SlpMailbox {
     const next = { ...record, updatedAt: this.now().toISOString() };
     await this.store.write(next);
     this.records.set(next.id, next);
+    this.onChange(next.groupId);
     return next;
   }
 }

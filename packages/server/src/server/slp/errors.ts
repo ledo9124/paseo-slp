@@ -125,3 +125,11 @@ export class SlpNotCandidateError extends Error {
     this.name = "SlpNotCandidateError";
   }
 }
+
+/** A group whose contact slot has no active generation: initializing, or its records are inconsistent. */
+export class SlpNoContactError extends Error {
+  constructor(readonly groupId: string) {
+    super(`SLP group ${groupId} has no active contact generation`);
+    this.name = "SlpNoContactError";
+  }
+}

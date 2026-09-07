@@ -327,6 +327,7 @@ interface SessionForTestOptions {
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
   workspaceLabelService?: WorkspaceLabelService;
+  slp?: SessionOptions["slp"];
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -403,6 +404,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       list: vi.fn().mockResolvedValue([]),
     },
     workspaceLabelService: options.workspaceLabelService,
+    slp: options.slp,
     scheduleService: asScheduleService(),
     checkoutDiffManager: asCheckoutDiffManager(checkoutDiffManager),
     github: asGitHubService(github),
@@ -722,6 +724,168 @@ describe("workspace label editing", () => {
         },
       },
     ]);
+  });
+});
+
+describe("SLP group RPCs", () => {
+  const summary = {
+    id: "grp_1",
+    workspaceId: "wks_1",
+    mode: "supervised",
+    status: "ready",
+    freezeReason: null,
+    hold: null,
+    contactAgentId: "agent-supervisor",
+    initialMessageReceipt: "accepted",
+    slots: [],
+    transfers: [],
+    mail: { queued: 0, dispatching: 0, uncertain: 0 },
+    updatedAt: "2026-09-07T00:00:00.000Z",
+  };
+
+  function slpStub(overrides: Record<string, unknown> = {}) {
+    const listeners = new Set<(groupId: string) => void>();
+    const stub = {
+      listeners,
+      subscribe: (listener: (groupId: string) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getGroup: () => ({ id: "grp_1" }),
+      getGroupForWorkspace: (workspaceId: string) =>
+        workspaceId === "wks_1" ? { id: "grp_1" } : null,
+      summarize: () => summary,
+      initializeGroup: async () => ({ id: "grp_1" }),
+      ...overrides,
+    };
+    return { stub, service: stub as unknown as NonNullable<SessionOptions["slp"]> };
+  }
+
+  test("answers a get with the workspace's group summary, or null without one", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages, slp: slpStub().service });
+
+    await session.handleMessage({
+      type: "slp.group.get.request",
+      requestId: "get-1",
+      workspaceId: "wks_1",
+    });
+    await session.handleMessage({
+      type: "slp.group.get.request",
+      requestId: "get-2",
+      workspaceId: "wks_other",
+    });
+
+    expect(messages).toEqual([
+      { type: "slp.group.get.response", payload: { requestId: "get-1", group: summary } },
+      { type: "slp.group.get.response", payload: { requestId: "get-2", group: null } },
+    ]);
+  });
+
+  test("initializes a group from the request's launch config and answers the summary", async () => {
+    const calls: unknown[] = [];
+    const { service } = slpStub({
+      initializeGroup: async (input: unknown) => {
+        calls.push(input);
+        return { id: "grp_1" };
+      },
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages, slp: service });
+
+    await session.handleMessage({
+      type: "slp.group.initialize.request",
+      requestId: "init-1",
+      workspaceId: "wks_1",
+      mode: "supervised",
+      cwd: "/repo",
+      provider: "codex",
+      model: "gpt-6",
+      providerModeId: "full-access",
+      messageId: "msg-1",
+      text: "Login is slow",
+    });
+
+    expect(calls).toEqual([
+      {
+        workspaceId: "wks_1",
+        mode: "supervised",
+        initialMessage: { messageId: "msg-1", text: "Login is slow" },
+        lead: { provider: "codex", cwd: "/repo", model: "gpt-6", modeId: "full-access" },
+      },
+    ]);
+    expect(messages).toEqual([
+      {
+        type: "slp.group.initialize.response",
+        payload: { requestId: "init-1", success: true, error: null, group: summary },
+      },
+    ]);
+  });
+
+  test("answers a refusal with the runtime's error name, and a disabled host by code", async () => {
+    class SlpInitializationConflictError extends Error {
+      constructor() {
+        super("a group for this workspace already chose a different mode");
+        this.name = "SlpInitializationConflictError";
+      }
+    }
+    const { service } = slpStub({
+      initializeGroup: async () => {
+        throw new SlpInitializationConflictError();
+      },
+    });
+    const request = {
+      type: "slp.group.initialize.request" as const,
+      requestId: "init-2",
+      workspaceId: "wks_1",
+      mode: "direct" as const,
+      cwd: "/repo",
+      provider: "codex",
+      messageId: "msg-1",
+      text: "Login is slow",
+    };
+    const refused: SessionOutboundMessage[] = [];
+    await createSessionForTest({ messages: refused, slp: service }).handleMessage(request);
+    const disabled: SessionOutboundMessage[] = [];
+    await createSessionForTest({ messages: disabled }).handleMessage(request);
+
+    expect(refused).toEqual([
+      {
+        type: "slp.group.initialize.response",
+        payload: {
+          requestId: "init-2",
+          success: false,
+          error: {
+            code: "SlpInitializationConflictError",
+            message: "a group for this workspace already chose a different mode",
+          },
+          group: null,
+        },
+      },
+    ]);
+    expect(disabled).toEqual([
+      {
+        type: "slp.group.initialize.response",
+        payload: {
+          requestId: "init-2",
+          success: false,
+          error: { code: "slp_unavailable", message: "SLP groups are disabled on this host" },
+          group: null,
+        },
+      },
+    ]);
+  });
+
+  test("pushes the current summary whenever the runtime reports a group change", async () => {
+    const { stub, service } = slpStub();
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages, slp: service });
+
+    for (const listener of stub.listeners) listener("grp_1");
+    expect(messages).toEqual([{ type: "slp.group.update", payload: { group: summary } }]);
+
+    await session.cleanup();
+    expect(stub.listeners.size).toBe(0);
   });
 });
 

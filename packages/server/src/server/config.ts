@@ -519,6 +519,14 @@ function resolveProfileLists(persisted: ReturnType<typeof loadPersistedConfig>) 
   };
 }
 
+/** On by default; the switch exists so a host can turn the feature off without a code change. */
+function resolveSlpEnabled(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): boolean {
+  return parseBooleanEnv(env.PASEO_SLP_ENABLED) ?? persisted.features?.slp?.enabled ?? true;
+}
+
 function resolveStaticLoadConfigSettings(
   env: NodeJS.ProcessEnv,
   cli: CliConfigOverrides | undefined,
@@ -528,6 +536,7 @@ function resolveStaticLoadConfigSettings(
     mcpEnabled: cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true,
     mcpInjectIntoAgents:
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
+    slpEnabled: resolveSlpEnabled(env, persisted),
     browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
@@ -563,6 +572,7 @@ export function resolveConfigFromPersisted(
   const {
     mcpEnabled,
     mcpInjectIntoAgents,
+    slpEnabled,
     browserToolsEnabled,
     autoArchiveAfterMerge,
     appendSystemPrompt,
@@ -629,6 +639,7 @@ export function resolveConfigFromPersisted(
     relayPublicUseTls: relay.publicUseTls,
     serviceProxy,
     webUi,
+    slpEnabled,
     appBaseUrl,
     auth: resolveAuthConfig(env, persisted),
     openai,
@@ -757,6 +768,7 @@ function resolveServiceAndWebUiOverridePaths(
     paths.push("features.webUi.enabled");
   }
   if (env.PASEO_WEB_UI_DIST_DIR !== undefined) paths.push("features.webUi.distDir");
+  if (parseBooleanEnv(env.PASEO_SLP_ENABLED) !== undefined) paths.push("features.slp.enabled");
   return paths;
 }
 

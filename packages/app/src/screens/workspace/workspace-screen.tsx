@@ -41,6 +41,8 @@ import { WorkspaceActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/workspace/open-in-editor/button";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
+import { SlpStartGroupModal } from "@/slp/start-group-modal";
+import { useSlpStartSheet } from "@/slp/use-start-sheet";
 import { useNavigateToImportedAgent } from "@/hooks/use-import-session";
 import { useToast } from "@/contexts/toast-context";
 import { getOrCreateClientId } from "@/utils/client-id";
@@ -962,6 +964,7 @@ interface WorkspaceHeaderTitleBarProps {
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
+  onStartSlpGroup?: () => void;
   onScriptTerminalStarted: (terminalId: string) => void;
   onViewScriptTerminal: (terminalId: string) => void;
   onOpenUrlInBrowserTab: (url: string) => void;
@@ -991,6 +994,7 @@ function WorkspaceHeaderTitleBar({
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
+  onStartSlpGroup,
   onScriptTerminalStarted,
   onViewScriptTerminal,
   onOpenUrlInBrowserTab,
@@ -1029,6 +1033,7 @@ function WorkspaceHeaderTitleBar({
             onCopyWorkspacePath={onCopyWorkspacePath}
             onCopyBranchName={onCopyBranchName}
             onOpenSetupTab={onOpenSetupTab}
+            onStartSlpGroup={onStartSlpGroup}
           />
         ) : (
           <WorkspaceHeaderMenuDesktop
@@ -1040,6 +1045,7 @@ function WorkspaceHeaderTitleBar({
             onCopyWorkspacePath={onCopyWorkspacePath}
             onCopyBranchName={onCopyBranchName}
             onOpenSetupTab={onOpenSetupTab}
+            onStartSlpGroup={onStartSlpGroup}
           />
         )}
         {isMobile && workspaceScripts.length > 0 ? (
@@ -1572,6 +1578,13 @@ function WorkspaceScreenContent({
   const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
   const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
   const [isImportSheetVisible, setIsImportSheetVisible] = useState(false);
+  const slpStartSheet = useSlpStartSheet({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+    workspaceDirectory,
+    isRouteFocused,
+  });
+  const openSlpStartSheet = slpStartSheet.open;
   const canOpenImportSheet = [client, isConnected, workspaceDirectory].every(Boolean);
   const openImportSheet = useCallback(() => {
     setIsImportSheetVisible(true);
@@ -3889,6 +3902,7 @@ function WorkspaceScreenContent({
                 onCopyWorkspacePath={handleCopyWorkspacePath}
                 onCopyBranchName={handleCopyBranchName}
                 onOpenSetupTab={handleOpenSetupTab}
+                onStartSlpGroup={openSlpStartSheet}
                 onScriptTerminalStarted={handleScriptTerminalStarted}
                 onViewScriptTerminal={handleViewScriptTerminal}
                 onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
@@ -3919,6 +3933,7 @@ function WorkspaceScreenContent({
       normalizedServerId,
       normalizedWorkspaceId,
       openImportSheet,
+      openSlpStartSheet,
       showCreateBrowserTab,
       showScreenHeader,
       showWorkspaceSetup,
@@ -4098,6 +4113,14 @@ function WorkspaceScreenContent({
           onClose={closeImportSheet}
           onImportedAgent={handleImportedAgent}
           onImported={navigateToImportedAgent}
+        />
+        <SlpStartGroupModal
+          visible={slpStartSheet.visible}
+          serverId={normalizedServerId}
+          workspaceId={normalizedWorkspaceId}
+          cwd={workspaceDirectory}
+          onClose={slpStartSheet.close}
+          onStarted={slpStartSheet.onStarted}
         />
         <WorkspaceTabRenameModal
           renamingTab={isRouteFocused ? renamingTab : null}

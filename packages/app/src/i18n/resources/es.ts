@@ -217,6 +217,51 @@ export const es: TranslationResources = {
       proposedPlan: "Plan propuesto",
     },
   },
+  slp: {
+    roles: {
+      supervisor: "Supervisor",
+      lead: "Líder",
+      peer: "Par",
+    },
+    modes: {
+      direct: "Directo",
+      supervised: "Supervisado",
+    },
+    start: {
+      menu: "Iniciar grupo SLP",
+      title: "Iniciar grupo SLP",
+      modeLabel: "Modo del espacio de trabajo",
+      modeHint: {
+        direct: "Hablas con el Líder. Hace trabajos pequeños o delega en Pares.",
+        supervised: "Hablas con un Supervisor. El Líder coordina la ingeniería.",
+      },
+      providerLabel: "Proveedor",
+      providerPlaceholder: "Elige un proveedor",
+      providerEmpty: "No hay proveedores disponibles",
+      messageLabel: "Primer mensaje",
+      messagePlaceholder: "¿En qué debe trabajar el grupo?",
+      submit: "Iniciar grupo",
+      starting: "Iniciando…",
+      failed: "El host rechazó iniciar el grupo.",
+    },
+    banner: {
+      title: "{{role}} · modo {{mode}} · generación {{number}}",
+      contact: "tu contacto para este espacio de trabajo",
+      initializing: "El grupo aún se está inicializando; se está entregando su primer mensaje.",
+      receiptUncertain:
+        "Tras un reinicio, el host no puede saber si el primer mensaje llegó a este agente. Revisa su historial antes de reenviar.",
+      frozen: "Este grupo está congelado: {{reason}}",
+      transferSource:
+        "Traspaso en curso: este agente se detiene tras su punto de control y se retira cuando su sucesor esté listo.",
+      transferCandidate:
+        "Preparándose para tomar el relevo: solo lectura hasta que el host lo active.",
+      transferBlocked: "Traspaso bloqueado: {{reason}}. Reinicia el host para reconciliarlo.",
+      retired: "Generación retirada. El agente actual del puesto continúa el trabajo.",
+      openCurrent: "Abrir {{role}} actual",
+      mailUncertain: "Mensajes con entrega incierta: {{count}}",
+      mailQueued: "Mensajes esperando un turno: {{count}}",
+    },
+  },
   agentPanel: {
     states: {
       notFound: "Agentno encontrado",

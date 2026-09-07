@@ -51,6 +51,13 @@ export interface SeedDaemonClient {
     assigned: boolean;
   }): Promise<unknown>;
   listProjects(): Promise<{ projects: SeedProjectDescriptor[] }>;
+  slpGroupGet(workspaceId: string): Promise<{
+    group: {
+      mode: string;
+      contactAgentId: string | null;
+      slots: Array<{ role: string; activeAgentId: string | null }>;
+    } | null;
+  }>;
   createWorkspace(input: {
     source:
       | { kind: "directory"; path: string; projectId?: string }

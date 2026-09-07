@@ -3037,6 +3037,81 @@ export const HubExecutionControlRequestSchema = z.object({
 
 export type HubExecutionControlRequest = z.infer<typeof HubExecutionControlRequestSchema>;
 
+// SLP (Supervisor–Lead–Peer) groups. Role, state, phase and mode fields are
+// strings on the wire so an older app keeps parsing when the daemon learns a
+// new value; the daemon owns the closed enums (packages/server/src/server/slp/store.ts).
+export const SlpGroupSummarySchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  mode: z.string(),
+  status: z.string(),
+  freezeReason: z.string().nullable(),
+  hold: z
+    .object({
+      kind: z.string(),
+      slotId: z.string(),
+      transferId: z.string().nullable(),
+      since: z.string(),
+    })
+    .nullable(),
+  /** The agent the Human talks to: the Supervisor in supervised mode, else the Lead. */
+  contactAgentId: z.string().nullable(),
+  initialMessageReceipt: z.string(),
+  slots: z.array(
+    z.object({
+      id: z.string(),
+      role: z.string(),
+      ownerSlotId: z.string().nullable(),
+      activeAgentId: z.string().nullable(),
+      generations: z.array(
+        z.object({
+          id: z.string(),
+          number: z.number(),
+          agentId: z.string(),
+          state: z.string(),
+        }),
+      ),
+    }),
+  ),
+  transfers: z.array(
+    z.object({
+      id: z.string(),
+      slotId: z.string(),
+      phase: z.string(),
+      sourceAgentId: z.string(),
+      candidateAgentId: z.string().nullable(),
+      reason: z.string().nullable(),
+      updatedAt: z.string(),
+    }),
+  ),
+  mail: z.object({
+    queued: z.number(),
+    dispatching: z.number(),
+    uncertain: z.number(),
+  }),
+  updatedAt: z.string(),
+});
+export type SlpGroupSummary = z.infer<typeof SlpGroupSummarySchema>;
+
+export const SlpGroupInitializeRequestSchema = z.object({
+  type: z.literal("slp.group.initialize.request"),
+  workspaceId: z.string(),
+  mode: z.enum(["direct", "supervised"]),
+  cwd: z.string(),
+  provider: z.string(),
+  model: z.string().nullable().optional(),
+  providerModeId: z.string().nullable().optional(),
+  messageId: z.string(),
+  text: z.string(),
+  requestId: z.string(),
+});
+
+export const SlpGroupGetRequestSchema = z.object({
+  type: z.literal("slp.group.get.request"),
+  workspaceId: z.string(),
+  requestId: z.string(),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateRequestSchema,
   HubExecutionAgentValidateRequestSchema,
@@ -3063,6 +3138,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceLabelListRequestSchema,
   WorkspaceLabelAssignmentSetRequestSchema,
   WorkspaceLabelUpdateRequestSchema,
+  SlpGroupInitializeRequestSchema,
+  SlpGroupGetRequestSchema,
   WorkspaceLabelDeleteRequestSchema,
   WorkspaceLabelDeleteInspectRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
@@ -3403,6 +3480,8 @@ export const ServerInfoStatusPayloadSchema = z
       .object({
         // COMPAT(agentRequestReceipts): added in v0.7.3; remove gate after 2027-03-05.
         agentRequestReceipts: z.boolean().optional(),
+        // COMPAT(slpGroups): added in v0.7.3; remove gate after 2027-03-07.
+        slpGroups: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.7.3; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
@@ -6411,6 +6490,30 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
   }),
 });
 
+export const SlpGroupInitializeResponseSchema = z.object({
+  type: z.literal("slp.group.initialize.response"),
+  payload: z.object({
+    requestId: z.string(),
+    success: z.boolean(),
+    error: z.object({ code: z.string(), message: z.string() }).nullable(),
+    group: SlpGroupSummarySchema.nullable(),
+  }),
+});
+
+export const SlpGroupGetResponseSchema = z.object({
+  type: z.literal("slp.group.get.response"),
+  payload: z.object({
+    requestId: z.string(),
+    group: SlpGroupSummarySchema.nullable(),
+  }),
+});
+
+/** Pushed to every session whenever a group, one of its transfers or its mail changes. */
+export const SlpGroupUpdateSchema = z.object({
+  type: z.literal("slp.group.update"),
+  payload: z.object({ group: SlpGroupSummarySchema }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateResponseSchema,
   HubExecutionAgentValidateResponseSchema,
@@ -6456,6 +6559,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceUpdateMessageSchema,
   WorkspaceLabelListResponseSchema,
   WorkspaceLabelUpdateSchema,
+  SlpGroupInitializeResponseSchema,
+  SlpGroupGetResponseSchema,
+  SlpGroupUpdateSchema,
   WorkspaceLabelAssignmentSetResponseSchema,
   WorkspaceLabelUpdateResponseSchema,
   WorkspaceLabelDeleteResponseSchema,
@@ -6921,6 +7027,11 @@ export type CheckoutForgeSetAutoMergeRequest = z.infer<
 export type CheckoutForgeSetAutoMergeResponse = z.infer<
   typeof CheckoutForgeSetAutoMergeResponseSchema
 >;
+export type SlpGroupInitializeRequest = z.infer<typeof SlpGroupInitializeRequestSchema>;
+export type SlpGroupInitializeResponse = z.infer<typeof SlpGroupInitializeResponseSchema>;
+export type SlpGroupGetRequest = z.infer<typeof SlpGroupGetRequestSchema>;
+export type SlpGroupGetResponse = z.infer<typeof SlpGroupGetResponseSchema>;
+export type SlpGroupUpdate = z.infer<typeof SlpGroupUpdateSchema>;
 export type CheckoutGithubSetAutoMergeRequest = z.infer<
   typeof CheckoutGithubSetAutoMergeRequestSchema
 >;

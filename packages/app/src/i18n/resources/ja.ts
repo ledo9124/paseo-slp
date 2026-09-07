@@ -217,6 +217,51 @@ export const ja: TranslationResources = {
       proposedPlan: "提案されたプラン",
     },
   },
+  slp: {
+    roles: {
+      supervisor: "スーパーバイザー",
+      lead: "リード",
+      peer: "ピア",
+    },
+    modes: {
+      direct: "ダイレクト",
+      supervised: "スーパーバイズ",
+    },
+    start: {
+      menu: "SLP グループを開始",
+      title: "SLP グループを開始",
+      modeLabel: "ワークスペースモード",
+      modeHint: {
+        direct: "リードと会話します。小さな作業は自分で行い、それ以外はピアに委任します。",
+        supervised: "スーパーバイザーと会話します。リードがエンジニアリングを調整します。",
+      },
+      providerLabel: "プロバイダー",
+      providerPlaceholder: "プロバイダーを選択",
+      providerEmpty: "利用可能なプロバイダーがありません",
+      messageLabel: "最初のメッセージ",
+      messagePlaceholder: "グループに何をさせますか？",
+      submit: "グループを開始",
+      starting: "開始中…",
+      failed: "ホストがグループの開始を拒否しました。",
+    },
+    banner: {
+      title: "{{role}} · {{mode}}モード · 第 {{number}} 世代",
+      contact: "このワークスペースの窓口",
+      initializing: "グループはまだ初期化中です。最初のメッセージを配信しています。",
+      receiptUncertain:
+        "再起動後、ホストは最初のメッセージがこのエージェントに届いたか判断できません。再送する前に履歴を確認してください。",
+      frozen: "このグループは凍結されています: {{reason}}",
+      transferSource:
+        "引き継ぎ中: このエージェントはチェックポイント後に停止し、後継者の準備が整うと退役します。",
+      transferCandidate: "引き継ぎ準備中: ホストが有効化するまで読み取り専用です。",
+      transferBlocked:
+        "引き継ぎがブロックされました: {{reason}}。ホストを再起動して整合させてください。",
+      retired: "退役した世代です。スロットの現在のエージェントが作業を続けます。",
+      openCurrent: "現在の{{role}}を開く",
+      mailUncertain: "配信が不確かなメッセージ: {{count}}",
+      mailQueued: "ターン待ちのメッセージ: {{count}}",
+    },
+  },
   agentPanel: {
     states: {
       notFound: "エージェントが見つかりません",

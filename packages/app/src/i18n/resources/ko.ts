@@ -217,6 +217,49 @@ export const ko: TranslationResources = {
       proposedPlan: "제안된 계획",
     },
   },
+  slp: {
+    roles: {
+      supervisor: "슈퍼바이저",
+      lead: "리드",
+      peer: "피어",
+    },
+    modes: {
+      direct: "직접",
+      supervised: "감독",
+    },
+    start: {
+      menu: "SLP 그룹 시작",
+      title: "SLP 그룹 시작",
+      modeLabel: "워크스페이스 모드",
+      modeHint: {
+        direct: "리드와 대화합니다. 작은 작업은 직접 하고 나머지는 피어에게 위임합니다.",
+        supervised: "슈퍼바이저와 대화합니다. 리드가 엔지니어링을 조율합니다.",
+      },
+      providerLabel: "프로바이더",
+      providerPlaceholder: "프로바이더 선택",
+      providerEmpty: "사용 가능한 프로바이더가 없습니다",
+      messageLabel: "첫 메시지",
+      messagePlaceholder: "그룹이 무엇을 작업해야 하나요?",
+      submit: "그룹 시작",
+      starting: "시작하는 중…",
+      failed: "호스트가 그룹 시작을 거부했습니다.",
+    },
+    banner: {
+      title: "{{role}} · {{mode}} 모드 · {{number}}세대",
+      contact: "이 워크스페이스의 연락 창구",
+      initializing: "그룹이 아직 초기화 중입니다. 첫 메시지를 전달하고 있습니다.",
+      receiptUncertain:
+        "재시작 후 호스트는 첫 메시지가 이 에이전트에 도달했는지 알 수 없습니다. 다시 보내기 전에 기록을 확인하세요.",
+      frozen: "이 그룹은 동결되었습니다: {{reason}}",
+      transferSource: "인계 중: 이 에이전트는 체크포인트 후 멈추고 후임자가 준비되면 은퇴합니다.",
+      transferCandidate: "인계 준비 중: 호스트가 활성화할 때까지 읽기 전용입니다.",
+      transferBlocked: "인계가 차단되었습니다: {{reason}}. 호스트를 재시작해 정합성을 맞추세요.",
+      retired: "은퇴한 세대입니다. 슬롯의 현재 에이전트가 작업을 이어갑니다.",
+      openCurrent: "현재 {{role}} 열기",
+      mailUncertain: "전달이 불확실한 메시지: {{count}}",
+      mailQueued: "차례를 기다리는 메시지: {{count}}",
+    },
+  },
   agentPanel: {
     states: {
       notFound: "에이전트를 찾을 수 없습니다",

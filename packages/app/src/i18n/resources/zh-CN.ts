@@ -217,6 +217,49 @@ export const zhCN: TranslationResources = {
       proposedPlan: "建议计划",
     },
   },
+  slp: {
+    roles: {
+      supervisor: "监督者",
+      lead: "负责人",
+      peer: "协作者",
+    },
+    modes: {
+      direct: "直接",
+      supervised: "监督",
+    },
+    start: {
+      menu: "启动 SLP 小组",
+      title: "启动 SLP 小组",
+      modeLabel: "工作区模式",
+      modeHint: {
+        direct: "你与负责人对话。小任务由它自己完成，其余委派给协作者。",
+        supervised: "你与监督者对话。负责人负责协调工程工作。",
+      },
+      providerLabel: "提供方",
+      providerPlaceholder: "选择提供方",
+      providerEmpty: "没有可用的提供方",
+      messageLabel: "第一条消息",
+      messagePlaceholder: "小组应该做什么？",
+      submit: "启动小组",
+      starting: "正在启动…",
+      failed: "主机拒绝启动该小组。",
+    },
+    banner: {
+      title: "{{role}} · {{mode}}模式 · 第 {{number}} 代",
+      contact: "此工作区的联系人",
+      initializing: "小组仍在初始化；第一条消息正在投递。",
+      receiptUncertain:
+        "重启后，主机无法确定第一条消息是否已送达此代理。重新发送前请检查其历史记录。",
+      frozen: "该小组已冻结：{{reason}}",
+      transferSource: "正在交接：此代理在检查点后停止，待继任者就绪后退役。",
+      transferCandidate: "正在准备接手：在主机激活之前为只读。",
+      transferBlocked: "交接被阻塞：{{reason}}。请重启主机以完成对账。",
+      retired: "已退役的一代。该席位的当前代理继续工作。",
+      openCurrent: "打开当前{{role}}",
+      mailUncertain: "投递状态不确定的消息：{{count}}",
+      mailQueued: "等待轮次的消息：{{count}}",
+    },
+  },
   agentPanel: {
     states: {
       notFound: "未找到 Agent",

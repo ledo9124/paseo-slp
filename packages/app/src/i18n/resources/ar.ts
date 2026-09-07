@@ -217,6 +217,50 @@ export const ar: TranslationResources = {
       proposedPlan: "الخطة المقترحة",
     },
   },
+  slp: {
+    roles: {
+      supervisor: "المشرف",
+      lead: "القائد",
+      peer: "النظير",
+    },
+    modes: {
+      direct: "مباشر",
+      supervised: "بإشراف",
+    },
+    start: {
+      menu: "بدء مجموعة SLP",
+      title: "بدء مجموعة SLP",
+      modeLabel: "وضع مساحة العمل",
+      modeHint: {
+        direct: "تتحدث مع القائد. ينجز الأعمال الصغيرة بنفسه ويفوّض الباقي إلى النظراء.",
+        supervised: "تتحدث مع المشرف. ينسّق القائد العمل الهندسي.",
+      },
+      providerLabel: "المزوّد",
+      providerPlaceholder: "اختر مزوّدًا",
+      providerEmpty: "لا يوجد مزوّدون متاحون",
+      messageLabel: "الرسالة الأولى",
+      messagePlaceholder: "ما الذي يجب أن تعمل عليه المجموعة؟",
+      submit: "بدء المجموعة",
+      starting: "جارٍ البدء…",
+      failed: "رفض المضيف بدء المجموعة.",
+    },
+    banner: {
+      title: "{{role}} · وضع {{mode}} · الجيل {{number}}",
+      contact: "جهة اتصالك في مساحة العمل هذه",
+      initializing: "ما زالت المجموعة قيد التهيئة؛ يجري تسليم رسالتها الأولى.",
+      receiptUncertain:
+        "بعد إعادة التشغيل، لا يستطيع المضيف معرفة ما إذا وصلت الرسالة الأولى إلى هذا الوكيل. راجع سجله قبل إعادة الإرسال.",
+      frozen: "هذه المجموعة مجمّدة: {{reason}}",
+      transferSource:
+        "جارٍ التسليم: يتوقف هذا الوكيل بعد نقطة التحقق ويتقاعد عندما يصبح خليفته جاهزًا.",
+      transferCandidate: "يستعد لتولي المهمة: للقراءة فقط حتى يفعّله المضيف.",
+      transferBlocked: "التسليم محظور: {{reason}}. أعد تشغيل المضيف لتسوية الحالة.",
+      retired: "جيل متقاعد. يواصل الوكيل الحالي للمنصب العمل.",
+      openCurrent: "فتح {{role}} الحالي",
+      mailUncertain: "رسائل تسليمها غير مؤكد: {{count}}",
+      mailQueued: "رسائل بانتظار دور: {{count}}",
+    },
+  },
   agentPanel: {
     states: {
       notFound: "لم يتم العثور على Agent",

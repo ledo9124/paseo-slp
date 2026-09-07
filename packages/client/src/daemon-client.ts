@@ -46,6 +46,9 @@ import type {
   CheckoutPrMergeResponse,
   CheckoutPrMergeMethod,
   CheckoutForgeSetAutoMergeResponse,
+  SlpGroupInitializeRequest,
+  SlpGroupInitializeResponse,
+  SlpGroupGetResponse,
   CheckoutGithubSetAutoMergeResponse,
   CheckoutForgeGetCheckDetailsResponse,
   CheckoutGithubGetCheckDetailsResponse,
@@ -408,6 +411,8 @@ type CheckoutRefreshPayload = CheckoutRefreshResponse["payload"];
 type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
 type CheckoutPrMergePayload = CheckoutPrMergeResponse["payload"];
 type CheckoutForgeSetAutoMergePayload = CheckoutForgeSetAutoMergeResponse["payload"];
+type SlpGroupInitializePayload = SlpGroupInitializeResponse["payload"];
+type SlpGroupGetPayload = SlpGroupGetResponse["payload"];
 type CheckoutGithubSetAutoMergePayload = CheckoutGithubSetAutoMergeResponse["payload"];
 type CheckoutForgeGetCheckDetailsPayload = CheckoutForgeGetCheckDetailsResponse["payload"];
 type CheckoutGithubGetCheckDetailsPayload = CheckoutGithubGetCheckDetailsResponse["payload"];
@@ -3994,6 +3999,24 @@ export class DaemonClient {
         ...(input.enabled ? { mergeMethod: input.method } : {}),
       },
       timeout: 60000,
+    });
+  }
+
+  async slpGroupInitialize(
+    input: Omit<SlpGroupInitializeRequest, "type" | "requestId">,
+    requestId?: string,
+  ): Promise<SlpGroupInitializePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"slp.group.initialize.response">({
+      requestId,
+      message: { type: "slp.group.initialize.request", ...input },
+      timeout: 120000,
+    });
+  }
+
+  async slpGroupGet(workspaceId: string, requestId?: string): Promise<SlpGroupGetPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"slp.group.get.response">({
+      requestId,
+      message: { type: "slp.group.get.request", workspaceId },
     });
   }
 

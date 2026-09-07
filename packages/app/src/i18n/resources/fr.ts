@@ -219,6 +219,52 @@ export const fr: TranslationResources = {
       proposedPlan: "Plan proposé",
     },
   },
+  slp: {
+    roles: {
+      supervisor: "Superviseur",
+      lead: "Lead",
+      peer: "Pair",
+    },
+    modes: {
+      direct: "Direct",
+      supervised: "Supervisé",
+    },
+    start: {
+      menu: "Démarrer un groupe SLP",
+      title: "Démarrer un groupe SLP",
+      modeLabel: "Mode de l’espace de travail",
+      modeHint: {
+        direct: "Vous parlez au Lead. Il fait les petites tâches ou délègue à des Pairs.",
+        supervised: "Vous parlez à un Superviseur. Le Lead coordonne l’ingénierie.",
+      },
+      providerLabel: "Fournisseur",
+      providerPlaceholder: "Choisir un fournisseur",
+      providerEmpty: "Aucun fournisseur disponible",
+      messageLabel: "Premier message",
+      messagePlaceholder: "Sur quoi le groupe doit-il travailler ?",
+      submit: "Démarrer le groupe",
+      starting: "Démarrage…",
+      failed: "L’hôte a refusé de démarrer le groupe.",
+    },
+    banner: {
+      title: "{{role}} · mode {{mode}} · génération {{number}}",
+      contact: "votre contact pour cet espace de travail",
+      initializing:
+        "Le groupe s’initialise encore ; son premier message est en cours de livraison.",
+      receiptUncertain:
+        "Après un redémarrage, l’hôte ne peut pas savoir si le premier message a atteint cet agent. Vérifiez son historique avant de renvoyer.",
+      frozen: "Ce groupe est gelé : {{reason}}",
+      transferSource:
+        "Passation en cours : cet agent s’arrête après son point de contrôle et se retire dès que son successeur est prêt.",
+      transferCandidate:
+        "Se prépare à prendre le relais : lecture seule jusqu’à l’activation par l’hôte.",
+      transferBlocked: "Passation bloquée : {{reason}}. Redémarrez l’hôte pour la réconcilier.",
+      retired: "Génération retirée. L’agent actuel du poste poursuit le travail.",
+      openCurrent: "Ouvrir le {{role}} actuel",
+      mailUncertain: "Messages à livraison incertaine : {{count}}",
+      mailQueued: "Messages en attente d’un tour : {{count}}",
+    },
+  },
   agentPanel: {
     states: {
       notFound: "Agentintrouvable",

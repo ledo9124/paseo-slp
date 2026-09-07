@@ -9,6 +9,7 @@ import { createNoopWorkspaceGitService } from "../test-utils/workspace-git-servi
 import {
   slpLeadAgentId as leadAgentId,
   startSlpTestDaemon,
+  untilSettled,
   type SlpTestDaemon as Daemon,
   type SlpTestDaemonOptions,
 } from "../test-utils/slp-test-daemon.js";
@@ -82,6 +83,88 @@ describe("SlpService", () => {
     expect(daemon.client.sessions[0]!.startPrompts).toEqual(["Login is slow, please investigate"]);
     expect(daemon.manager.getAgent(leadAgentId(a))?.workspaceId).toBe(WORKSPACE);
     expect(await readGroupFile(a.id)).toEqual(a);
+  });
+
+  function activeAgentId(group: SlpGroupRecord, slotId: string | null): string {
+    const slot = slotId ? group.slots[slotId] : undefined;
+    const active = slot?.generations.find((entry) => entry.id === slot.activeGenerationId);
+    if (!active) throw new Error(`slot ${slotId} has no active generation`);
+    return active.agentId;
+  }
+
+  function mailState(daemon: Daemon, mailId: string): string {
+    return daemon.service.listMail().find((mail) => mail.id === mailId)?.state ?? "missing";
+  }
+
+  function sessionOf(daemon: Daemon, agentId: string) {
+    const agent = daemon.manager.getAgent(agentId);
+    const session = daemon.client.sessions.find(
+      (candidate) => candidate.id === agent?.persistence?.sessionId,
+    );
+    if (!session) throw new Error(`no held-turn session for ${agentId}`);
+    return session;
+  }
+
+  test("supervised mode: the Supervisor is the Human's contact and the Lead starts idle", async () => {
+    const daemon = await startDaemon();
+    const group = await daemon.service.initializeGroup(input({ mode: "supervised" }));
+
+    expect(group.status).toBe("ready");
+    expect(group.initialization.receipt).toBe("accepted");
+    const supervisorId = activeAgentId(group, group.supervisorSlotId);
+    const leadId = leadAgentId(group);
+    expect(daemon.service.contactAgentId(group)).toBe(supervisorId);
+    expect(group.initialization).toMatchObject({
+      supervisorAgentId: supervisorId,
+      leadAgentId: leadId,
+    });
+    expect(daemon.client.sessions).toHaveLength(2);
+    expect(sessionOf(daemon, supervisorId).startPrompts).toEqual([
+      "Login is slow, please investigate",
+    ]);
+    expect(sessionOf(daemon, leadId).startPrompts).toEqual([]);
+    expect((await daemon.storage.get(supervisorId))?.config.systemPrompt).toContain(
+      "# Supervisor instructions",
+    );
+    expect((await daemon.storage.get(supervisorId))?.title).toBe("Supervisor");
+    expect(await readGroupFile(group.id)).toEqual(group);
+    // A retry after restart creates nothing: both roots are journaled.
+    await daemon.stop();
+    const second = await startDaemon();
+    expect(await second.service.initializeGroup(input({ mode: "supervised" }))).toEqual(group);
+    expect(second.client.sessions).toHaveLength(0);
+  });
+
+  test("supervised mode: the Human keeps a contact while the Lead is busy", async () => {
+    const daemon = await startDaemon();
+    const group = await daemon.service.initializeGroup(input({ mode: "supervised" }));
+    const supervisorId = activeAgentId(group, group.supervisorSlotId);
+    const leadId = leadAgentId(group);
+    sessionOf(daemon, supervisorId).release();
+    await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+
+    const relayed = await daemon.service.routeSend({
+      callerAgentId: supervisorId,
+      targetAgentId: leadId,
+      prompt: "Investigate login latency; report the cause and the measured result.",
+    });
+    if (!relayed) throw new Error("the Supervisor's send was not routed as SLP mail");
+    await untilSettled(
+      () => mailState(daemon, relayed.mailId) === "accepted",
+      "relay accepted by the Lead",
+    );
+    expect(daemon.manager.getAgent(leadId)?.lifecycle).toBe("running");
+    expect(sessionOf(daemon, leadId).startPrompts).toEqual([
+      "Investigate login latency; report the cause and the measured result.",
+    ]);
+
+    // The Lead's held turn does not block the Human: the Supervisor takes the next message.
+    const admission = await daemon.manager.admitForegroundTurn(supervisorId, "How is it going?");
+    expect(admission.status).toBe("started");
+    expect(sessionOf(daemon, supervisorId).startPrompts).toEqual([
+      "Login is slow, please investigate",
+      "How is it going?",
+    ]);
   });
 
   test("a conflicting mode or first message for the same workspace fails visibly", async () => {

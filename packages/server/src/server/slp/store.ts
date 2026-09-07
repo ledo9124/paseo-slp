@@ -51,6 +51,8 @@ const SlpInitializationSchema = z.object({
     modeId: z.string().nullable(),
   }),
   leadAgentId: z.string().nullable(),
+  /** Supervised mode only: the Human's contact, created before the Lead. */
+  supervisorAgentId: z.string().nullable().default(null),
   /** Mailbox receipt for the first message; see architecture.md#receipts-and-notifications. */
   receipt: z.enum(["pending", "accepted", "uncertain"]),
 });

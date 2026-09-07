@@ -72,6 +72,8 @@ export interface SlpTransferHost {
   getGroup(groupId: string): SlpGroupRecord;
   persistGroup(group: SlpGroupRecord): Promise<void>;
   freezeGroup(group: SlpGroupRecord, reason: string): Promise<void>;
+  /** Called after every durable transfer-phase change; the service fans it out to clients. */
+  onGroupChanged(groupId: string): void;
   /** Composes the role prompt for the next generation of a slot. */
   composePrompt(
     group: SlpGroupRecord,
@@ -661,6 +663,7 @@ export class SlpTransfers {
     const next = { ...record, updatedAt: this.host.now().toISOString() };
     await this.store.write(next);
     this.records.set(next.id, next);
+    this.host.onGroupChanged(next.groupId);
     return next;
   }
 }
