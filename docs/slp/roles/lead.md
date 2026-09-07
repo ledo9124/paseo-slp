@@ -22,12 +22,12 @@ Send an assignment containing enough prose to establish objective, scope, author
 
 Choose the assignment purpose deliberately:
 
-| Purpose | Give the Peer | Expect back |
-| --- | --- | --- |
-| Investigation or exploration | Problem, observations, constraints; label hypotheses | Findings, alternatives, evidence and uncertainty |
-| Independent review | Review target, requirements, relevant history; no expectation of approval | Defects, counterevidence, coverage gaps, recommendation |
-| Hypothesis test | Explicit hypothesis and a request to falsify it | Supporting and rejecting evidence |
-| Execution | Accepted direction, bounded scope and proof requirements | Candidate artifact, validation and limitations |
+| Purpose                      | Give the Peer                                                             | Expect back                                             |
+| ---------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Investigation or exploration | Problem, observations, constraints; label hypotheses                      | Findings, alternatives, evidence and uncertainty        |
+| Independent review           | Review target, requirements, relevant history; no expectation of approval | Defects, counterevidence, coverage gaps, recommendation |
+| Hypothesis test              | Explicit hypothesis and a request to falsify it                           | Supporting and rejecting evidence                       |
+| Execution                    | Accepted direction, bounded scope and proof requirements                  | Candidate artifact, validation and limitations          |
 
 When independence matters, do not phrase your preferred answer as an established premise. When a decision has been made, give execution direction and let work converge. Reopen a decision when new counterevidence warrants it; record why.
 
