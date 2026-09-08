@@ -78,7 +78,7 @@ export const SlpGroupSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
   mode: SlpWorkspaceModeSchema,
-  status: z.enum(["initializing", "ready", "frozen"]),
+  status: z.enum(["initializing", "ready", "frozen", "ended"]),
   freeze: z.object({ reason: z.string(), at: z.string() }).nullable(),
   hold: SlpHoldSchema.nullable(),
   initialization: SlpInitializationSchema,
@@ -178,7 +178,7 @@ const SlpMailBaseSchema = z.object({
   slotId: z.string(),
   fromSlotId: z.string().nullable(),
   /** `activation` is the runtime's own notice after a switch; it dispatches before anything else queued. */
-  kind: z.enum(["message", "handback", "interrupted", "activation"]),
+  kind: z.enum(["message", "handback", "interrupted", "activation", "report"]),
   prompt: SlpMailPromptSchema,
   /** Dispatch order within the slot. */
   sequence: z.number().int().nonnegative(),

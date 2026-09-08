@@ -229,22 +229,71 @@ export const fr: TranslationResources = {
       direct: "Direct",
       supervised: "Supervisé",
     },
-    start: {
-      menu: "Démarrer un groupe SLP",
-      title: "Démarrer un groupe SLP",
-      modeLabel: "Mode de l’espace de travail",
-      modeHint: {
-        direct: "Vous parlez au Lead. Il fait les petites tâches ou délègue à des Pairs.",
-        supervised: "Vous parlez à un Superviseur. Le Lead coordonne l’ingénierie.",
+    composer: {
+      title: "Mode de l'espace de travail",
+      hint: "Choisissez le fonctionnement de cet espace de travail avant son premier message.",
+      selectWithValue: "Mode de l'espace de travail : {{value}}",
+      options: {
+        single: { label: "Agent unique", hint: "Un agent, sans rôles." },
+        direct: {
+          label: "Direct",
+          hint: "Vous parlez au Lead. Il fait les petites tâches lui-même ou délègue aux Pairs.",
+        },
+        supervised: {
+          label: "Supervisé",
+          hint: "Vous parlez à un Superviseur. Le Lead coordonne l'ingénierie.",
+        },
       },
-      providerLabel: "Fournisseur",
-      providerPlaceholder: "Choisir un fournisseur",
-      providerEmpty: "Aucun fournisseur disponible",
-      messageLabel: "Premier message",
-      messagePlaceholder: "Sur quoi le groupe doit-il travailler ?",
-      submit: "Démarrer le groupe",
-      starting: "Démarrage…",
-      failed: "L’hôte a refusé de démarrer le groupe.",
+      locked: {
+        group: "Fixé dès que le groupe existe. Terminez le groupe pour choisir à nouveau.",
+        agents:
+          "Fixé tant que l'espace de travail a des agents. Archivez-les pour choisir à nouveau.",
+      },
+      errors: {
+        emptyMessage: "Rédigez le premier message pour le groupe.",
+      },
+      failed: "L'hôte a refusé de démarrer le groupe.",
+    },
+    end: {
+      menu: "Terminer le groupe SLP",
+      confirmTitle: "Terminer le groupe SLP ?",
+      confirmMessage:
+        "Chaque membre est archivé et le mode de l'espace de travail redevient libre.",
+      confirm: "Terminer le groupe",
+      failed: "L'hôte a refusé de terminer le groupe.",
+    },
+    settings: {
+      title: "Rôles SLP",
+      intro:
+        "Comment chaque rôle est lancé au démarrage d'un groupe. Un rôle sans réglages utilise le fournisseur, le modèle et le mode d'autorisations affichés par le compositeur.",
+      launchSection: "Lancement",
+      instructionsSection: "Instructions",
+      thinkingLabel: "Réflexion",
+      noThinkingOptions: "Ce modèle n’a pas de niveaux de réflexion",
+      bundledRoleLabel: "Instructions {{role}}",
+      bundledSharedLabel: "Instructions SLP partagées",
+      bundledAlwaysApplied: "toujours appliquées",
+      bundledLoading: "Chargement des instructions intégrées…",
+      bundledUnavailable: "Impossible de charger les instructions intégrées.",
+      extraPreview: "Extra : {{text}}",
+      bundledOnly: "Instructions intégrées uniquement.",
+      descriptions: {
+        supervisor:
+          "Votre contact en mode supervisé. Garde votre intention, briefe le Lead et rend compte.",
+        lead: "Autorité d’ingénierie. Lit le projet, planifie, délègue aux Peers et accepte les résultats.",
+        peer: "Une mission bornée du Lead, rendue sous forme de handback.",
+      },
+      defaultWith: "Par défaut du composeur : {{value}}",
+      defaultSummary:
+        "Utilise le fournisseur, le modèle et le mode d'autorisations du compositeur.",
+      hasInstructions: "Contient des instructions supplémentaires.",
+      edit: "Modifier",
+      reset: "Utiliser les valeurs du compositeur",
+      editTitle: "Réglages de {{role}}",
+      instructionsLabel: "Instructions supplémentaires",
+      instructionsHint: "Ajoutées aux instructions intégrées du rôle.",
+      instructionsPlaceholder: "Répondez en français. Gardez les rapports sous dix lignes.",
+      unavailable: "Cet hôte ne prend pas en charge les groupes SLP.",
     },
     banner: {
       title: "{{role}} · mode {{mode}} · génération {{number}}",
@@ -2046,6 +2095,7 @@ export const fr: TranslationResources = {
       providers: "Fournisseurs",
       usage: "Utilisation",
       terminals: "Terminals",
+      slp: "Rôles SLP",
       plugins: "Plugins",
       host: "Aperçu",
     },

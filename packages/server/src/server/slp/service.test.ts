@@ -18,6 +18,7 @@ import {
   SlpGroupHeldError,
   SlpInitializationConflictError,
   SlpInstructionsUnavailableError,
+  SlpNoGroupError,
 } from "./errors.js";
 import type { SlpInitializeGroupInput } from "./service.js";
 import type { SlpGroupRecord } from "./store.js";
@@ -123,8 +124,12 @@ describe("SlpService", () => {
       "Login is slow, please investigate",
     ]);
     expect(sessionOf(daemon, leadId).startPrompts).toEqual([]);
-    expect((await daemon.storage.get(supervisorId))?.config.systemPrompt).toContain(
-      "# Supervisor instructions",
+    const supervisorPrompt = (await daemon.storage.get(supervisorId))?.config.systemPrompt ?? "";
+    expect(supervisorPrompt).toContain("# Supervisor instructions");
+    // Each root names the other by agent id, the Lead's before it exists.
+    expect(supervisorPrompt).toContain(`Lead (agent id ${leadId})`);
+    expect((await daemon.storage.get(leadId))?.config.systemPrompt).toContain(
+      `Supervisor (agent id ${supervisorId})`,
     );
     expect((await daemon.storage.get(supervisorId))?.title).toBe("Supervisor");
     expect(await readGroupFile(group.id)).toEqual(group);
@@ -133,6 +138,50 @@ describe("SlpService", () => {
     const second = await startDaemon();
     expect(await second.service.initializeGroup(input({ mode: "supervised" }))).toEqual(group);
     expect(second.client.sessions).toHaveLength(0);
+  });
+
+  test("supervised mode: a Lead turn that sent the Supervisor nothing is relayed as its report", async () => {
+    const daemon = await startDaemon({
+      releaseText: "Analysis done: three phases, one open decision.",
+    });
+    const group = await daemon.service.initializeGroup(input({ mode: "supervised" }));
+    const supervisorId = activeAgentId(group, group.supervisorSlotId);
+    const leadId = leadAgentId(group);
+    sessionOf(daemon, supervisorId).release();
+    await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+    const reports = () => daemon.service.listMail().filter((mail) => mail.kind === "report");
+
+    // Turn one: the Lead reports itself; the runtime adds nothing.
+    expect((await daemon.manager.admitForegroundTurn(leadId, "Analyze the project")).status).toBe(
+      "started",
+    );
+    await daemon.manager.waitForAgentRunStart(leadId);
+    const sent = await daemon.service.routeSend({
+      callerAgentId: leadId,
+      targetAgentId: supervisorId,
+      prompt: "Report: analysis under way",
+    });
+    sessionOf(daemon, leadId).release();
+    await daemon.manager.waitForAgentEvent(leadId, { waitForActive: true });
+    await untilSettled(
+      () => mailState(daemon, sent?.mailId ?? "") === "accepted",
+      "the Lead's own report reached the Supervisor",
+    );
+    expect(reports()).toHaveLength(0);
+    sessionOf(daemon, supervisorId).release();
+    await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+
+    // Turn two: the Lead only writes in its own chat; its last message becomes the report.
+    expect((await daemon.manager.admitForegroundTurn(leadId, "Continue")).status).toBe("started");
+    await daemon.manager.waitForAgentRunStart(leadId);
+    sessionOf(daemon, leadId).release();
+    await untilSettled(() => reports().length === 1, "the runtime relayed the Lead's last message");
+    const report = reports()[0]!;
+    expect(report.slotId).toBe(group.supervisorSlotId);
+    expect(report.fromSlotId).toBe(group.leadSlotId);
+    expect(JSON.stringify(report.prompt)).toContain(
+      "Analysis done: three phases, one open decision.",
+    );
   });
 
   test("supervised mode: the Human keeps a contact while the Lead is busy", async () => {
@@ -165,6 +214,81 @@ describe("SlpService", () => {
       "Login is slow, please investigate",
       "How is it going?",
     ]);
+  });
+
+  test("role settings choose each root's launch and append the host's instructions", async () => {
+    const daemon = await startDaemon({
+      roleSettings: () => ({
+        supervisor: {
+          provider: "claude",
+          model: "claude-opus-5",
+          instructions: "Answer in Vietnamese.",
+        },
+        lead: { model: "gpt-6", modeId: "full-access" },
+      }),
+    });
+    const group = await daemon.service.initializeGroup(input({ mode: "supervised" }));
+
+    const supervisor = await daemon.storage.get(activeAgentId(group, group.supervisorSlotId));
+    expect(supervisor?.provider).toBe("claude");
+    expect(supervisor?.config.model).toBe("claude-opus-5");
+    expect(supervisor?.config.systemPrompt).toMatch(
+      /# Additional instructions from this host\n\nAnswer in Vietnamese\.$/,
+    );
+    const lead = await daemon.storage.get(leadAgentId(group));
+    expect(lead?.provider).toBe("codex");
+    expect(lead?.config.model).toBe("gpt-6");
+    expect(lead?.config.systemPrompt).not.toContain("Additional instructions");
+    // The stub provider advertises no modes, so the mode is checked at the creation boundary.
+    expect(daemon.creations.map((creation) => [creation.title, creation.source])).toEqual([
+      [
+        "Supervisor",
+        {
+          provider: "claude",
+          cwd,
+          model: "claude-opus-5",
+          modeId: null,
+          thinkingOptionId: null,
+          providerOptions: null,
+        },
+      ],
+      [
+        "Lead",
+        {
+          provider: "codex",
+          cwd,
+          model: "gpt-6",
+          modeId: "full-access",
+          thinkingOptionId: null,
+          providerOptions: null,
+        },
+      ],
+    ]);
+  });
+
+  test("ending a group archives its members and frees the workspace, before and after restart", async () => {
+    const daemon = await startDaemon();
+    const group = await daemon.service.initializeGroup(input({ mode: "supervised" }));
+    const supervisorId = activeAgentId(group, group.supervisorSlotId);
+    const leadId = leadAgentId(group);
+
+    const ended = await daemon.service.endGroup(WORKSPACE);
+    expect(ended.status).toBe("ended");
+    expect(daemon.service.getGroupForWorkspace(WORKSPACE)).toBeNull();
+    expect(daemon.service.getGroupForAgent(leadId)).toBeNull();
+    expect((await daemon.storage.get(supervisorId))?.archivedAt).toEqual(expect.any(String));
+    expect((await daemon.storage.get(leadId))?.archivedAt).toEqual(expect.any(String));
+    await expect(daemon.service.endGroup(WORKSPACE)).rejects.toThrow(SlpNoGroupError);
+
+    // The workspace can start again with another mode; the ended record stays for the journals.
+    const next = await daemon.service.initializeGroup(
+      input({ mode: "direct", initialMessage: { messageId: "msg-2", text: "Again" } }),
+    );
+    expect(next.id).not.toBe(group.id);
+    await daemon.stop();
+    const second = await startDaemon();
+    expect(second.service.getGroupForWorkspace(WORKSPACE)?.id).toBe(next.id);
+    expect(second.service.getGroup(group.id)?.status).toBe("ended");
   });
 
   test("a conflicting mode or first message for the same workspace fails visibly", async () => {
@@ -349,6 +473,12 @@ describe("SlpService", () => {
     expect(prompt.match(/^# Lead instructions$/gm)).toHaveLength(1);
     expect(prompt).not.toMatch(/^# (Supervisor|Peer) instructions$/m);
     expect(prompt).not.toMatch(/^Status:/m);
+    expect(prompt.startsWith("# Your SLP role\n\nYou are the Lead of a Paseo SLP group.")).toBe(
+      true,
+    );
+    expect(prompt.indexOf("# Lead instructions")).toBeLessThan(
+      prompt.indexOf("# Shared SLP instructions"),
+    );
     expect(prompt).toContain(`- Group: ${group.id}`);
     expect(prompt).toContain(`- Slot: ${group.leadSlotId}`);
     expect(prompt).toContain("- Workspace mode: direct");

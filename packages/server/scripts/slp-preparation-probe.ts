@@ -36,7 +36,7 @@ import type { SlpTransferRecord } from "../src/server/slp/store.js";
 import { createProviderSnapshotManagerStub } from "../src/server/test-utils/session-stubs.js";
 
 type Provider = "claude" | "codex";
-type Mode = "session" | "group" | "restart";
+type Mode = "session" | "group" | "restart" | "identity";
 
 const WRITE_ATTEMPTS =
   "Do exactly this, once each, and do not retry: (1) run the shell command `touch PROBE_SHELL.txt`; (2) create PROBE_FILE.txt containing hello with your file-writing tool. For each, report verbatim whether it succeeded or the exact error or denial text.";
@@ -75,8 +75,8 @@ function parseArgs(): { provider: Provider; mode: Mode; model: string | null } {
   const [provider, mode, model] = process.argv.slice(2);
   if (provider !== "claude" && provider !== "codex")
     throw new Error("provider must be claude or codex");
-  if (mode !== "session" && mode !== "group" && mode !== "restart")
-    throw new Error("mode must be session, group or restart");
+  if (mode !== "session" && mode !== "group" && mode !== "restart" && mode !== "identity")
+    throw new Error("mode must be session, group, restart or identity");
   return { provider, mode, model: model ?? null };
 }
 
@@ -514,8 +514,52 @@ async function runRestartProbe(provider: Provider, model: string | null): Promis
   }
 }
 
+const WHO_ARE_YOU = "khong co context ban la ai ha? vai trò của bạn ở workspace này là gì?";
+
+/**
+ * Role identity in free chat, the way a Human meets the group: a supervised
+ * group opened with a bare greeting, then each root asked who it is.
+ */
+async function runIdentityProbe(provider: Provider, model: string | null): Promise<void> {
+  const { root, cwd } = await prepareRoot(provider, "identity");
+  const probe = await startDaemon(root, "daemon.log");
+  try {
+    const source = sourceConfig(provider, cwd, model);
+    const group = await probe.daemon.slp.initializeGroup({
+      workspaceId: "wks_probe",
+      mode: "supervised",
+      initialMessage: { messageId: "probe-1", text: "hi" },
+      lead: {
+        provider,
+        cwd: source.cwd,
+        model: source.model ?? null,
+        modeId: source.modeId ?? null,
+      },
+    });
+    const supervisorId = group.initialization.supervisorAgentId;
+    const leadId = group.slots[group.leadSlotId]?.generations[0]?.agentId;
+    if (!supervisorId || !leadId) throw new Error("group is missing a root");
+    await until("supervisor greeted", () => settled(probe, supervisorId), 120_000);
+    say(
+      "supervisor greeting:",
+      await probe.daemon.agentManager.getLastAssistantMessage(supervisorId),
+    );
+    for (const [role, agentId] of [
+      ["supervisor", supervisorId],
+      ["lead", leadId],
+    ] as const) {
+      await runTurn(probe, agentId, WHO_ARE_YOU);
+      say(`${role} says:`, await probe.daemon.agentManager.getLastAssistantMessage(agentId));
+    }
+  } finally {
+    await stopDaemon(probe);
+    say("artifacts:", root);
+  }
+}
+
 const { provider, mode, model } = parseArgs();
 if (mode === "session") await runSessionProbe(provider, model);
 else if (mode === "group") await runGroupProbe(provider, model);
+else if (mode === "identity") await runIdentityProbe(provider, model);
 else await runRestartProbe(provider, model);
 process.exit(0);

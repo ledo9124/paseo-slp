@@ -52,7 +52,12 @@ export const CodexProviderOptionsSchema = z
     features: z
       .object({
         network_proxy: z.union([z.boolean(), NetworkPolicySchema]).optional(),
-        multi_agent_v2: z.boolean().optional(),
+        multi_agent: z.boolean().optional(),
+        // Codex reads a bare boolean or a table; the table form is what
+        // overrides a host config that already spells the feature out.
+        multi_agent_v2: z
+          .union([z.boolean(), z.object({ enabled: z.boolean() }).strict()])
+          .optional(),
       })
       .strict()
       .optional(),

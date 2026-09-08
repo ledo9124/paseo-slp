@@ -4,9 +4,15 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "../agent/agent-manager.js";
 import { AgentStorage } from "../agent/agent-storage.js";
 import { AgentRequests } from "../agent/requests/index.js";
-import { createAgentCommand, type CreateAgentFromMcpInput } from "../agent/create-agent/create.js";
+import {
+  createAgentCommand,
+  formatProviderModel,
+  type CreateAgentFromMcpInput,
+} from "../agent/create-agent/create.js";
 import { SlpService, type SlpServiceOptions } from "../slp/service.js";
 import type { SlpGroupRecord } from "../slp/store.js";
+import type { SlpMemberCreationInput } from "../slp/transfer.js";
+import type { SlpRolesConfig } from "@getpaseo/protocol/messages";
 import { createHeldTurnClient, type HeldTurnClient } from "./held-turn-agent-client.js";
 import { createProviderSnapshotManagerStub } from "./session-stubs.js";
 
@@ -15,6 +21,8 @@ export interface SlpTestDaemon {
   manager: AgentManager;
   client: HeldTurnClient;
   storage: AgentStorage;
+  /** Every member creation the service asked for, in order. */
+  creations: SlpMemberCreationInput[];
   /** The production create funnel bound to this daemon, with the SLP hook attached. */
   createAgent: (input: CreateAgentFromMcpInput) => ReturnType<typeof createAgentCommand>;
   stop: () => Promise<void>;
@@ -24,6 +32,7 @@ export interface SlpTestDaemonOptions {
   paseoHome: string;
   releaseText?: string;
   isDelegationToolingEnabled?: () => boolean;
+  roleSettings?: () => SlpRolesConfig;
   instructionsDir?: string;
 }
 
@@ -36,7 +45,13 @@ export async function startSlpTestDaemon(options: SlpTestDaemonOptions): Promise
   const client = createHeldTurnClient({ provider: "codex", releaseText: options.releaseText });
   const storage = new AgentStorage(path.join(options.paseoHome, "agents"), logger);
   await storage.initialize();
-  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  // A second provider lets tests exercise host role settings that switch providers.
+  const claude = createHeldTurnClient({ provider: "claude", releaseText: options.releaseText });
+  const manager = new AgentManager({
+    clients: { codex: client, claude },
+    registry: storage,
+    logger,
+  });
   const agentRequests = new AgentRequests(path.join(options.paseoHome, "agent-requests"));
   const dependencies: Parameters<typeof createAgentCommand>[0] = {
     agentManager: manager,
@@ -45,6 +60,7 @@ export async function startSlpTestDaemon(options: SlpTestDaemonOptions): Promise
     providerSnapshotManager: createProviderSnapshotManagerStub().manager,
   };
   const createAgent = (input: CreateAgentFromMcpInput) => createAgentCommand(dependencies, input);
+  const creations: SlpMemberCreationInput[] = [];
   const serviceOptions: SlpServiceOptions = {
     paseoHome: options.paseoHome,
     logger,
@@ -52,14 +68,16 @@ export async function startSlpTestDaemon(options: SlpTestDaemonOptions): Promise
     agentStorage: storage,
     agentRequests,
     createMemberAgent: async (creation) => {
+      creations.push(creation);
       await createAgent({
         kind: "mcp",
         agentId: creation.agentId,
-        provider: creation.source.provider,
+        provider: formatProviderModel(creation.source.provider, creation.source.model),
         title: creation.title,
         cwd: creation.source.cwd,
         workspaceId: creation.workspaceId,
         mode: creation.source.modeId ?? undefined,
+        thinking: creation.source.thinkingOptionId ?? undefined,
         config: { systemPrompt: creation.systemPrompt },
         labels: creation.labels,
         background: true,
@@ -67,6 +85,7 @@ export async function startSlpTestDaemon(options: SlpTestDaemonOptions): Promise
       });
     },
     isDelegationToolingEnabled: options.isDelegationToolingEnabled ?? (() => true),
+    roleSettings: options.roleSettings ?? (() => ({})),
     ...(options.instructionsDir ? { instructionsDir: options.instructionsDir } : {}),
   };
   const service = new SlpService(serviceOptions);
@@ -77,6 +96,7 @@ export async function startSlpTestDaemon(options: SlpTestDaemonOptions): Promise
     manager,
     client,
     storage,
+    creations,
     createAgent,
     stop: async () => {
       service.dispose();

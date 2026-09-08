@@ -133,6 +133,7 @@ describe("SLP Peer creation and handback", () => {
     expect(prompt.match(/^# Shared SLP instructions$/gm)).toHaveLength(1);
     expect(prompt.match(/^# Peer instructions$/gm)).toHaveLength(1);
     expect(prompt).not.toMatch(/^# (Supervisor|Lead) instructions$/m);
+    expect(prompt).toContain(`your Lead (agent id ${leadId})`);
     expect(peerRecord?.labels).toMatchObject({
       [SLP_GROUP_LABEL]: group.id,
       [PARENT_AGENT_ID_LABEL]: leadId,

@@ -39,6 +39,7 @@ import {
   Sparkles,
   Blocks,
   PanelsTopLeft,
+  Users,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -112,6 +113,7 @@ import {
   HostWorkspacesPage,
   HostTerminalsPage,
 } from "@/screens/settings/host-page";
+import { HostSlpPage } from "@/slp/settings/host-slp-page";
 import { resolvePluginIcon } from "@/plugins/icons";
 import { PluginSettingsContent } from "@/plugins/settings";
 import { useInstalledPlugins } from "@/plugins/registry";
@@ -197,6 +199,7 @@ const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "providers", labelKey: "settings.hostSections.providers", icon: Boxes },
   { id: "usage", labelKey: "settings.hostSections.usage", icon: Gauge },
   { id: "terminals", labelKey: "settings.hostSections.terminals", icon: SquareTerminal },
+  { id: "slp", labelKey: "settings.hostSections.slp", icon: Users },
   { id: "plugins", labelKey: "settings.hostSections.plugins", icon: Blocks },
 ];
 
@@ -223,6 +226,8 @@ function renderHostSettingsContent(
       return <HostUsagePage serverId={view.serverId} />;
     case "terminals":
       return <HostTerminalsPage serverId={view.serverId} />;
+    case "slp":
+      return <HostSlpPage serverId={view.serverId} />;
     case "plugins":
       return <HostPluginsPage serverId={view.serverId} />;
     case "host":

@@ -26,8 +26,10 @@ import {
   SlpRoleAuthorityError,
   SlpTransferRefusedError,
   SlpNoContactError,
+  SlpNoGroupError,
 } from "./errors.js";
 import { SlpHandbackRegister } from "./handbacks.js";
+import { SlpLeadReports, type SlpLeadReportTarget } from "./reports.js";
 import {
   SlpMailbox,
   type SlpMailboxAgentManager,
@@ -38,6 +40,8 @@ import {
   composeSlpSystemPrompt,
   loadSlpInstructions,
   resolveBundledSlpRolesDir,
+  type SlpAddressBook,
+  type SlpIdentity,
   type SlpInstructions,
 } from "./instructions.js";
 import {
@@ -58,7 +62,7 @@ import {
 } from "./store.js";
 import { SlpTransfers, type SlpMemberCreationInput, type SlpTransferHost } from "./transfer.js";
 
-import type { SlpGroupSummary } from "../messages.js";
+import type { SlpGroupSummary, SlpRoleConfig, SlpRolesConfig } from "../messages.js";
 
 export { SLP_GROUP_LABEL } from "./store.js";
 
@@ -86,7 +90,45 @@ export interface SlpServiceOptions {
   isDelegationToolingEnabled: () => boolean;
   /** Where the role instruction files live; defaults to the bundled copy of docs/slp/roles. */
   instructionsDir?: string;
+  /** Host-configured launch settings per role, read at every generation's creation. */
+  roleSettings: () => SlpRolesConfig;
   now?: () => Date;
+}
+
+type SlpLaunchSource = SlpMemberCreationInput["source"];
+
+/**
+ * A configured provider replaces the requested one together with its model,
+ * mode and provider options, which belong to the provider they were chosen
+ * for; a configured model or mode alone refines the requested provider.
+ */
+function applyRoleLaunch(
+  source: SlpLaunchSource,
+  settings: SlpRoleConfig | undefined,
+): SlpLaunchSource {
+  if (!settings) return source;
+  if (settings.provider && settings.provider !== source.provider) {
+    return {
+      provider: settings.provider,
+      cwd: source.cwd,
+      model: settings.model ?? null,
+      modeId: settings.modeId ?? null,
+      thinkingOptionId: settings.thinkingOptionId ?? null,
+      providerOptions: null,
+    };
+  }
+  return {
+    ...source,
+    model: settings.model ?? source.model,
+    modeId: settings.modeId ?? source.modeId,
+    thinkingOptionId: settings.thinkingOptionId ?? source.thinkingOptionId,
+  };
+}
+
+function appendRoleInstructions(prompt: string, settings: SlpRoleConfig | undefined): string {
+  const extra = settings?.instructions?.trim();
+  if (!extra) return prompt;
+  return `${prompt}\n\n---\n\n# Additional instructions from this host\n\n${extra}`;
 }
 
 interface FrozenUnknownGroup {
@@ -106,6 +148,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   private readonly store: SlpGroupStore;
   private readonly mailbox: SlpMailbox;
   private readonly handbacks: SlpHandbackRegister;
+  private readonly leadReports: SlpLeadReports;
   private readonly checkpoints: SlpCheckpointStore;
   private readonly transfers: SlpTransfers;
   private readonly logger: Logger;
@@ -113,6 +156,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   private readonly agentStorage: SlpServiceOptions["agentStorage"];
   private readonly agentRequests: SlpServiceOptions["agentRequests"];
   private readonly createMemberAgent: SlpServiceOptions["createMemberAgent"];
+  private readonly roleSettings: SlpServiceOptions["roleSettings"];
   private readonly isDelegationToolingEnabled: SlpServiceOptions["isDelegationToolingEnabled"];
   private readonly instructionsDir: string;
   private instructionsLoad: Promise<SlpInstructions> | null = null;
@@ -130,6 +174,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     this.agentStorage = options.agentStorage;
     this.agentRequests = options.agentRequests;
     this.createMemberAgent = options.createMemberAgent;
+    this.roleSettings = options.roleSettings;
     this.isDelegationToolingEnabled = options.isDelegationToolingEnabled;
     this.instructionsDir = options.instructionsDir ?? resolveBundledSlpRolesDir();
     this.now = options.now ?? (() => new Date());
@@ -150,6 +195,14 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       mailbox: this.mailbox,
       now: this.now,
     });
+    this.leadReports = new SlpLeadReports({
+      logger: this.logger,
+      agentManager: options.agentManager,
+      mailbox: this.mailbox,
+      resolveLead: (agentId) => this.leadReportTarget(agentId),
+      now: this.now,
+    });
+    this.leadReports.start();
     this.checkpoints = new SlpCheckpointStore({
       directory: `${options.paseoHome}/slp/checkpoints`,
       logger: this.logger,
@@ -176,13 +229,14 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
         const instructions = await this.instructions();
         return {
           instructionsVersion: instructions.version,
-          systemPrompt: composeSlpSystemPrompt(instructions, {
+          systemPrompt: this.composeRolePrompt(instructions, {
             role: slot.role,
             groupId: group.id,
             workspaceId: group.workspaceId,
             slotId: slot.id,
             generationNumber,
             mode: group.mode,
+            addressBook: addressBookFor(group, slot),
           }),
         };
       },
@@ -221,18 +275,53 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     return this.groups.get(groupId) ?? null;
   }
 
+  /** An ended group keeps its records for the journals but owns neither its workspace nor its agents. */
   getGroupForWorkspace(workspaceId: string): SlpGroupRecord | null {
     for (const group of this.groups.values()) {
-      if (group.workspaceId === workspaceId) return group;
+      if (group.workspaceId === workspaceId && group.status !== "ended") return group;
     }
     return null;
   }
 
   getGroupForAgent(agentId: string): SlpGroupRecord | null {
     for (const group of this.groups.values()) {
-      if (groupAgentIds(group).includes(agentId)) return group;
+      if (group.status !== "ended" && groupAgentIds(group).includes(agentId)) return group;
     }
     return null;
+  }
+
+  /**
+   * End the workspace's group: the decision is durable first, then every
+   * member is archived as an ordinary agent, so a crash in between leaves
+   * members that recovery archives and a workspace whose mode is open again.
+   */
+  endGroup(workspaceId: string): Promise<SlpGroupRecord> {
+    return this.serializeByWorkspace(workspaceId, async () => {
+      const group = this.getGroupForWorkspace(workspaceId);
+      if (!group) throw new SlpNoGroupError(workspaceId);
+      this.assertGroupNotHeld(group);
+      group.status = "ended";
+      group.hold = null;
+      await this.persist(group);
+      await this.archiveMembers(group);
+      return group;
+    });
+  }
+
+  private async archiveMembers(group: SlpGroupRecord): Promise<void> {
+    const at = this.now().toISOString();
+    for (const agentId of groupAgentIds(group)) {
+      const stored = await this.agentStorage.get(agentId);
+      if (!stored || stored.archivedAt) continue;
+      try {
+        await this.agentManager.archiveSnapshot(agentId, at);
+      } catch (error) {
+        this.logger.warn(
+          { groupId: group.id, agentId, err: error },
+          "SLP member could not be archived after its group ended",
+        );
+      }
+    }
   }
 
   listHandbacks(): SlpHandbackRecord[] {
@@ -463,6 +552,26 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   /** Stops watching agents. Tests use it to end a daemon; bootstrap never needs it. */
   dispose(): void {
     this.handbacks.dispose();
+    this.leadReports.dispose();
+  }
+
+  /** The bundled role text every generation is composed from, before host extras. */
+  async getInstructions(): Promise<SlpInstructions> {
+    return this.instructions();
+  }
+
+  /** The supervised group whose active Lead this agent is, for the report relay. */
+  private leadReportTarget(agentId: string): SlpLeadReportTarget | null {
+    const group = this.getGroupForAgent(agentId);
+    // A held group is mid-transfer or mid-initialization: the turn ending is the runtime's, not a report.
+    if (!group || group.status !== "ready" || group.hold || !group.supervisorSlotId) return null;
+    const { slot, generation } = membershipOf(group, agentId);
+    if (slot.role !== "lead" || slot.activeGenerationId !== generation.id) return null;
+    return {
+      groupId: group.id,
+      leadSlotId: slot.id,
+      supervisorSlotId: group.supervisorSlotId,
+    };
   }
 
   /**
@@ -558,8 +667,11 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
           messageId: input.initialMessage.messageId,
           text: input.initialMessage.text,
           lead: input.lead,
-          leadAgentId: null,
-          supervisorAgentId: null,
+          // Planned before either root exists: each root's prompt names the
+          // other by agent id, and a crash between the two creations must
+          // resume with the same ids.
+          leadAgentId: randomUUID(),
+          supervisorAgentId: supervisorSlotId ? randomUUID() : null,
           receipt: "pending",
         },
         leadSlotId,
@@ -586,20 +698,17 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
    * what the Supervisor relays through its mailbox.
    */
   private async runInitialization(record: SlpGroupRecord): Promise<SlpGroupRecord> {
-    if (record.supervisorSlotId && !record.initialization.supervisorAgentId) {
-      record.initialization.supervisorAgentId = await this.createRootGeneration(
-        record,
-        record.supervisorSlotId,
-        "supervisor",
-      );
-      await this.persist(record);
+    // COMPAT(slpPlannedRootIds): records written before 0.7.3 planned no ids; remove after 2026-12-01.
+    record.initialization.leadAgentId ??= randomUUID();
+    if (record.supervisorSlotId) {
+      record.initialization.supervisorAgentId ??= randomUUID();
+      if (!activeGeneration(record.slots[record.supervisorSlotId]!)) {
+        await this.createRootGeneration(record, record.supervisorSlotId, "supervisor");
+        await this.persist(record);
+      }
     }
-    if (!record.initialization.leadAgentId) {
-      record.initialization.leadAgentId = await this.createRootGeneration(
-        record,
-        record.leadSlotId,
-        "lead",
-      );
+    if (!activeGeneration(record.slots[record.leadSlotId]!)) {
+      await this.createRootGeneration(record, record.leadSlotId, "lead");
       await this.persist(record);
     }
 
@@ -660,17 +769,22 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     if (!slot) throw new Error(`SLP group ${record.id} has no ${role} slot ${slotId}`);
     const instructions = await this.instructions();
     const generationNumber = slot.generations.length + 1;
-    const systemPrompt = composeSlpSystemPrompt(instructions, {
+    const systemPrompt = this.composeRolePrompt(instructions, {
       role,
       groupId: record.id,
       workspaceId: record.workspaceId,
       slotId,
       generationNumber,
       mode: record.mode,
+      addressBook: addressBookFor(record, slot),
     });
+    const plannedAgentId =
+      role === "lead" ? record.initialization.leadAgentId : record.initialization.supervisorAgentId;
+    if (!plannedAgentId) throw new Error(`SLP group ${record.id} planned no ${role} agent id`);
     const agentId = await this.agentRequests.create({
       key: `slp-${role}:${record.id}`,
       request: { groupId: record.id, lead: record.initialization.lead },
+      agentId: plannedAgentId,
       findAgent: async (candidate) =>
         this.agentManager.getAgent(candidate) != null ||
         (await this.agentStorage.get(candidate)) !== null,
@@ -680,7 +794,10 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
           groupId: record.id,
           workspaceId: record.workspaceId,
           title: role === "lead" ? "Lead" : "Supervisor",
-          source: { ...record.initialization.lead, providerOptions: null },
+          source: applyRoleLaunch(
+            { ...record.initialization.lead, thinkingOptionId: null, providerOptions: null },
+            this.roleSettings()[role],
+          ),
           systemPrompt,
           labels: { [SLP_GROUP_LABEL]: record.id },
         }),
@@ -742,17 +859,25 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       peerAgentId: generation.agentId,
       ownerSlotId: callerSlot.id,
     });
+    const peerSettings = this.roleSettings().peer;
     return {
       agentId: generation.agentId,
       labels: { [SLP_GROUP_LABEL]: group.id },
-      systemPrompt: composeSlpSystemPrompt(instructions, {
+      systemPrompt: this.composeRolePrompt(instructions, {
         role: "peer",
         groupId: group.id,
         workspaceId: group.workspaceId,
         slotId: peerSlot.id,
         generationNumber: generation.number,
         mode: group.mode,
+        addressBook: addressBookFor(group, peerSlot),
       }),
+      launch: {
+        provider: peerSettings?.provider ?? null,
+        model: peerSettings?.model ?? null,
+        modeId: peerSettings?.modeId ?? null,
+        thinkingOptionId: peerSettings?.thinkingOptionId ?? null,
+      },
     };
   }
 
@@ -818,6 +943,10 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       }
       const record = stored.record;
       this.groups.set(record.id, record);
+      if (record.status === "ended") {
+        await this.archiveMembers(record);
+        continue;
+      }
       await this.settlePreparingPeers(record);
       if (record.hold?.kind === "transfer") {
         try {
@@ -872,6 +1001,14 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     return group;
   }
 
+  /** The bundled role prompt plus whatever the host configured for that role. */
+  private composeRolePrompt(instructions: SlpInstructions, identity: SlpIdentity): string {
+    return appendRoleInstructions(
+      composeSlpSystemPrompt(instructions, identity),
+      this.roleSettings()[identity.role],
+    );
+  }
+
   private instructions(): Promise<SlpInstructions> {
     this.instructionsLoad ??= loadSlpInstructions(this.instructionsDir).catch((error: unknown) => {
       this.instructionsLoad = null;
@@ -883,7 +1020,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   private resolveSlot(groupId: string, slotId: string): SlpSlotDestination {
     const group = this.groups.get(groupId);
     const slot = group?.slots[slotId];
-    if (!group || !slot) return { status: "empty" };
+    if (!group || !slot || group.status === "ended") return { status: "empty" };
     if (group.status === "frozen") return { status: "held", reason: "frozen" };
     if (group.hold && (group.hold.kind !== "transfer" || group.hold.slotId === slotId)) {
       return { status: "held", reason: group.hold.kind };
@@ -934,6 +1071,26 @@ function newGeneration(input: {
     activatedAt: null,
     retiredAt: null,
   };
+}
+
+/**
+ * The agent ids a slot's prompt names. A root's id is planned at group
+ * creation, so the Supervisor can name a Lead that does not exist yet; mail
+ * resolves any generation's id to the slot, so a handoff does not stale it.
+ */
+function addressBookFor(group: SlpGroupRecord, slot: SlpSlotRecord): SlpAddressBook {
+  const planned = group.initialization;
+  switch (slot.role) {
+    case "supervisor":
+      return planned.leadAgentId ? { lead: planned.leadAgentId } : {};
+    case "lead":
+      return planned.supervisorAgentId ? { supervisor: planned.supervisorAgentId } : {};
+    case "peer": {
+      const owner = slot.ownerSlotId ? group.slots[slot.ownerSlotId] : undefined;
+      const lead = owner ? (activeGeneration(owner) ?? owner.generations[0])?.agentId : undefined;
+      return lead ? { lead } : {};
+    }
+  }
 }
 
 function activeGeneration(slot: SlpSlotRecord): SlpGenerationRecord | null {

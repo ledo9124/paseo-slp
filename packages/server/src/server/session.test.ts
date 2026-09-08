@@ -27,7 +27,7 @@ import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
-import { SlpInitializationConflictError } from "./slp/errors.js";
+import { SlpInitializationConflictError, SlpNoGroupError } from "./slp/errors.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
 import type { SessionOptions } from "./session.js";
@@ -819,6 +819,61 @@ describe("SLP group RPCs", () => {
       {
         type: "slp.group.initialize.response",
         payload: { requestId: "init-1", success: true, error: null, group: summary },
+      },
+    ]);
+  });
+
+  test("ends a group, and answers a missing group or a disabled host by name or code", async () => {
+    const ended: string[] = [];
+    const { service } = slpStub({
+      endGroup: async (workspaceId: string) => {
+        if (workspaceId !== "wks_1") throw new SlpNoGroupError(workspaceId);
+        ended.push(workspaceId);
+        return { id: "grp_1" };
+      },
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages, slp: service });
+    await session.handleMessage({
+      type: "slp.group.end.request",
+      requestId: "end-1",
+      workspaceId: "wks_1",
+    });
+    await session.handleMessage({
+      type: "slp.group.end.request",
+      requestId: "end-2",
+      workspaceId: "wks_none",
+    });
+    const disabled: SessionOutboundMessage[] = [];
+    await createSessionForTest({ messages: disabled }).handleMessage({
+      type: "slp.group.end.request",
+      requestId: "end-3",
+      workspaceId: "wks_1",
+    });
+
+    expect(ended).toEqual(["wks_1"]);
+    expect(messages).toEqual([
+      {
+        type: "slp.group.end.response",
+        payload: { requestId: "end-1", success: true, error: null },
+      },
+      {
+        type: "slp.group.end.response",
+        payload: {
+          requestId: "end-2",
+          success: false,
+          error: { code: "SlpNoGroupError", message: "workspace wks_none has no SLP group" },
+        },
+      },
+    ]);
+    expect(disabled).toEqual([
+      {
+        type: "slp.group.end.response",
+        payload: {
+          requestId: "end-3",
+          success: false,
+          error: { code: "slp_unavailable", message: "SLP groups are disabled on this host" },
+        },
       },
     ]);
   });

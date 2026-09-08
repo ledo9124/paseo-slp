@@ -527,6 +527,16 @@ function resolveSlpEnabled(
   return parseBooleanEnv(env.PASEO_SLP_ENABLED) ?? persisted.features?.slp?.enabled ?? true;
 }
 
+function resolveSlpSettings(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): Pick<PaseoDaemonConfig, "slpEnabled" | "slpRoles"> {
+  return {
+    slpEnabled: resolveSlpEnabled(env, persisted),
+    slpRoles: persisted.features?.slp?.roles,
+  };
+}
+
 function resolveStaticLoadConfigSettings(
   env: NodeJS.ProcessEnv,
   cli: CliConfigOverrides | undefined,
@@ -536,7 +546,7 @@ function resolveStaticLoadConfigSettings(
     mcpEnabled: cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true,
     mcpInjectIntoAgents:
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
-    slpEnabled: resolveSlpEnabled(env, persisted),
+    ...resolveSlpSettings(env, persisted),
     browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),

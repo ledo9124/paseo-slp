@@ -44,6 +44,8 @@ import {
   useLiveAgentModeControl,
   type AgentModeControlValue,
 } from "@/composer/agent-controls/mode-control";
+import { SlpModeControl } from "@/slp/mode-control";
+import { useSlpComposerMode, type SlpModeControlValue } from "@/slp/composer-mode";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
@@ -128,6 +130,7 @@ interface ControlledAgentControlsProps {
   onRetryModelProvider?: (provider: AgentProvider) => void;
   isRetryingModelProvider?: boolean;
   modeControl?: AgentModeControlValue | null;
+  slpControl?: SlpModeControlValue | null;
   modelSelectorServerId?: string | null;
   isCompactLayout?: boolean;
 }
@@ -158,6 +161,8 @@ export interface DraftAgentControlsProps {
   disabled?: boolean;
   modelSelectorServerId?: string | null;
   isCompactLayout?: boolean;
+  /** The workspace-mode pill; null on hosts without SLP groups. */
+  slpControl?: SlpModeControlValue | null;
 }
 
 interface AgentControlsProps {
@@ -390,6 +395,7 @@ function pickDesktopModel({
 
 type AgentControlsSlice = {
   provider: string;
+  workspaceId: string | null;
   cwd: string | null;
   runtimeModelId: string | null;
   model: string | null | undefined;
@@ -409,6 +415,7 @@ function selectAgentControlsSlice(
   }
   return {
     provider: currentAgent.provider,
+    workspaceId: currentAgent.workspaceId ?? null,
     cwd: currentAgent.cwd,
     runtimeModelId: currentAgent.runtimeInfo?.model ?? null,
     model: currentAgent.model,
@@ -498,6 +505,7 @@ function ControlledAgentControls({
   onRetryModelProvider,
   isRetryingModelProvider = false,
   modeControl,
+  slpControl = null,
   modelSelectorServerId = null,
   isCompactLayout,
 }: ControlledAgentControlsProps) {
@@ -778,6 +786,7 @@ function ControlledAgentControls({
             handleNestedOpenChange={handleSheetOpenChange}
             renderThinkingOption={renderThinkingOption}
             modeControl={modeControl}
+            slpControl={slpControl}
             presentation={presentation}
             glyphSize={layoutContextValue.glyphSize}
             activeSheet={activeSheet}
@@ -818,6 +827,7 @@ function ControlledAgentControls({
             handleOpenChange={handleSheetOpenChange}
             renderThinkingOption={renderThinkingOption}
             modeControl={modeControl}
+            slpControl={slpControl}
             glyphSize={layoutContextValue.glyphSize}
             modelSelectorServerId={modelSelectorServerId}
             canSwitchProvider={Boolean(onSelectProviderAndModel)}
@@ -878,6 +888,7 @@ interface DesktopAgentControlsContentProps {
     onPress: () => void;
   }) => ReactElement;
   modeControl?: AgentModeControlValue | null;
+  slpControl?: SlpModeControlValue | null;
   presentation: ComposerControlPresentation;
   glyphSize: number;
   activeSheet: ActiveSheet;
@@ -935,6 +946,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     handleNestedOpenChange,
     renderThinkingOption,
     modeControl,
+    slpControl,
     presentation,
     glyphSize,
     activeSheet,
@@ -1054,6 +1066,9 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
       ) : null}
 
       {modeControl ? <AgentModeControl {...modeControl} onClose={onDropdownClose} /> : null}
+      {slpControl ? (
+        <SlpModeControl {...slpControl} disabled={disabled} onClose={onDropdownClose} />
+      ) : null}
 
       {presentation.aggregateFeatures && features?.length ? (
         <>
@@ -1141,6 +1156,7 @@ interface SheetAgentControlsContentProps {
     onPress: () => void;
   }) => ReactElement;
   modeControl?: AgentModeControlValue | null;
+  slpControl?: SlpModeControlValue | null;
   glyphSize: number;
   modelSelectorServerId: string | null;
   canSwitchProvider: boolean;
@@ -1180,6 +1196,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     handleOpenChange,
     renderThinkingOption,
     modeControl,
+    slpControl,
     glyphSize,
     modelSelectorServerId,
     canSwitchProvider,
@@ -1235,6 +1252,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       ) : null}
 
       {modeControl ? <AgentModeControl {...modeControl} surface="sheet" /> : null}
+      {slpControl ? <SlpModeControl {...slpControl} disabled={disabled} surface="sheet" /> : null}
 
       {(features ?? []).map((feature) => (
         <SheetFeatureItem
@@ -1547,6 +1565,8 @@ export const AgentControls = memo(function AgentControls({
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const toast = useToast();
   const modeControl = useLiveAgentModeControl(serverId, agentId);
+  // A running agent's workspace mode is decided; the pill only shows it.
+  const slpControl = useSlpComposerMode({ serverId, workspaceId: agent?.workspaceId });
   const commandCenterModes = toCommandCenterModes(modeControl);
   const modeProviderDefinitions = getModeProviderDefinitions(modeControl);
 
@@ -1800,6 +1820,7 @@ export const AgentControls = memo(function AgentControls({
         onDropdownClose={onDropdownClose}
         disabled={!client}
         modeControl={modeControl}
+        slpControl={slpControl}
         modelSelectorServerId={serverId}
         isCompactLayout={isCompactLayout}
       />
@@ -1833,6 +1854,7 @@ export function DraftAgentControls({
   disabled = false,
   modelSelectorServerId = null,
   isCompactLayout,
+  slpControl = null,
 }: DraftAgentControlsProps) {
   const mappedThinkingOptions = useMemo<AgentControlOption[]>(() => {
     return toThinkingControlOptions(thinkingOptions);
@@ -1919,6 +1941,7 @@ export function DraftAgentControls({
         isRetryingModelProvider={isRetryingModelProvider}
         disabled={disabled}
         modeControl={modeControl}
+        slpControl={slpControl}
         modelSelectorServerId={modelSelectorServerId}
         isCompactLayout={isCompactLayout}
       />

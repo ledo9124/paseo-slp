@@ -147,6 +147,27 @@ Or persist it in `config.json`:
 }
 ```
 
+Each role can launch with its own provider, model and permission mode, and carry extra instructions appended to its bundled prompt. Set them under `features.slp.roles` or in the app under Settings → host → SLP roles. A role without settings launches with the provider, model and permission mode the composer showed when the group started; a configured provider replaces the composer's model and mode with the configured ones.
+
+```json
+{
+  "features": {
+    "slp": {
+      "roles": {
+        "supervisor": { "provider": "claude", "model": "claude-opus-5" },
+        "lead": {
+          "provider": "codex",
+          "model": "gpt-6-astra",
+          "thinkingOptionId": "high",
+          "modeId": "full-access"
+        },
+        "peer": { "instructions": "Report in Vietnamese. Keep handbacks under ten lines." }
+      }
+    }
+  }
+}
+```
+
 ## Logging
 
 Daemon logging uses separate console and file sinks by default:

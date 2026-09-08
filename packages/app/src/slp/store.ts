@@ -25,7 +25,9 @@ export function useSlpGroup(serverId: string, workspaceId: string): SlpGroupSumm
       return (await client.slpGroupGet(workspaceId)).group;
     },
   });
-  return query.data ?? null;
+  const group = query.data ?? null;
+  // An ended group keeps its record for the daemon's journals; to the app it is gone.
+  return group && group.status !== "ended" ? group : null;
 }
 
 export interface SlpTransferView {

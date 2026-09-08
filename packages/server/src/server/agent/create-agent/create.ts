@@ -40,6 +40,30 @@ export interface SlpPeerCreation {
   agentId: string;
   systemPrompt: string;
   labels: Record<string, string>;
+  /** Host-configured launch settings for the Peer role; null keeps the Lead's choice. */
+  launch: {
+    provider: string | null;
+    model: string | null;
+    modeId: string | null;
+    thinkingOptionId: string | null;
+  };
+}
+
+/** The Peer role's configured provider, model and mode win over what the Lead asked for. */
+function applyPeerLaunch(
+  input: CreateAgentFromMcpInput,
+  launch: SlpPeerCreation["launch"],
+): Pick<CreateAgentFromMcpInput, "provider" | "mode" | "thinking"> {
+  const mode = launch.modeId ?? input.mode;
+  const thinking = launch.thinkingOptionId ?? input.thinking;
+  if (launch.provider) {
+    return { provider: formatProviderModel(launch.provider, launch.model), mode, thinking };
+  }
+  if (launch.model) {
+    const requestedProvider = input.provider.split("/")[0] ?? input.provider;
+    return { provider: formatProviderModel(requestedProvider, launch.model), mode, thinking };
+  }
+  return { provider: input.provider, mode, thinking };
 }
 
 /**
@@ -209,6 +233,7 @@ export async function createAgentCommand(
   }
   const peerInput: CreateAgentFromMcpInput = {
     ...input,
+    ...applyPeerLaunch(input, peer.launch),
     agentId: peer.agentId,
     notifyOnFinish: false,
     labels: { ...input.labels, ...peer.labels },

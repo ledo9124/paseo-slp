@@ -163,9 +163,27 @@ const FeatureWebUiSchema = z
   })
   .strict();
 
+const SlpRoleConfigSchema = z
+  .object({
+    provider: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    modeId: z.string().min(1).optional(),
+    thinkingOptionId: z.string().min(1).optional(),
+    instructions: z.string().optional(),
+  })
+  .strict();
+
 const FeatureSlpSchema = z
   .object({
     enabled: z.boolean().optional(),
+    roles: z
+      .object({
+        supervisor: SlpRoleConfigSchema.optional(),
+        lead: SlpRoleConfigSchema.optional(),
+        peer: SlpRoleConfigSchema.optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

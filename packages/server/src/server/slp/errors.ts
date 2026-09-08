@@ -134,6 +134,23 @@ export class SlpNoContactError extends Error {
   }
 }
 
+/** Ending a group needs one to end. */
+export class SlpNoGroupError extends Error {
+  constructor(readonly workspaceId: string) {
+    super(`workspace ${workspaceId} has no SLP group`);
+    this.name = "SlpNoGroupError";
+  }
+}
+
+/** The refusals ending a group answers to a client by name; anything else is a daemon fault. */
+export function isSlpEndRefusal(error: unknown): error is Error {
+  return (
+    error instanceof SlpNoGroupError ||
+    error instanceof SlpGroupFrozenError ||
+    error instanceof SlpGroupHeldError
+  );
+}
+
 /**
  * The refusals group initialization answers to a client by name. Anything
  * else thrown there is a daemon fault and propagates.

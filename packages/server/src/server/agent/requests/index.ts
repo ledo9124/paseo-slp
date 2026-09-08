@@ -20,11 +20,13 @@ export class AgentRequests {
   create(input: {
     key: string;
     request: unknown;
+    /** A caller-planned id, when other records already refer to the agent; else a fresh one. */
+    agentId?: string;
     findAgent: (agentId: string) => Promise<boolean>;
     create: (agentId: string) => Promise<void>;
   }): Promise<string> {
     return this.execute(["create", input.key], input.request, {
-      agentId: randomUUID(),
+      agentId: input.agentId ?? randomUUID(),
       recover: input.findAgent,
       run: input.create,
       retrySafe: async (agentId) => !(await input.findAgent(agentId)),

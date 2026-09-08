@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "pino";
 import { z } from "zod";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
@@ -179,6 +180,7 @@ import type {
   AgentSkillSelection,
   FirstAgentContext,
   PluginSource,
+  SlpRolesConfig,
   TerminalProfile,
 } from "@getpaseo/protocol/messages";
 import type {
@@ -232,6 +234,19 @@ import {
 import { DaemonExecutions } from "./hub/daemon-executions.js";
 import { PluginService } from "./plugins/index.js";
 import { ManagedPluginSources } from "./plugins/managed-source.js";
+
+/**
+ * Removes a header from both views of a Node request: the SDK's transport
+ * rebuilds the web Request from `rawHeaders` through Hono, so clearing the
+ * parsed `headers` alone changes nothing it sees.
+ */
+function dropRequestHeader(req: express.Request, name: string): void {
+  delete req.headers[name];
+  const raw = req.rawHeaders;
+  for (let index = raw.length - 2; index >= 0; index -= 2) {
+    if (raw[index]?.toLowerCase() === name) raw.splice(index, 2);
+  }
+}
 
 const MCP_DEBUG_BATCH_LIMIT = 10;
 const MCP_DEBUG_SECRET = "[redacted]";
@@ -399,6 +414,8 @@ export interface PaseoDaemonConfig {
   mcpInjectIntoAgents?: boolean;
   /** Off hides the SLP feature and refuses the group RPCs; existing groups still recover their gates. */
   slpEnabled?: boolean;
+  /** Per-role launch settings; see packages/protocol SlpRolesConfigSchema. */
+  slpRoles?: SlpRolesConfig;
   browserToolsEnabled?: boolean;
   git?: {
     maxProcessesPerSecond: number;
@@ -557,6 +574,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
     skills: { selection: config.skillSelection },
+    slp: { roles: config.slpRoles },
   };
 
   if (config.terminalProfiles !== undefined) {
@@ -1190,6 +1208,7 @@ export async function createPaseoDaemon(
         cwd: input.source.cwd,
         workspaceId: input.workspaceId,
         mode: input.source.modeId ?? undefined,
+        thinking: input.source.thinkingOptionId ?? undefined,
         config: {
           systemPrompt: input.systemPrompt,
           ...(input.source.providerOptions
@@ -1205,6 +1224,7 @@ export async function createPaseoDaemon(
       const mcp = daemonConfigStore.get().mcp;
       return mcp.enabled !== false && mcp.injectIntoAgents;
     },
+    roleSettings: () => daemonConfigStore.get().slp?.roles ?? {},
   });
   // Peers are created by the Lead through the create funnel; the service is
   // constructed after the funnel is bound, so the hook is attached here.
@@ -1569,6 +1589,20 @@ export async function createPaseoDaemon(
           void transport.close();
           void server.close();
         });
+
+        // COMPAT(mcpProtocolHeader): codex-cli 0.153 stamps every request with
+        // its own protocol version (2026-07-28) instead of the negotiated one,
+        // and the SDK answers 400 to a version it does not know, so the agent
+        // ends up with no Paseo tools at all. The session is stateless, so
+        // dropping the header makes the SDK fall back to the negotiated
+        // version. Remove after 2026-12-01 or once the SDK knows that version.
+        const protocolVersionHeader = req.header("mcp-protocol-version");
+        if (
+          protocolVersionHeader !== undefined &&
+          !SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersionHeader)
+        ) {
+          dropRequestHeader(req, "mcp-protocol-version");
+        }
 
         await transport.handleRequest(
           req as unknown as IncomingMessage,

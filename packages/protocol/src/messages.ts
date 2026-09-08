@@ -211,6 +211,32 @@ export const AgentSkillSelectionSchema = z.discriminatedUnion("mode", [
 ]);
 export type AgentSkillSelection = z.infer<typeof AgentSkillSelectionSchema>;
 
+/**
+ * Per-role launch settings for SLP groups, kept in the daemon's config so
+ * every client starts groups the same way. An unset field falls back to the
+ * composer's own provider, model or mode; `instructions` is appended to the
+ * role's bundled prompt.
+ */
+export const SlpRoleConfigSchema = z
+  .object({
+    provider: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    modeId: z.string().min(1).optional(),
+    thinkingOptionId: z.string().min(1).optional(),
+    instructions: z.string().optional(),
+  })
+  .passthrough();
+export type SlpRoleConfig = z.infer<typeof SlpRoleConfigSchema>;
+
+export const SlpRolesConfigSchema = z
+  .object({
+    supervisor: SlpRoleConfigSchema.optional(),
+    lead: SlpRoleConfigSchema.optional(),
+    peer: SlpRoleConfigSchema.optional(),
+  })
+  .passthrough();
+export type SlpRolesConfig = z.infer<typeof SlpRolesConfigSchema>;
+
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
@@ -248,6 +274,8 @@ export const MutableDaemonConfigSchema = z
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    // COMPAT(slpRoles): added in v0.7.3; an older daemon never sends it.
+    slp: z.object({ roles: SlpRolesConfigSchema.optional() }).passthrough().optional(),
   })
   .passthrough();
 
@@ -268,6 +296,7 @@ export const MutableDaemonConfigPatchSchema = z
     agentProfiles: z.array(AgentProfileSchema).optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    slp: z.object({ roles: SlpRolesConfigSchema.optional() }).passthrough().optional(),
   })
   .partial()
   .passthrough();
@@ -3112,6 +3141,19 @@ export const SlpGroupGetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+/** The bundled role instructions the daemon composes into every generation, before host extras. */
+export const SlpInstructionsGetRequestSchema = z.object({
+  type: z.literal("slp.instructions.get.request"),
+  requestId: z.string(),
+});
+
+/** Ends the workspace's group: its members are archived and the workspace mode opens again. */
+export const SlpGroupEndRequestSchema = z.object({
+  type: z.literal("slp.group.end.request"),
+  workspaceId: z.string(),
+  requestId: z.string(),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateRequestSchema,
   HubExecutionAgentValidateRequestSchema,
@@ -3140,6 +3182,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceLabelUpdateRequestSchema,
   SlpGroupInitializeRequestSchema,
   SlpGroupGetRequestSchema,
+  SlpGroupEndRequestSchema,
+  SlpInstructionsGetRequestSchema,
   WorkspaceLabelDeleteRequestSchema,
   WorkspaceLabelDeleteInspectRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
@@ -6508,6 +6552,30 @@ export const SlpGroupGetResponseSchema = z.object({
   }),
 });
 
+export const SlpGroupEndResponseSchema = z.object({
+  type: z.literal("slp.group.end.response"),
+  payload: z.object({
+    requestId: z.string(),
+    success: z.boolean(),
+    error: z.object({ code: z.string(), message: z.string() }).nullable(),
+  }),
+});
+
+export const SlpInstructionsGetResponseSchema = z.object({
+  type: z.literal("slp.instructions.get.response"),
+  payload: z.object({
+    requestId: z.string(),
+    /** Content hash of the bundled files; a generation records the one it was composed from. */
+    version: z.string(),
+    common: z.string(),
+    roles: z.object({
+      supervisor: z.string(),
+      lead: z.string(),
+      peer: z.string(),
+    }),
+  }),
+});
+
 /** Pushed to every session whenever a group, one of its transfers or its mail changes. */
 export const SlpGroupUpdateSchema = z.object({
   type: z.literal("slp.group.update"),
@@ -6561,6 +6629,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceLabelUpdateSchema,
   SlpGroupInitializeResponseSchema,
   SlpGroupGetResponseSchema,
+  SlpGroupEndResponseSchema,
+  SlpInstructionsGetResponseSchema,
   SlpGroupUpdateSchema,
   WorkspaceLabelAssignmentSetResponseSchema,
   WorkspaceLabelUpdateResponseSchema,
@@ -7031,6 +7101,10 @@ export type SlpGroupInitializeRequest = z.infer<typeof SlpGroupInitializeRequest
 export type SlpGroupInitializeResponse = z.infer<typeof SlpGroupInitializeResponseSchema>;
 export type SlpGroupGetRequest = z.infer<typeof SlpGroupGetRequestSchema>;
 export type SlpGroupGetResponse = z.infer<typeof SlpGroupGetResponseSchema>;
+export type SlpGroupEndRequest = z.infer<typeof SlpGroupEndRequestSchema>;
+export type SlpGroupEndResponse = z.infer<typeof SlpGroupEndResponseSchema>;
+export type SlpInstructionsGetRequest = z.infer<typeof SlpInstructionsGetRequestSchema>;
+export type SlpInstructionsGetResponse = z.infer<typeof SlpInstructionsGetResponseSchema>;
 export type SlpGroupUpdate = z.infer<typeof SlpGroupUpdateSchema>;
 export type CheckoutGithubSetAutoMergeRequest = z.infer<
   typeof CheckoutGithubSetAutoMergeRequestSchema

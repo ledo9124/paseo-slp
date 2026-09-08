@@ -85,7 +85,7 @@ import {
   type WorkspaceLabelService,
 } from "./workspace-labels/index.js";
 import type { SlpService } from "./slp/service.js";
-import { isSlpInitializationRefusal } from "./slp/errors.js";
+import { isSlpEndRefusal, isSlpInitializationRefusal } from "./slp/errors.js";
 
 import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
@@ -2608,9 +2608,48 @@ export class Session {
         return this.handleSlpGroupGet(msg);
       case "slp.group.initialize.request":
         return this.handleSlpGroupInitialize(msg);
+      case "slp.group.end.request":
+        return this.handleSlpGroupEnd(msg);
+      case "slp.instructions.get.request":
+        return this.handleSlpInstructionsGet(msg);
       default:
         return undefined;
     }
+  }
+
+  private async handleSlpGroupEnd(
+    request: Extract<SessionInboundMessage, { type: "slp.group.end.request" }>,
+  ): Promise<void> {
+    const respond = (error: { code: string; message: string } | null) => {
+      this.emit({
+        type: "slp.group.end.response",
+        payload: { requestId: request.requestId, success: error === null, error },
+      });
+    };
+    if (!this.slp) {
+      respond({ code: "slp_unavailable", message: "SLP groups are disabled on this host" });
+      return;
+    }
+    try {
+      await this.slp.endGroup(request.workspaceId);
+      respond(null);
+    } catch (error) {
+      if (!isSlpEndRefusal(error)) throw error;
+      respond({ code: error.name, message: error.message });
+    }
+  }
+
+  private async handleSlpInstructionsGet(
+    request: Extract<SessionInboundMessage, { type: "slp.instructions.get.request" }>,
+  ): Promise<void> {
+    if (!this.slp) {
+      throw new Error("SLP groups are disabled on this host");
+    }
+    const instructions = await this.slp.getInstructions();
+    this.emit({
+      type: "slp.instructions.get.response",
+      payload: { requestId: request.requestId, ...instructions },
+    });
   }
 
   private async handleSlpGroupGet(

@@ -43,6 +43,7 @@ export interface SlpMemberCreationInput {
     cwd: string;
     model: string | null;
     modeId: string | null;
+    thinkingOptionId: string | null;
     providerOptions: AgentSessionConfig["providerOptions"] | null;
   };
   systemPrompt: string;
@@ -349,6 +350,7 @@ export class SlpTransfers {
             cwd: sourceRecord.cwd,
             model: sourceRecord.config?.model ?? null,
             modeId: sourceRecord.lastModeId ?? sourceRecord.config?.modeId ?? null,
+            thinkingOptionId: sourceRecord.config?.thinkingOptionId ?? null,
             providerOptions: sourceRecord.config?.providerOptions ?? null,
           },
           systemPrompt: prompt.systemPrompt,

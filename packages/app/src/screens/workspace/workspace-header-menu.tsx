@@ -81,8 +81,8 @@ export interface WorkspaceHeaderWorkspaceActions {
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
-  /** Present only while the host supports SLP groups and this workspace has none yet. */
-  onStartSlpGroup?: () => void;
+  /** Present only while this workspace runs an SLP group that can be ended. */
+  onEndSlpGroup?: () => void;
 }
 
 function WorkspaceHeaderWorkspaceActionItems({
@@ -94,20 +94,11 @@ function WorkspaceHeaderWorkspaceActionItems({
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
-  onStartSlpGroup,
+  onEndSlpGroup,
 }: WorkspaceHeaderWorkspaceActions) {
   const { t } = useTranslation();
   return (
     <>
-      {onStartSlpGroup ? (
-        <DropdownMenuItem
-          testID="workspace-header-start-slp-group"
-          leading={MENU_SLP_ICON}
-          onSelect={onStartSlpGroup}
-        >
-          {t("slp.start.menu")}
-        </DropdownMenuItem>
-      ) : null}
       <DropdownMenuItem
         testID="workspace-header-copy-path"
         leading={MENU_COPY_ICON}
@@ -142,6 +133,18 @@ function WorkspaceHeaderWorkspaceActionItems({
             onSelect={onOpenSetupTab}
           >
             {t("workspace.header.actions.showSetup")}
+          </DropdownMenuItem>
+        </>
+      ) : null}
+      {onEndSlpGroup ? (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            testID="workspace-header-end-slp-group"
+            leading={MENU_SLP_ICON}
+            onSelect={onEndSlpGroup}
+          >
+            {t("slp.end.menu")}
           </DropdownMenuItem>
         </>
       ) : null}
