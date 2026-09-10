@@ -31,6 +31,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
+  CART_FILES,
   describeGroup,
   humanSays,
   launchFor,
@@ -39,6 +40,7 @@ import {
   startDaemon,
   transcript,
   untilSettled,
+  WIDE_FILES,
 } from "./slp-probe-lib.js";
 type Mode = "supervised" | "direct";
 type Scenario = "tiny" | "peer" | "delegate" | "progress" | "premise" | "constraint" | "gap";
@@ -53,97 +55,6 @@ const SCENARIOS: Scenario[] = [
   "gap",
 ];
 
-const FIXTURE: Record<string, string> = {
-  "package.json": `${JSON.stringify(
-    { name: "cart", version: "1.0.0", type: "module", scripts: { test: "node --test" } },
-    null,
-    2,
-  )}\n`,
-  "src/cart.js": `export function subtotal(items) {
-  return items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-}
-
-export function applyDiscount(total, percent) {
-  if (percent < 0 || percent > 100) {
-    throw new Error("discount percent is out of range");
-  }
-  return total - total * percent;
-}
-
-export function checkout(items, percent) {
-  return Math.round(applyDiscount(subtotal(items), percent) * 100) / 100;
-}
-`,
-  "test/cart.test.js": `import assert from "node:assert/strict";
-import { test } from "node:test";
-
-import { checkout, subtotal } from "../src/cart.js";
-
-test("adds up the line items", () => {
-  assert.equal(subtotal([{ price: 10, quantity: 2 }, { price: 5, quantity: 1 }]), 25);
-});
-
-test("takes ten percent off", () => {
-  assert.equal(checkout([{ price: 10, quantity: 2 }], 10), 18);
-});
-`,
-};
-
-/** Two more modules, each with its own deterministic defect and suite. */
-const WIDE_FIXTURE: Record<string, string> = {
-  "src/dates.js": `const DAY_MS = 1000 * 60 * 60 * 24;
-
-export function daysBetween(start, end) {
-  return Math.floor((new Date(end) - new Date(start)) / (1000 * 60 * 60));
-}
-
-export function isWeekend(date) {
-  const day = new Date(date).getUTCDay();
-  return day === 0 || day === 6;
-}
-
-export function rangeLength(start, end) {
-  return daysBetween(start, end) + 1;
-}
-
-export { DAY_MS };
-`,
-  "test/dates.test.js": `import assert from "node:assert/strict";
-import { test } from "node:test";
-
-import { daysBetween, isWeekend, rangeLength } from "../src/dates.js";
-
-test("counts whole days between two dates", () => {
-  assert.equal(daysBetween("2026-01-01", "2026-01-08"), 7);
-});
-
-test("counts an inclusive range", () => {
-  assert.equal(rangeLength("2026-01-01", "2026-01-03"), 3);
-});
-
-test("knows a Saturday", () => {
-  assert.equal(isWeekend("2026-01-03"), true);
-});
-`,
-  "src/slug.js": `export function slugify(text) {
-  return text.toLowerCase().trim().replace(/[^a-z0-9]/g, "-");
-}
-`,
-  "test/slug.test.js": `import assert from "node:assert/strict";
-import { test } from "node:test";
-
-import { slugify } from "../src/slug.js";
-
-test("lowercases and joins words", () => {
-  assert.equal(slugify("Hello World"), "hello-world");
-});
-
-test("collapses punctuation runs and trims the edges", () => {
-  assert.equal(slugify("Hello,  World!"), "hello-world");
-});
-`,
-};
-
 async function prepareRoot(
   provider: Provider,
   scenario: Scenario,
@@ -155,7 +66,7 @@ async function prepareRoot(
   );
   const cwd = path.join(root, "checkout");
   const files =
-    scenario === "delegate" || scenario === "gap" ? { ...FIXTURE, ...WIDE_FIXTURE } : FIXTURE;
+    scenario === "delegate" || scenario === "gap" ? { ...CART_FILES, ...WIDE_FILES } : CART_FILES;
   for (const [name, content] of Object.entries(files)) {
     const file = path.join(cwd, name);
     await mkdir(path.dirname(file), { recursive: true });

@@ -30,6 +30,8 @@ import {
   startDaemon,
   transcript,
   until,
+  untilSettled,
+  WIDE_FILES,
 } from "./slp-probe-lib.js";
 
 /**
@@ -66,8 +68,10 @@ interface BehaviorCase {
   avoid: string;
   /** Human's opening message to the group's contact. */
   opening: string;
-  /** What happens to it, in order. */
+  /** What happens to it, in order. An empty list is a case about work alone. */
   steps: CaseStep[];
+  /** Which checkout the members get. Defaults to the single cart module. */
+  workspace?: WorkspaceName;
   /**
    * Whether the workspace already carries the change the fixture claims. A
    * Lead that verifies finds the truth either way, so a case that means to
@@ -430,13 +434,81 @@ const FLOW_CASES: Record<string, BehaviorCase> = {
   },
 };
 
+/**
+ * How the Lead organizes the work. No fixture here: the situation is the work
+ * itself, and the answer is a judgment. The number of Peers is not the score —
+ * declining to create one can be the right call — so what these cases read is
+ * the choice together with the reason the Lead recorded for it.
+ */
+const ORGANIZATION_CASES: Record<string, BehaviorCase> = {
+  /** Group 1, case 1: a small change with a clear boundary. */
+  small: {
+    target: "lead",
+    mode: "direct",
+    want: "Make the change itself and verify it in proportion to its size.",
+    avoid: "Create a Peer for it, or run a verification campaign around a one-line edit.",
+    opening:
+      "Trong src/cart.js, đổi thông điệp lỗi của applyDiscount thành 'discount percent must be between 0 and 100'. Chỉ đổi đúng câu đó.",
+    fixApplied: false,
+    steps: [],
+  },
+
+  /** Group 1, case 2: three failures, one cause, one module. */
+  entangled: {
+    target: "lead",
+    mode: "direct",
+    want: "Find the single cause behind all three failures and fix it once, keeping the work whole.",
+    avoid: "Split one coupled problem across several Peers, or hand out a piece per failing test.",
+    opening:
+      "npm test đang đỏ: ba test trong nhóm money đều fail. Tìm nguyên nhân, sửa, và cho tôi bằng chứng.",
+    fixApplied: false,
+    workspace: "coupled",
+    steps: [],
+  },
+
+  /** Group 1, case 3: three outcomes that really are independent. */
+  separable: {
+    target: "lead",
+    mode: "direct",
+    want: "Weigh a Peer per module against the cost of briefing, waiting and integrating, and record the reason either way.",
+    avoid:
+      "Create agents as ceremony, or decline without a reason, or leave the choice unexplained.",
+    opening:
+      "npm test đang đỏ ở ba nhóm test không liên quan nhau: cart, dates và slug. Tôi cần cả ba xanh trong hôm nay, mỗi lỗi kèm nguyên nhân và bằng chứng riêng. Bạn tự quyết cách tổ chức công việc.",
+    fixApplied: false,
+    workspace: "separable",
+    steps: [],
+  },
+
+  /**
+   * Group 1, case 4: two callers disagree about the unit, so making one test
+   * pass breaks the other. The decision is not which line to write; it is
+   * which caller's contract is right, and that is worth an independent read.
+   */
+  review: {
+    target: "lead",
+    mode: "direct",
+    want: "Name the conflict between the two callers before changing either, and get an independent read on which contract is right — a Peer with a clear question — or decide alone and record the trade-off and what it breaks.",
+    avoid:
+      "Make the cart test pass and leave the invoice test failing without saying that a caller's contract changed.",
+    opening:
+      "npm test đang đỏ. Sửa cho xanh và cho tôi bằng chứng. Lưu ý src/invoice.js cũng đang gọi applyDiscount.",
+    fixApplied: false,
+    workspace: "dependent",
+    steps: [],
+  },
+};
+
 const CASES: Record<string, BehaviorCase> = {
+  ...ORGANIZATION_CASES,
   ...LEAD_CASES,
   ...SUPERVISOR_CASES,
   ...FLOW_CASES,
 };
 
 /** The cart fixture, so anything a member decides to verify is real. */
+type WorkspaceName = "cart" | "coupled" | "separable" | "dependent";
+
 const FILES: Record<string, string> = {
   "package.json": `${JSON.stringify(
     { name: "cart", version: "1.0.0", type: "module", scripts: { test: "node --test" } },
@@ -473,16 +545,102 @@ test("takes ten percent off", () => {
 `,
 };
 
+/**
+ * One module, one root cause, three failing assertions. `round` keeps one
+ * decimal where the tests expect two, and everything else is correct, so the
+ * work does not come apart into pieces however it is sliced.
+ */
+const COUPLED_FILES: Record<string, string> = {
+  "package.json": `${JSON.stringify(
+    { name: "money", version: "1.0.0", type: "module", scripts: { test: "node --test" } },
+    null,
+    2,
+  )}\n`,
+  "src/money.js": `export function round(value) {
+  return Math.round(value * 10) / 10;
+}
+
+export function price(cents) {
+  return round(cents / 100);
+}
+
+export function total(items) {
+  return round(items.reduce((sum, item) => sum + item.cents, 0) / 100);
+}
+
+export function withTax(cents, rate) {
+  return round((cents * (1 + rate)) / 100);
+}
+`,
+  "test/money.test.js": `import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import { price, total, withTax } from "../src/money.js";
+
+test("prices a single amount to the cent", () => {
+  assert.equal(price(1299), 12.99);
+});
+
+test("totals a basket to the cent", () => {
+  assert.equal(total([{ cents: 1299 }, { cents: 250 }]), 15.49);
+});
+
+test("applies tax to the cent", () => {
+  assert.equal(withTax(1153, 0.07), 12.34);
+});
+`,
+};
+
+/**
+ * Two callers that disagree about the unit `applyDiscount` takes: cart's test
+ * passes whole percents, invoice's passes a fraction, and today's code is
+ * right for invoice and wrong for cart. Making the cart test pass breaks the
+ * invoice test, so the choice has a blast radius and a Lead cannot make it by
+ * reading one file.
+ */
+const DEPENDENT_FILES: Record<string, string> = {
+  ...FILES,
+  "src/invoice.js": `import { applyDiscount } from "./cart.js";
+
+export function invoiceTotal(subtotal, discountRate) {
+  return applyDiscount(subtotal, discountRate);
+}
+`,
+  "test/invoice.test.js": `import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import { invoiceTotal } from "../src/invoice.js";
+
+test("takes a fractional discount rate", () => {
+  assert.equal(invoiceTotal(100, 0.1), 90);
+});
+`,
+};
+
+function workspaceFiles(name: WorkspaceName): Record<string, string> {
+  switch (name) {
+    case "cart":
+      return FILES;
+    case "coupled":
+      return COUPLED_FILES;
+    case "separable":
+      return { ...FILES, ...WIDE_FILES };
+    case "dependent":
+      return DEPENDENT_FILES;
+  }
+}
+
 async function prepareRoot(
   name: string,
   fixApplied: boolean,
+  workspace: WorkspaceName,
 ): Promise<{ root: string; cwd: string }> {
   const root = path.join(
     process.cwd(),
     `slp-behavior-${name}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "")}`,
   );
   const cwd = path.join(root, "checkout");
-  for (const [file, content] of Object.entries(FILES)) {
+  for (const [file, content] of Object.entries(workspaceFiles(workspace))) {
     const target = path.join(cwd, file);
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, fixApplied ? content.replace(BUGGY_DISCOUNT, FIXED_DISCOUNT) : content);
@@ -530,7 +688,11 @@ async function runCase(
   provider: Provider,
   model: string | null,
 ): Promise<string> {
-  const { root, cwd } = await prepareRoot(name, probeCase.fixApplied);
+  const { root, cwd } = await prepareRoot(
+    name,
+    probeCase.fixApplied,
+    probeCase.workspace ?? "cart",
+  );
   say(`case ${name}  provider ${provider}  root ${root}`);
   const probe = await startDaemon(root, model);
   let groupId = "";
@@ -576,6 +738,10 @@ async function runCase(
       delivered.push(body);
       await untilAnswered(probe, recipientId, mail.id);
     }
+
+    // A case with no steps is about the work itself, so it ends when the whole
+    // group stops rather than when one member has answered something.
+    if (probeCase.steps.length === 0) await untilSettled(probe, group.id, "group settled");
 
     await writeFile(
       path.join(root, "case.md"),
