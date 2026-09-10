@@ -553,8 +553,12 @@ async function runCase(
       if (step.of === "human") {
         if (!contactId) throw new Error("group has no contact agent");
         await new Promise((resolve) => setTimeout(resolve, step.afterSeconds * 1000));
+        // Human's own send needs a free turn on the contact, and the contact
+        // may be mid-turn at the moment the case wants to speak.
+        await until("contact free for Human", () => !busy(probe, contactId), 180_000);
+        const leadWasBusy = busy(probe, leadId);
         await humanSays(probe, contactId, step.text);
-        delivered.push(`Human -> contact: ${step.text}`);
+        delivered.push(`Human -> contact (Lead ${leadWasBusy ? "busy" : "idle"}): ${step.text}`);
         await untilAnswered(probe, contactId, null);
         continue;
       }
