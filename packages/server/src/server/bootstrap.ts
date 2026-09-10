@@ -1590,8 +1590,9 @@ export async function createPaseoDaemon(
           void server.close();
         });
 
-        // COMPAT(mcpProtocolHeader): codex-cli 0.153 stamps every request with
-        // its own protocol version (2026-07-28) instead of the negotiated one,
+        // COMPAT(mcpProtocolHeader): some MCP clients (seen in a provider CLI
+        // released 2026-09) stamp every request with their own protocol
+        // version (2026-07-28) instead of the negotiated one,
         // and the SDK answers 400 to a version it does not know, so the agent
         // ends up with no Paseo tools at all. The session is stateless, so
         // dropping the header makes the SDK fall back to the negotiated

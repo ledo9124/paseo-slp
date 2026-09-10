@@ -14,7 +14,7 @@ The user chose Supervisor–Lead–Peer to separate Human conversation, project 
 | [Admission](admission.md)                     | Turn-admission lanes, lock ordering, and what PR 1 changed                         |
 | [Handoff](handoff.md)                         | Checkpoints, generation transfer, recovery and compaction interception             |
 | [Provider support](providers.md)              | Claude Code/Codex evidence, adapter differences and compatibility proof            |
-| [Shared instructions](roles/common.md)        | Principles shared by all three roles              |
+| [Shared instructions](roles/common.md)        | Principles shared by all three roles                                               |
 | [Supervisor](roles/supervisor.md)             | Human intent, conversation, visibility and escalation                              |
 | [Lead](roles/lead.md)                         | Project decisions, bounded delegation, integration and acceptance                  |
 | [Peer](roles/peer.md)                         | Independent bounded work and evidence-backed handback                              |
