@@ -24,6 +24,7 @@ import {
   SlpInstructionsUnavailableError,
   SlpNoGroupError,
 } from "./errors.js";
+import { resolveBundledSlpRolesDir } from "./instructions.js";
 import type { SlpInitializeGroupInput } from "./service.js";
 import type { SlpGroupRecord } from "./store.js";
 
@@ -103,6 +104,22 @@ describe("SlpService", () => {
     await expect(daemon.service.requestHandoff(leadId, "context")).rejects.toThrow(
       SlpHandoffDisabledError,
     );
+  });
+
+  test("role files with CRLF line endings still lose their Handoff section", async () => {
+    const roles = await mkdtemp(path.join(tmpdir(), "slp-crlf-"));
+    const bundled = resolveBundledSlpRolesDir();
+    for (const name of ["common.md", "supervisor.md", "lead.md", "peer.md"]) {
+      const text = await readFile(path.join(bundled, name), "utf8");
+      await writeFile(path.join(roles, name), text.replace(/\n/g, "\r\n"));
+    }
+    const daemon = await startDaemon({ isHandoffEnabled: () => false, instructionsDir: roles });
+    const group = await daemon.service.initializeGroup(input());
+    const prompt = (await daemon.storage.get(leadAgentId(group)))?.config.systemPrompt ?? "";
+    expect(prompt).toContain("## Using Paseo");
+    expect(prompt).not.toContain("## Handoff");
+    expect(prompt).not.toContain("\r");
+    await rm(roles, { recursive: true, force: true });
   });
 
   test("with the flag on, the composed prompt carries the Handoff section and the tools", async () => {

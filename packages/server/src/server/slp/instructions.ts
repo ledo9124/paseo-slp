@@ -56,9 +56,14 @@ export async function loadSlpInstructions(directory: string): Promise<SlpInstruc
   return { version, common, roles };
 }
 
-/** The doc-status line describes the specification, not the running agent. */
+/**
+ * The doc-status line describes the specification, not the running agent.
+ * Line endings are normalized first: a Windows checkout carries CRLF, and
+ * section headings are matched by whole line.
+ */
 function normalize(markdown: string): string {
   return markdown
+    .replace(/\r\n?/g, "\n")
     .split("\n")
     .filter((line) => !line.startsWith("Status:"))
     .join("\n")
