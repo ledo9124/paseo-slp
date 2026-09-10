@@ -17,7 +17,9 @@ Status: one manual run per provider of the preparation policy (P7), the daemon h
 
 Twenty-one runs on 2026-09-10 with the runner `packages/server/scripts/slp-p5-probe.ts`, `features.slp.handoff` off, isolated daemons, each on a fresh checkout with real defects and a runnable suite. Round one is nine Codex `gpt-6-astra` runs; round two re-ran two scenarios after the fixes those runs produced; round three is nine Codex `gpt-5.6-luna` runs that confirm the fix on the provider that showed the defect. A mixed topology is NOT_RUN, and Claude has one scenario only.
 
-Every run that reached a provider ended with the suite green and the right cause named, so the numbers compare cost and behavior, not correctness.
+The probe's stopping condition is quiet, not correctness: no member busy and no mail queued for 15 seconds. It records what happened; it does not decide pass or fail, and the elapsed column includes that quiet window. Every claim below was read off the transcripts and the mail records.
+
+Every run that had a defect to fix ended with the suite green and the right cause named. `tiny` is not one of them: it asks only for an error-message string, so a Lead that leaves the discount bug alone is right and the suite stays red. Both `tiny` runs did exactly that.
 
 ### Round one, Codex
 
@@ -55,7 +57,7 @@ The echo had a runtime cause, not a prompt cause: a member's `send_agent_prompt`
 - **The role text alone did not stop the echo.** The Codex `progress` re-run still returned the Lead's own words down, still labelled as Human's, which is what pointed at the runtime cause.
 - **With named mail the echo is gone.** In the Claude run the Supervisor received the Lead's message inside the system block, answered Human from what it held, and never forwarded the progress question. Mail fell from six to two. One run on a different provider cannot separate the fix from the provider; re-running Codex is blocked on that account's usage limit and is the first thing to do when it resets.
 - **The relay is not load-bearing on Claude.** That Lead mailed its own closing report. On Codex it never did, across six supervised runs.
-- **Claude cost about three times Codex** for the same scenario.
+- **Claude recorded about three times Codex's tokens** for the same scenario. The report counts tokens, not money, and does not split cached from uncached input, so this is not a price comparison.
 
 ### Round three, Codex on `gpt-5.6-luna`
 
@@ -72,11 +74,12 @@ The cheaper model, and the first Codex round after the named-mail fix. Every run
 | delegate | direct     | 177s    | -         | -                  | -       | 6         | 3     | 1,657,489 |
 
 - **The named-mail fix holds on Codex.** In `progress` the Supervisor answered "Đang tới đâu rồi?" itself, from the brief it had already sent, and did not wake the working Lead; the Lead's report arrived named and went up to Human as a report. No echo in any run. That closes the item round two could only show on Claude.
-- **The relay is not load-bearing on `gpt-5.6-luna`.** The Lead mailed its own closing report in every supervised run of this round, the contaminated one included, where `gpt-6-astra` never did in six. The relay stays: it is the floor for a Lead that does not report, and two of three tested configurations need it.
+- **The relay is not load-bearing on `gpt-5.6-luna`.** The Lead mailed its own closing report in every supervised run of this round, the contaminated one included. Across all three rounds the relay only ever fired on `gpt-6-astra`, which needed it in seven of its eight supervised runs; `gpt-5.6-luna` needed it in none of five and Claude in none of one. One model out of three, not two — the relay stays as the floor for a Lead that does not report, on the evidence of that one.
 - **This Lead delegates where `gpt-6-astra` declined.** Both `delegate` runs created three Peers and took their handbacks. The Peer path now has evidence from a Lead that chose it without being told to.
 - **Supervised still costs more and buys nothing here**: tiny 2.8x, peer 2.5x, delegate 1.8x, and Direct was faster in every scenario.
-- **The Lead, not the Supervisor, is the cost.** In `delegate` supervised the Lead alone spent 1,959,342 input tokens against the Supervisor's 377,674. It mailed the Supervisor 15 times: once per handback, again per duplicate handback, then a run of "final confirmation … No new action" messages, the last two of which came back in Hindi. Each of those wakes the Supervisor for a turn that carries no decision. The role text tells the Lead what to report and never when to stop; that is the next role-text change, and it is worth more than any topology tuning.
-- **A second handback per Peer is not waste.** The Lead's follow-up in both runs asked for a structured closing report after a mid-work first handback, and got it. The one-shot handback this branch replaced would have dropped exactly that turn.
+- **Every Peer result reached the Lead twice, and the runtime is why.** In `delegate` supervised the Lead took 14 turns while only 9 mails were addressed to it: five more turns came from Peers calling `send_agent_prompt` themselves, and the runtime then handed back the same turn's last message on top. slug delivered 2 messages and 3 handbacks, cart 2 and 3, dates 1 and 2, for three pieces of work. The Lead answered each duplicate with a mail upward ("Duplicate dates handback received…"), so one Peer's result could cost two Lead turns and two Supervisor turns. `slp/handbacks.ts` chooses this deliberately — one extra wake rather than a lost result, with the runtime not judging which turn ends carry work — and this is the first measurement of what that costs.
+- **The Lead reports upward on every input it receives.** 15 mails to the Supervisor across those 14 turns, ending in a run of "final confirmation … No new action" messages, the last two of which came back in Hindi after the Lead had accumulated 1,959,342 input tokens against the Supervisor's 377,674. Deduplicating the handback would remove about a third of these; the rest is the Lead having no stopping rule.
+- **A second handback per Peer is sometimes the result.** The Lead's follow-up in both runs asked for a structured closing report after a mid-work first handback, and got it, which the one-shot handback this branch replaced would have dropped. That is the case the every-turn rule exists for, and it is not the same case as a Peer that already mailed its result in the turn being handed back.
 
 ### A group does not share its model unless you configure it
 
@@ -87,8 +90,8 @@ The three Peers in the first pair of `delegate` runs launched on `gpt-6-astra` i
 - Keep the report relay. Two of the three tested configurations do not mail the report themselves.
 - Supervised is not justified for work of this size, on either Codex model. The comparison for work that earns a Peer is still open.
 - Do not reopen PR 6. Handoff is not the constraint.
-- The next role-text change is a stopping rule for the Lead's reporting, not anything about topology.
-- Still to run: the other scenarios on Claude, a mixed topology, and a task large enough that a Lead delegates every time.
+- The next change is in the runtime, not the role text: decide whether a Peer turn that already mailed the owner slot should also hand back. That question is open, and the measurement above is the argument for reopening it.
+- Still to run, after that: `delegate` repeated on one model to see whether the duplication accounts for the spread, a Peer that returns a weak result for the Lead to reject, a dependency or blocker signal, and the other scenarios on Claude. A mixed topology is still NOT_RUN. Chasing a task that makes a Lead delegate every time is not a goal; a Lead declining a Peer can be the right call.
 
 ## Results by gate
 
