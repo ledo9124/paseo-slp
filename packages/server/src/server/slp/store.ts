@@ -103,10 +103,13 @@ const SlpGroupEnvelopeSchema = z.object({
 });
 
 /**
- * One durable handback per Peer generation, registered before the Peer
- * exists. The destination is a slot, resolved at delivery time, so an owner
- * handoff between registration and completion cannot lose or misroute it.
- * See docs/slp/handoff.md#relationships-and-background-work.
+ * One durable handback record per Peer generation, registered before the Peer
+ * exists and living as long as the generation: every turn the Peer returns
+ * hands its last message to the owner, because a Lead's follow-up starts a
+ * new Peer turn and that answer is a handback too. The destination is a slot,
+ * resolved at delivery time, so an owner handoff between registration and a
+ * return cannot lose or misroute it. See
+ * docs/slp/handoff.md#relationships-and-background-work.
  */
 const SlpHandbackBaseSchema = z.object({
   id: z.string(),
@@ -117,25 +120,31 @@ const SlpHandbackBaseSchema = z.object({
   ownerSlotId: z.string(),
   /** Set by a transfer so a Peer close during the switch is not read as failure. */
   transferInProgress: z.boolean(),
+  /** Handbacks queued so far; the next mail id is derived from it. */
+  deliveries: z.number().int().nonnegative().default(0),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 
 const SlpHandbackOutcomeSchema = z.object({
-  reason: z.enum(["finished", "errored", "closed"]),
+  /** `returned` is a turn end, not assignment completion: the owner decides what the message is. */
+  reason: z.enum(["returned", "errored", "closed"]),
   at: z.string(),
 });
 export type SlpHandbackOutcome = z.infer<typeof SlpHandbackOutcomeSchema>;
 
 export const SlpHandbackSchema = z.discriminatedUnion("state", [
-  // Waiting for the Peer. After a daemon restart the owner is told once per boot.
+  // Watching the Peer. `turn` is set while a turn is running so a restart can
+  // tell an interrupted Peer from one idle between turns; the owner is told
+  // once per boot about the former.
   SlpHandbackBaseSchema.extend({
     state: z.literal("armed"),
+    turn: z.object({ startedAt: z.string() }).nullable().default(null),
     notice: z.object({ mailId: z.string(), at: z.string() }).nullable(),
   }),
-  // The Peer's outcome is recorded; its mail is not yet queued.
+  // An outcome is recorded; its mail is not yet queued. A `returned` outcome re-arms after queueing.
   SlpHandbackBaseSchema.extend({ state: z.literal("fired"), outcome: SlpHandbackOutcomeSchema }),
-  // The handback is in the owner slot's mailbox; that record carries the delivery state.
+  // Terminal: the Peer errored or closed and that mail is in the owner slot's mailbox.
   SlpHandbackBaseSchema.extend({
     state: z.literal("delivered"),
     outcome: SlpHandbackOutcomeSchema,

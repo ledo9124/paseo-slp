@@ -40,6 +40,23 @@ Keep the target for both providers even when one tier is blocked on an installat
 
 Start with one product-writing Peer per checkout. Increase concurrency only with measured need and write-ownership proof. Changing provider during handoff remains deferred.
 
+## Current sequence
+
+Decided on 2026-09-10 after reviewing the branch against the coordination conventions in hoangnb24/codex-room-setup. The role definitions are the right size; what is unproven is that the Supervisor–Lead–Peer loop is worth its cost, and P5 is the only thing that can prove it. Everything below is ordered by that.
+
+Before P5, in this order:
+
+1. Every turn a Peer returns hands back, and a restart reports only a Peer that was mid-turn. Done; see [handoff](handoff.md#relationships-and-background-work). Without it the Peer's answer to a Lead follow-up was never delivered.
+2. Codex members launch without Codex's own agent tools. Done; see [evidence](evidence.md#findings-that-changed-code-or-the-contract).
+3. A handoff feature flag, default off: with it off, `slp_checkpoint` and `slp_request_handoff` leave the member catalog and the checkpoint, handoff and successor paragraphs leave the composed prompt. The transfer journal, its recovery and the preparation policy stay as they are. Handoff is agent-initiated only and nothing measures context, so today every checkpoint written outside a handoff buys nothing; P5 should measure the lean prompt.
+4. Role text: a Lead brief names the evidence expected back and the conditions under which the chosen direction is reopened; a Peer raises a reopen, a dependency or a blocker as a named, short convention (what changed, the evidence, the decision needed). No mandatory accept/reject mail to the Peer: the Lead records its judgment where the work is recorded and mails the Peer only when the Peer has something left to do.
+
+Then P5, on the dev daemon with real tasks from this repository, Human at the keyboard, each row of the [scenarios](#role-evaluation-scenarios) once per provider and once mixed, and the same tasks once more in Direct mode as the cost comparator. Record per run: Human interventions, turns that carried no work (an acknowledgment, a "waiting" report, a relayed report the Supervisor had nothing to do with), token cost against Direct, and Human's judgment of the result. Count `report` mail separately from mail the Lead sent itself; that split decides the relay. Replace the evidence rows, do not append.
+
+P5 decides, in this order: whether the Lead report relay stays; which task shapes justify Supervised over Direct; whether PR 6 reopens and, if so, whether explicit handoff already suffices; which role text changes the observed failures demand.
+
+Frozen until P5 reports: PR 6, removing the report relay, any new relay or classifier, checkpoint guidance framed as crash recovery (the runtime reads checkpoints only inside a transfer).
+
 ## Probes
 
 | Probe | Question and method                                                                                                                                                          | Gate                                                                                     |
@@ -77,7 +94,7 @@ These are fixtures to run with real prompted agents. Expected behaviors are obse
 - All SLP message entrypoints preserve attachments and correlation IDs and use the same turn admission policy. Today they do not: three existing surfaces use three different turn behaviors, and only one is journaled for idempotency.
 - Normal mail during running, permission-blocked or transferring is queued; explicit stop reports its acknowledged outcome.
 - Supervisor progress reports do not trigger acknowledgment chains.
-- Peer handback and lifecycle events cannot create duplicate result delivery.
+- One handback mail per returned Peer turn, numbered, so a crash cannot queue the same return twice; a Peer that also mailed the Lead mid-turn wakes it twice by design.
 - A role's preparation or retirement event cannot be mistaken for assignment completion or acceptance.
 - Candidate preparation prevents writes and delegation on both providers, including conflicting Codex native options and Claude bypass/auto modes. Activation restores the source policy only after the durable switch.
 - Peer completion and Human messages during handoff retain their IDs and slot destination; confirmed delivery is not repeated, and unknown acceptance remains uncertain until reconciled.
@@ -112,7 +129,8 @@ Enumerate the guarantees not yet delivered, in each PR description. Standing ent
 - The provider preparation policy has one recorded live run per provider ([evidence](evidence.md)), outside CI, with one restart run per provider and no mixed topology. The activation notice has one live run per provider behind it.
 - On Codex, preparation does not deny third-party MCP tools; the read-only sandbox and never-approve policy cover native file, shell and delegation. On Claude, preparation is an allowlist of native reads plus Paseo tools.
 - Late recovery covers the daemon's own timeline: the tail is the rows after the checkpoint in the same epoch, at most 100 entries. Provider history is not retrieved, and a checkpoint written before a restart or reload must be rewritten before the handoff is accepted.
-- Handoff is agent-initiated only. Nothing measures context usage or asks a source to checkpoint; a source that never writes a checkpoint cannot hand off.
+- Handoff is agent-initiated only. Nothing measures context usage or asks a source to checkpoint; a source that never writes a checkpoint cannot hand off. Checkpoints are read only inside a transfer; a checkpoint written before a restart is not used to recover a running generation.
+- The Lead report relay skips a turn the Lead mailed on, so a result the Lead leaves in chat after a mid-turn note to the Supervisor is not relayed. The Peer handback does not skip.
 - A transfer that fails after it started stays `blocked` and holds its slot until the daemon restarts; the restart reconciles it against the group pointer.
 
 ## Proof and review discipline

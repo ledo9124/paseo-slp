@@ -32,7 +32,11 @@ export interface SlpHandbackRegistration {
 /**
  * The durable logical handback: registered before the Peer exists, re-armed
  * at boot, and addressed to the owner slot's mailbox so it can never cancel
- * the owner's live turn or bind to a retired generation. This replaces
+ * the owner's live turn or bind to a retired generation. It fires on every
+ * turn the Peer returns, not once: a Lead's follow-up starts a new Peer turn
+ * whose answer is a handback too. A Peer that also mailed the Lead during a
+ * turn produces one extra wake rather than a lost result; the runtime does
+ * not judge which turn ends carry work. This replaces
  * `setupFinishNotification` for SLP Peers; see
  * docs/slp/handoff.md#relationships-and-background-work for why that channel
  * cannot carry it.
@@ -77,6 +81,8 @@ export class SlpHandbackRegister {
       ...registration,
       state: "armed",
       transferInProgress: false,
+      deliveries: 0,
+      turn: null,
       notice: null,
       createdAt: at,
       updatedAt: at,
@@ -124,9 +130,9 @@ export class SlpHandbackRegister {
 
   /**
    * Boot: an armed handback whose Peer was never created is abandoned; one
-   * whose Peer exists lost its turn with the daemon, so the owner is told and
-   * the watch is re-armed; a fired handback whose mail was not yet queued is
-   * queued now.
+   * whose Peer exists is re-armed, and if the Peer was mid-turn the owner is
+   * told that the turn is lost; a fired handback whose mail was not yet
+   * queued is queued now.
    */
   async recover(peerExists: (record: SlpHandbackRecord) => boolean): Promise<void> {
     for (const { id, result } of await this.store.list()) {
@@ -141,7 +147,7 @@ export class SlpHandbackRegister {
         await this.abandon(record.peerAgentId);
       } else if (record.state === "armed") {
         this.arm(record.id, record.peerAgentId);
-        await this.inLane(record.id, () => this.notifyInterrupted(record));
+        if (record.turn) await this.inLane(record.id, () => this.notifyInterrupted(record));
       } else if (record.state === "fired") {
         await this.inLane(record.id, () => this.queueHandback(record));
       }
@@ -153,15 +159,23 @@ export class SlpHandbackRegister {
     this.watchers.clear();
   }
 
+  /**
+   * One subscription for the life of the record. It is not dropped between
+   * turns: the Peer's next turn can start while the previous handback is
+   * still being queued, and a gap would lose that turn's return.
+   */
   private arm(id: string, peerAgentId: string): void {
     this.stopWatching(id);
-    let hasSeenRunning = false;
+    let running = false;
     const stop = this.agentManager.subscribe(
       (event) => {
         if (event.type !== "agent_state") return;
         const lifecycle = event.agent.lifecycle;
         if (lifecycle === "running") {
-          if (event.agent.pendingPermissions.size === 0) hasSeenRunning = true;
+          if (!running && event.agent.pendingPermissions.size === 0) {
+            running = true;
+            void this.inLane(id, () => this.markTurnStarted(id));
+          }
           return;
         }
         // A stop, close or error while the Peer's slot is being handed off is
@@ -169,8 +183,9 @@ export class SlpHandbackRegister {
         if (this.records.get(id)?.transferInProgress) return;
         if (lifecycle === "error") {
           this.fire(id, "errored");
-        } else if (lifecycle === "idle" && hasSeenRunning) {
-          this.fire(id, "finished");
+        } else if (lifecycle === "idle" && running) {
+          running = false;
+          this.fire(id, "returned");
         } else if (lifecycle === "closed") {
           this.fire(id, "closed");
         }
@@ -180,13 +195,18 @@ export class SlpHandbackRegister {
     this.watchers.set(id, stop);
   }
 
+  private async markTurnStarted(id: string): Promise<void> {
+    const record = this.records.get(id);
+    if (record?.state !== "armed" || record.turn) return;
+    await this.persist({ ...record, turn: { startedAt: this.now().toISOString() } });
+  }
+
   private stopWatching(id: string): void {
     this.watchers.get(id)?.();
     this.watchers.delete(id);
   }
 
   private fire(id: string, reason: SlpHandbackOutcome["reason"]): void {
-    this.stopWatching(id);
     void this.inLane(id, async () => {
       const record = this.records.get(id);
       if (record?.state !== "armed") return;
@@ -200,24 +220,48 @@ export class SlpHandbackRegister {
     });
   }
 
-  /** The mail id is derived from the handback, so re-queueing after a crash is a no-op. */
+  /**
+   * The mail id is derived from the handback and its delivery count, so
+   * re-queueing after a crash is a no-op. A returned turn re-arms the record;
+   * an error or close ends it.
+   */
   private async queueHandback(
     record: Extract<SlpHandbackRecord, { state: "fired" }>,
   ): Promise<void> {
+    const terminal = record.outcome.reason !== "returned";
+    if (terminal) this.stopWatching(record.id);
+    const lastMessage = await this.agentManager.getLastAssistantMessage(record.peerAgentId);
+    if (!terminal && !lastMessage?.trim()) {
+      // A turn that left nothing behind is not a handback.
+      await this.persist({ ...baseOf(record), state: "armed", turn: null, notice: null });
+      return;
+    }
+    const deliveries = record.deliveries + 1;
     const mail = await this.mailbox.enqueue({
-      id: `${record.id}_handback`,
+      id: `${record.id}_handback_${deliveries}`,
       groupId: record.groupId,
       slotId: record.ownerSlotId,
       fromSlotId: record.peerSlotId,
       kind: "handback",
-      prompt: await this.describe(record, describeOutcome(record.outcome.reason)),
+      prompt: await this.describe(record, describeOutcome(record.outcome.reason), lastMessage),
     });
-    await this.persist({
-      ...baseOf(record),
-      state: "delivered",
-      outcome: record.outcome,
-      mailId: mail.id,
-    });
+    if (terminal) {
+      await this.persist({
+        ...baseOf(record),
+        deliveries,
+        state: "delivered",
+        outcome: record.outcome,
+        mailId: mail.id,
+      });
+    } else {
+      await this.persist({
+        ...baseOf(record),
+        deliveries,
+        state: "armed",
+        turn: null,
+        notice: null,
+      });
+    }
   }
 
   private async notifyInterrupted(
@@ -234,15 +278,19 @@ export class SlpHandbackRegister {
       prompt: await this.describe(
         record,
         "interrupted. The daemon restarted before this Peer's turn completed; the turn is lost. Re-drive the Peer or replace the assignment. Its handback will still arrive when a later turn ends.",
+        await this.agentManager.getLastAssistantMessage(record.peerAgentId),
       ),
     });
-    await this.persist({ ...record, notice: { mailId: mail.id, at } });
+    await this.persist({ ...record, turn: null, notice: { mailId: mail.id, at } });
   }
 
-  private async describe(record: SlpHandbackRecord, outcome: string): Promise<string> {
+  private async describe(
+    record: SlpHandbackRecord,
+    outcome: string,
+    lastMessage: string | null | undefined,
+  ): Promise<string> {
     const peer = await this.agentStorage.get(record.peerAgentId);
     const title = peer?.title ?? record.peerAgentId;
-    const lastMessage = await this.agentManager.getLastAssistantMessage(record.peerAgentId);
     const lines = [
       `SLP handback ${record.id}`,
       `Peer: ${title} (${record.peerAgentId})`,
@@ -286,6 +334,7 @@ function baseOf(record: SlpHandbackRecord) {
     peerAgentId: record.peerAgentId,
     ownerSlotId: record.ownerSlotId,
     transferInProgress: record.transferInProgress,
+    deliveries: record.deliveries,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };
@@ -293,8 +342,8 @@ function baseOf(record: SlpHandbackRecord) {
 
 function describeOutcome(reason: SlpHandbackOutcome["reason"]): string {
   switch (reason) {
-    case "finished":
-      return "finished; the last message below is the handback.";
+    case "returned":
+      return "returned its turn; the last message below is what it left for you. Decide whether it is a result, a question or a blocker. A returned turn is not assignment completion and not acceptance.";
     case "errored":
       return "errored before handing back.";
     case "closed":
