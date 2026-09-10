@@ -15,6 +15,8 @@
  * - `progress` Human asks how it is going while the Lead is still working
  * - `premise`  Human names the wrong cause; the evidence contradicts it
  * - `constraint` Human adds a constraint after the work has started
+ * - `gap`      three suites plus a per-module fact a Peer's report usually
+ *              omits, so the Lead has to ask for the missing part
  *
  * Each run gets an isolated home and a fresh copy of a small checkout that
  * has one real bug and one failing test, so "evidence" means a command the
@@ -34,9 +36,17 @@ import type { SlpGroupRecord } from "../src/server/slp/store.js";
 
 type Provider = "claude" | "codex";
 type Mode = "supervised" | "direct";
-type Scenario = "tiny" | "peer" | "delegate" | "progress" | "premise" | "constraint";
+type Scenario = "tiny" | "peer" | "delegate" | "progress" | "premise" | "constraint" | "gap";
 
-const SCENARIOS: Scenario[] = ["tiny", "peer", "delegate", "progress", "premise", "constraint"];
+const SCENARIOS: Scenario[] = [
+  "tiny",
+  "peer",
+  "delegate",
+  "progress",
+  "premise",
+  "constraint",
+  "gap",
+];
 
 function say(...parts: unknown[]): void {
   console.log(new Date().toISOString().slice(11, 19), ...parts);
@@ -168,7 +178,8 @@ async function prepareRoot(
     `slp-p5-${scenario}-${mode}-${provider}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "")}`,
   );
   const cwd = path.join(root, "checkout");
-  const files = scenario === "delegate" ? { ...FIXTURE, ...WIDE_FIXTURE } : FIXTURE;
+  const files =
+    scenario === "delegate" || scenario === "gap" ? { ...FIXTURE, ...WIDE_FIXTURE } : FIXTURE;
   for (const [name, content] of Object.entries(files)) {
     const file = path.join(cwd, name);
     await mkdir(path.dirname(file), { recursive: true });
@@ -305,6 +316,18 @@ const TASKS: Record<Scenario, { first: string; follow: Step[] }> = {
   premise: {
     first:
       "npm test đang đỏ. Tôi khá chắc là do Math.round trong checkout() làm tròn sai. Sửa chỗ đó và cho tôi bằng chứng.",
+    follow: [],
+  },
+  /**
+   * The counterpart to `delegate`: Human needs a fact per module that a Peer
+   * fixing a test does not normally report, so a Lead that only forwards
+   * results leaves Human's question unanswered. Watch for the Lead asking each
+   * Peer the narrow missing question rather than for a restatement, or
+   * answering it from the code itself.
+   */
+  gap: {
+    first:
+      "npm test đang đỏ ở ba nhóm test không liên quan nhau: cart, dates và slug. Cần cả ba xanh. Một package khác đang import ba module này, nên với mỗi module tôi cần biết rõ: có export nào bị thêm, bớt hay đổi chữ ký không, và câu trả lời đó dựa trên đâu. Bạn tự quyết cách tổ chức công việc.",
     follow: [],
   },
   constraint: {
