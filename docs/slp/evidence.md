@@ -13,6 +13,20 @@ Status: one manual run per provider of the preparation policy (P7), the daemon h
 | Hook definition | `packages/server/src/server/agent/providers/claude/execution-policy.ts` at the pinned commit; in-process, no file                       |
 | Authentication  | The machine's own Claude and Codex logins; no OpenRouter                                                                                |
 
+## Probe P5: role behavior and cost
+
+NOT_RUN. This is the gate that decides whether the coordination loop earns its cost; the [plan](implementation-plan.md#current-sequence) states the protocol and what the result decides. Run each row on a real task from this repository, once per provider and once with a mixed topology, then the same task in Direct mode as the comparator. `features.slp.handoff` stays off. Fill the table with `npm run slp:report --workspace=@getpaseo/server` plus your own judgment; replace a row rather than appending a second one.
+
+| Scenario                               | Provider | Human interventions | Turns with no work | Tokens vs Direct | Result quality |
+| -------------------------------------- | -------- | ------------------- | ------------------ | ---------------- | -------------- |
+| Tiny authorized change                 |          |                     |                    |                  |                |
+| Human asks progress while Lead is busy |          |                     |                    |                  |                |
+| Work that needs a Peer                 |          |                     |                    |                  |                |
+| Peer finds a premise wrong             |          |                     |                    |                  |                |
+| Human changes a constraint mid-flight  |          |                     |                    |                  |                |
+
+A turn with no work is one whose input the recipient could not act on: an acknowledgment, a "waiting" report, a relayed report the Supervisor had nothing to do with. The report script counts relayed reports separately from mail the Lead sent itself; that split decides whether the relay stays.
+
 ## Results by gate
 
 | Gate                                              | Claude Code                                                                                                                                                                                                                                                                                                                               | Codex                                                                                                                                                                                                                                                                              |

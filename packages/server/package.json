@@ -45,6 +45,7 @@
     "typecheck": "tsgo -p tsconfig.server.typecheck.json --noEmit",
     "generate:config-schema": "tsx scripts/generate-config-schema.ts",
     "measure:agent-tools": "tsx scripts/measure-agent-tools-context.ts",
+    "slp:report": "tsx scripts/slp-run-report.ts",
     "measure:git-observation": "tsx scripts/measure-git-observation.ts",
     "measure:file-observer": "tsx scripts/measure-file-observer.ts",
     "repro:file-observer-teardown": "tsx scripts/reproduce-file-observer-teardown.ts",
