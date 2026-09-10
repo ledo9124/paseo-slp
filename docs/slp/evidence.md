@@ -15,7 +15,7 @@ Status: one manual run per provider of the preparation policy (P7), the daemon h
 
 ## Probe P5: role behavior and cost
 
-Twenty-five runs on 2026-09-10 with the runner `packages/server/scripts/slp-p5-probe.ts`, `features.slp.handoff` off, isolated daemons, each on a fresh checkout with real defects and a runnable suite. Round one is nine Codex `gpt-6-astra` runs; round two re-ran two scenarios after the fixes those runs produced; round three is nine Codex `gpt-5.6-luna` runs that confirm the fix on the provider that showed the defect; round four is four more of them measuring what removing the Peer's second channel did. A mixed topology is NOT_RUN, and Claude has one scenario only.
+Twenty-nine runs on 2026-09-10 with the runner `packages/server/scripts/slp-p5-probe.ts`, `features.slp.handoff` off, isolated daemons, each on a fresh checkout with real defects and a runnable suite. Round one is nine Codex `gpt-6-astra` runs; round two re-ran two scenarios after the fixes those runs produced; round three is nine Codex `gpt-5.6-luna` runs that confirm the fix on the provider that showed the defect; round four is four more of them measuring what removing the Peer's second channel did; round five tests the Lead rule that came out of round four. A mixed topology is NOT_RUN, and Claude has one scenario only.
 
 The probe's stopping condition is quiet, not correctness: no member busy and no mail queued for 15 seconds. It records what happened; it does not decide pass or fail, and the elapsed column includes that quiet window. Every claim below was read off the transcripts and the mail records.
 
@@ -100,6 +100,22 @@ The cheaper model, and the first Codex round after the named-mail fix. Every run
 - **Supervised over Direct is now about 1.3x**, down from 1.8x. Parity is not the target and this is not parity; what left the total was turns spent on input the runtime had already delivered.
 - **The remaining waste is the Lead asking for a report it already had.** Traced end to end in the second supervised run, whose Lead took exactly 7 turns for 7 mails. The slug assignment asked for "failures, root cause, changes, commands/results, blockers"; the Peer's first handback delivered the failing test, expected against actual, the root cause and the change. The Lead then mailed "finalize your independent report with the failing test, concrete root-cause evidence, exact change, and relevant test command/result" — the same list — and the second handback is that content reformatted, with nothing new. Three Peers, so three Peer turns, three Lead turns and three Supervisor turns for no new information.
 - **The relay is the last of those three turns, not the cause of them.** Both supervised runs ended with three relayed reports, where round three relayed none on this model: the Lead has nothing to do with a reformatted report, ends its turn silent, and the relay wakes the Supervisor with a restatement. Turning the relay off would remove the Supervisor turn and leave the Peer turn and the Lead turn in place. The relay's floor rule still cannot tell a turn with nothing new from a turn whose report the Lead forgot to send, and that question is open — but on this evidence it is the smaller half of a Lead-side problem, not the problem.
+
+### Round five: judging a handback on its evidence
+
+Two `delegate` runs, supervised, `gpt-5.6-luna`, with the Lead told to judge a handback on the evidence it carries and to re-ask only for something missing. The relay was left on so the two changes stay separable.
+
+| Run           | Handbacks | Lead -> Peer | Mail | Lead -> Sup, its own | Relayed | Tokens    |
+| ------------- | --------- | ------------ | ---- | -------------------- | ------- | --------- |
+| 1             | 6         | 3            | 18   | 8                    | 0       | 1,844,582 |
+| 2             | 3         | 0            | 10   | 6                    | 0       | 1,568,597 |
+| round four, 1 | 6         | 3            | 19   | 6                    | 3       | 1,665,255 |
+| round four, 2 | 6         | 3            | 18   | 5                    | 3       | 1,657,869 |
+
+- **One run of two followed the rule.** Run 2 took one handback per Peer, asked nothing back and accepted on what it had: 10 mails against 18 and 19, and 1,568,597 tokens. Run 1 did the thing the rule names, three seconds after a handback that already carried the root cause, the change and `node --test` output: "Please send your concise final handback now with cart failure, root cause, evidence, change, and command/result." Its total went up, not down.
+- **So the rule is not established.** Two runs, one each way, on a text change with no runtime enforcement behind it. The right reading is that the behavior is reachable and not yet reliable, and a third and fourth run decide whether the text needs to be sharper or the problem needs something other than text.
+- **The relay went quiet in both runs.** Round four's three relayed reports per run became zero: the Lead now mails the Supervisor itself on the turns that used to end silent. The tail did not shrink, it changed hands again — 8 and 6 own messages upward. Nothing here says the relay's rule is right; it says the relay was carrying a Lead behavior rather than causing it.
+- **The `gap` counterpart is NOT_RUN.** Both attempts returned `Selected model is at capacity. Please try a different model.` before the Lead's first turn, so there is no evidence yet that the rule leaves a Lead able to ask for something genuinely missing.
 
 ### A group does not share its model unless you configure it
 
