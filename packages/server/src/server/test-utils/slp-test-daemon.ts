@@ -2,7 +2,10 @@ import path from "node:path";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "../agent/agent-manager.js";
+import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import { AgentStorage } from "../agent/agent-storage.js";
+import { validateProviderOptions } from "../agent/provider-options.js";
+import { CodexProviderOptionsSchema } from "../agent/providers/codex/options.js";
 import { AgentRequests } from "../agent/requests/index.js";
 import {
   createAgentCommand,
@@ -49,6 +52,19 @@ export async function startSlpTestDaemon(options: SlpTestDaemonOptions): Promise
   const claude = createHeldTurnClient({ provider: "claude", releaseText: options.releaseText });
   const manager = new AgentManager({
     clients: { codex: client, claude },
+    // Codex members launch with provider options (`slp/launch.ts`), which the
+    // manager only accepts from a definition that validates them.
+    providerDefinitions: {
+      codex: {
+        enabled: true,
+        validateOptions: (providerOptions) =>
+          validateProviderOptions("codex", CodexProviderOptionsSchema, providerOptions),
+        applyOptions: (config: AgentSessionConfig, providerOptions) => ({
+          ...config,
+          ...(providerOptions ? { providerOptions } : {}),
+        }),
+      },
+    },
     registry: storage,
     logger,
   });

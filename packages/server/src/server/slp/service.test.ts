@@ -260,7 +260,8 @@ describe("SlpService", () => {
           model: "gpt-6",
           modeId: "full-access",
           thinkingOptionId: null,
-          providerOptions: null,
+          // A Codex member always launches without Codex's own agent tools.
+          providerOptions: { agents: { enabled: false } },
         },
       ],
     ]);

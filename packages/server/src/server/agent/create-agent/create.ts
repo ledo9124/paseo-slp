@@ -26,6 +26,7 @@ import {
   emitLiveTimelineItemIfAgentKnown,
 } from "../timeline-append.js";
 import { resolveCreateAgentIntent } from "./intent.js";
+import { withSlpProviderOptions } from "../../slp/launch.js";
 
 export interface CreateAgentSessionWorktreeResult {
   sessionConfig: AgentSessionConfig;
@@ -231,13 +232,19 @@ export async function createAgentCommand(
   if (!peer) {
     return runCreateAgent(dependencies, input, null);
   }
+  const launch = applyPeerLaunch(input, peer.launch);
+  const providerOptions = withSlpProviderOptions(launch.provider, input.config?.providerOptions);
   const peerInput: CreateAgentFromMcpInput = {
     ...input,
-    ...applyPeerLaunch(input, peer.launch),
+    ...launch,
     agentId: peer.agentId,
     notifyOnFinish: false,
     labels: { ...input.labels, ...peer.labels },
-    config: { ...input.config, systemPrompt: peer.systemPrompt },
+    config: {
+      ...input.config,
+      systemPrompt: peer.systemPrompt,
+      ...(providerOptions ? { providerOptions } : {}),
+    },
   };
   try {
     return await runCreateAgent(dependencies, peerInput, slp);

@@ -16,6 +16,13 @@ const hubPolicy = {
 };
 
 describe("provider-owned option schemas", () => {
+  test("accepts the Codex agents table that removes its native multi-agent tools", () => {
+    expect(CodexProviderOptionsSchema.parse({ agents: { enabled: false } })).toEqual({
+      agents: { enabled: false },
+    });
+    expect(() => CodexProviderOptionsSchema.parse({ agents: { max_depth: 0 } })).toThrow();
+  });
+
   test("accepts Codex native workspace-write and network policy nesting", () => {
     expect(
       CodexProviderOptionsSchema.parse({

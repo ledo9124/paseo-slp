@@ -16,6 +16,7 @@ import {
   type SlpRelation,
 } from "./authority.js";
 import { SlpCheckpointStore } from "./checkpoints.js";
+import { withSlpProviderOptions } from "./launch.js";
 import {
   SlpDelegationUnavailableError,
   SlpGenerationRetiredError,
@@ -173,7 +174,17 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     this.agentManager = options.agentManager;
     this.agentStorage = options.agentStorage;
     this.agentRequests = options.agentRequests;
-    this.createMemberAgent = options.createMemberAgent;
+    this.createMemberAgent = (input) =>
+      options.createMemberAgent({
+        ...input,
+        source: {
+          ...input.source,
+          providerOptions: withSlpProviderOptions(
+            input.source.provider,
+            input.source.providerOptions,
+          ),
+        },
+      });
     this.roleSettings = options.roleSettings;
     this.isDelegationToolingEnabled = options.isDelegationToolingEnabled;
     this.instructionsDir = options.instructionsDir ?? resolveBundledSlpRolesDir();

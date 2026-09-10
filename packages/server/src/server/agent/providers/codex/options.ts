@@ -49,6 +49,10 @@ export const CodexProviderOptionsSchema = z
       .strict()
       .optional(),
     web_search: z.enum(["disabled", "cached", "indexed", "live"]).optional(),
+    // `agents.enabled = false` is the switch that removes Codex's own
+    // multi-agent (`collaboration.*`) tools; the `features.multi_agent*`
+    // flags only trade one tool set for another.
+    agents: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     features: z
       .object({
         network_proxy: z.union([z.boolean(), NetworkPolicySchema]).optional(),
