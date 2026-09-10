@@ -9,6 +9,7 @@ import {
   Import as ImportIcon,
   Settings,
   SquarePen,
+  Users,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
@@ -40,6 +41,7 @@ const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedImport = withUnistyles(ImportIcon);
 const ThemedSettings = withUnistyles(Settings);
+const ThemedUsers = withUnistyles(Users);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -49,6 +51,7 @@ const MENU_NEW_TERMINAL_ICON = <TerminalProfileIcon iconKey={undefined} size={16
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
 const MENU_SETTINGS_ICON = <ThemedSettings size={16} uniProps={mutedColorMapping} />;
+const MENU_SLP_ICON = <ThemedUsers size={16} uniProps={mutedColorMapping} />;
 function WorkspaceHeaderMenuTriggerIcon() {
   return (
     <ThemedEllipsis
@@ -78,6 +81,8 @@ export interface WorkspaceHeaderWorkspaceActions {
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
+  /** Present only while this workspace runs an SLP group that can be ended. */
+  onEndSlpGroup?: () => void;
 }
 
 function WorkspaceHeaderWorkspaceActionItems({
@@ -89,6 +94,7 @@ function WorkspaceHeaderWorkspaceActionItems({
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
+  onEndSlpGroup,
 }: WorkspaceHeaderWorkspaceActions) {
   const { t } = useTranslation();
   return (
@@ -127,6 +133,18 @@ function WorkspaceHeaderWorkspaceActionItems({
             onSelect={onOpenSetupTab}
           >
             {t("workspace.header.actions.showSetup")}
+          </DropdownMenuItem>
+        </>
+      ) : null}
+      {onEndSlpGroup ? (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            testID="workspace-header-end-slp-group"
+            leading={MENU_SLP_ICON}
+            onSelect={onEndSlpGroup}
+          >
+            {t("slp.end.menu")}
           </DropdownMenuItem>
         </>
       ) : null}

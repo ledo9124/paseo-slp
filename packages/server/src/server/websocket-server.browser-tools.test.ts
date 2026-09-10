@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
+import type { AgentRequests } from "./agent/requests/index.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
@@ -292,6 +293,7 @@ function createVoiceAssistantWebSocketServer(params: {
     "srv-test",
     createStub<AgentManager>(agentManager),
     createStub<AgentStorage>({}),
+    createStub<AgentRequests>({}),
     createStub<DownloadTokenStore>({}),
     "/tmp/paseo-browser-tools-websocket-test",
     createStub<DaemonConfigStore>(daemonConfigStore),

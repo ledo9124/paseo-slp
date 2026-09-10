@@ -127,6 +127,63 @@ Or persist it in `config.json`:
 
 When enabled, open the daemon HTTP origin, for example `http://localhost:6767/`, to load the web app. Static UI files load without daemon auth; API and WebSocket requests still require the configured password.
 
+## SLP groups
+
+Supervisor–Lead–Peer groups are on by default. Turn them off to hide the feature from clients and refuse new groups; groups that already exist keep their recovery and archive gates.
+
+```bash
+PASEO_SLP_ENABLED=false paseo daemon start
+```
+
+Or persist it in `config.json`:
+
+```json
+{
+  "features": {
+    "slp": {
+      "enabled": false
+    }
+  }
+}
+```
+
+Same-role handoff (an agent checkpoints and asks Paseo to replace its session with a fresh one in the same role) is off by default. Turn it on to give group members the `slp_checkpoint` and `slp_request_handoff` tools and the handoff section of their role instructions:
+
+```bash
+PASEO_SLP_HANDOFF=true paseo daemon start
+```
+
+```json
+{
+  "features": {
+    "slp": {
+      "handoff": true
+    }
+  }
+}
+```
+
+Each role can launch with its own provider, model and permission mode, and carry extra instructions appended to its bundled prompt. Set them under `features.slp.roles` or in the app under Settings → host → SLP roles. A role without settings launches with the provider, model and permission mode the composer showed when the group started; a configured provider replaces the composer's model and mode with the configured ones.
+
+```json
+{
+  "features": {
+    "slp": {
+      "roles": {
+        "supervisor": { "provider": "claude", "model": "claude-opus-5" },
+        "lead": {
+          "provider": "codex",
+          "model": "gpt-6-astra",
+          "thinkingOptionId": "high",
+          "modeId": "full-access"
+        },
+        "peer": { "instructions": "Report in Vietnamese. Keep handbacks under ten lines." }
+      }
+    }
+  }
+}
+```
+
 ## Logging
 
 Daemon logging uses separate console and file sinks by default:

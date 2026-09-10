@@ -214,6 +214,96 @@ export const en = {
       proposedPlan: "Proposed plan",
     },
   },
+  slp: {
+    roles: {
+      supervisor: "Supervisor",
+      lead: "Lead",
+      peer: "Peer",
+    },
+    modes: {
+      direct: "Direct",
+      supervised: "Supervised",
+    },
+    composer: {
+      title: "Workspace mode",
+      hint: "Choose how this workspace works before its first message.",
+      selectWithValue: "Workspace mode: {{value}}",
+      options: {
+        single: { label: "Single agent", hint: "One agent, no roles." },
+        direct: {
+          label: "Direct",
+          hint: "You talk to the Lead. It does small work itself or delegates to Peers.",
+        },
+        supervised: {
+          label: "Supervised",
+          hint: "You talk to a Supervisor. The Lead coordinates the engineering.",
+        },
+      },
+      locked: {
+        group: "Fixed once the group exists. End the group to choose again.",
+        agents: "Fixed while the workspace has agents. Archive them to choose again.",
+      },
+      errors: {
+        emptyMessage: "Write the first message for the group.",
+      },
+      failed: "The host refused to start the group.",
+    },
+    end: {
+      menu: "End SLP group",
+      confirmTitle: "End SLP group?",
+      confirmMessage: "Every member is archived and the workspace mode opens again.",
+      confirm: "End group",
+      failed: "The host refused to end the group.",
+    },
+    settings: {
+      title: "SLP roles",
+      intro:
+        "How each role launches when a group starts. A role without settings uses the provider, model and permission mode the composer showed.",
+      defaultSummary: "Uses the composer's provider, model and permission mode.",
+      launchSection: "Launch",
+      instructionsSection: "Instructions",
+      thinkingLabel: "Thinking",
+      noThinkingOptions: "This model has no thinking levels",
+      bundledRoleLabel: "{{role}} instructions",
+      bundledSharedLabel: "Shared SLP instructions",
+      bundledAlwaysApplied: "always applied",
+      bundledLoading: "Loading bundled instructions…",
+      bundledUnavailable: "Bundled instructions could not be loaded.",
+      extraPreview: "Extra: {{text}}",
+      bundledOnly: "Bundled instructions only.",
+      descriptions: {
+        supervisor:
+          "Your contact in Supervised mode. Holds your intent, briefs the Lead and reports back.",
+        lead: "Engineering authority. Reads the project, plans, delegates to Peers and accepts results.",
+        peer: "One bounded assignment from the Lead, returned as a handback.",
+      },
+      defaultWith: "Composer default: {{value}}",
+      hasInstructions: "Has extra instructions.",
+      edit: "Edit",
+      reset: "Use composer defaults",
+      editTitle: "{{role}} settings",
+      instructionsLabel: "Extra instructions",
+      instructionsHint: "Appended to the role's bundled instructions.",
+      instructionsPlaceholder: "Answer in Vietnamese. Keep reports under ten lines.",
+      unavailable: "This host does not support SLP groups.",
+    },
+    banner: {
+      title: "{{role}} · {{mode}} mode · generation {{number}}",
+      contact: "your contact for this workspace",
+      initializing: "The group is still initializing; its first message is being delivered.",
+      receiptUncertain:
+        "After a restart, the host cannot tell whether the first message reached this agent. Check its history before resending.",
+      frozen: "This group is frozen: {{reason}}",
+      transferSource:
+        "Handing off: this agent stops after its checkpoint and retires once its successor is ready.",
+      transferCandidate: "Preparing to take over: read-only until the host activates it.",
+      transferBlocked: "Handoff blocked: {{reason}}. Restart the host to reconcile it.",
+      retired: "Retired generation. The slot's current agent continues the work.",
+      openCurrent: "Open current {{role}}",
+      mailUncertain: "Messages with uncertain delivery: {{count}}",
+      mailQueued: "Messages waiting for a turn: {{count}}",
+    },
+  },
   agentPanel: {
     states: {
       notFound: "Agent not found",
@@ -1994,6 +2084,7 @@ export const en = {
       providers: "Providers",
       usage: "Usage",
       terminals: "Terminals",
+      slp: "SLP roles",
       plugins: "Plugins",
       host: "Overview",
     },

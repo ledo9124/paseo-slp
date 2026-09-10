@@ -217,6 +217,97 @@ export const ptBR: TranslationResources = {
       proposedPlan: "Plano proposto",
     },
   },
+  slp: {
+    roles: {
+      supervisor: "Supervisor",
+      lead: "Líder",
+      peer: "Par",
+    },
+    modes: {
+      direct: "Direto",
+      supervised: "Supervisionado",
+    },
+    composer: {
+      title: "Modo do workspace",
+      hint: "Escolha como este workspace funciona antes da primeira mensagem.",
+      selectWithValue: "Modo do workspace: {{value}}",
+      options: {
+        single: { label: "Agente único", hint: "Um agente, sem papéis." },
+        direct: {
+          label: "Direto",
+          hint: "Você fala com o Lead. Ele faz trabalhos pequenos sozinho ou delega aos Peers.",
+        },
+        supervised: {
+          label: "Supervisionado",
+          hint: "Você fala com um Supervisor. O Lead coordena a engenharia.",
+        },
+      },
+      locked: {
+        group: "Fixo enquanto o grupo existir. Encerre o grupo para escolher de novo.",
+        agents: "Fixo enquanto o workspace tiver agentes. Arquive-os para escolher de novo.",
+      },
+      errors: {
+        emptyMessage: "Escreva a primeira mensagem para o grupo.",
+      },
+      failed: "O host recusou iniciar o grupo.",
+    },
+    end: {
+      menu: "Encerrar grupo SLP",
+      confirmTitle: "Encerrar o grupo SLP?",
+      confirmMessage: "Todos os membros são arquivados e o modo do workspace volta a ficar livre.",
+      confirm: "Encerrar grupo",
+      failed: "O host recusou encerrar o grupo.",
+    },
+    settings: {
+      title: "Papéis SLP",
+      intro:
+        "Como cada papel é iniciado quando um grupo começa. Um papel sem configuração usa o provedor, o modelo e o modo de permissão mostrados no compositor.",
+      launchSection: "Inicialização",
+      instructionsSection: "Instruções",
+      thinkingLabel: "Raciocínio",
+      noThinkingOptions: "Este modelo não tem níveis de raciocínio",
+      bundledRoleLabel: "Instruções de {{role}}",
+      bundledSharedLabel: "Instruções SLP compartilhadas",
+      bundledAlwaysApplied: "sempre aplicadas",
+      bundledLoading: "Carregando instruções incluídas…",
+      bundledUnavailable: "Não foi possível carregar as instruções incluídas.",
+      extraPreview: "Extra: {{text}}",
+      bundledOnly: "Somente instruções incluídas.",
+      descriptions: {
+        supervisor:
+          "Seu contato no modo supervisionado. Guarda sua intenção, orienta o Lead e reporta.",
+        lead: "Autoridade de engenharia. Lê o projeto, planeja, delega a Peers e aceita resultados.",
+        peer: "Uma tarefa delimitada do Lead, devolvida como handback.",
+      },
+      defaultWith: "Padrão do compositor: {{value}}",
+      defaultSummary: "Usa o provedor, o modelo e o modo de permissão do compositor.",
+      hasInstructions: "Tem instruções extras.",
+      edit: "Editar",
+      reset: "Usar padrões do compositor",
+      editTitle: "Configurações de {{role}}",
+      instructionsLabel: "Instruções extras",
+      instructionsHint: "Anexadas às instruções incluídas do papel.",
+      instructionsPlaceholder:
+        "Responda em português. Mantenha os relatórios com menos de dez linhas.",
+      unavailable: "Este host não oferece suporte a grupos SLP.",
+    },
+    banner: {
+      title: "{{role}} · modo {{mode}} · geração {{number}}",
+      contact: "seu contato neste workspace",
+      initializing: "O grupo ainda está inicializando; sua primeira mensagem está sendo entregue.",
+      receiptUncertain:
+        "Após um reinício, o host não consegue saber se a primeira mensagem chegou a este agente. Verifique o histórico antes de reenviar.",
+      frozen: "Este grupo está congelado: {{reason}}",
+      transferSource:
+        "Transferência em andamento: este agente para após o checkpoint e se aposenta quando o sucessor estiver pronto.",
+      transferCandidate: "Preparando-se para assumir: somente leitura até o host ativá-lo.",
+      transferBlocked: "Transferência bloqueada: {{reason}}. Reinicie o host para reconciliá-la.",
+      retired: "Geração aposentada. O agente atual da vaga continua o trabalho.",
+      openCurrent: "Abrir {{role}} atual",
+      mailUncertain: "Mensagens com entrega incerta: {{count}}",
+      mailQueued: "Mensagens aguardando um turno: {{count}}",
+    },
+  },
   agentPanel: {
     states: {
       notFound: "Agente não encontrado",
@@ -1981,6 +2072,7 @@ export const ptBR: TranslationResources = {
       providers: "Provedores",
       usage: "Uso",
       terminals: "Terminais",
+      slp: "Papéis SLP",
       plugins: "Plugins",
       host: "Visão geral",
     },

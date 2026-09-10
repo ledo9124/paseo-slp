@@ -33,7 +33,14 @@ export interface ArchiveDependencies {
   paseoWorktreesBaseRoot?: string;
   github: ForgeService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
-  agentManager: Pick<AgentManager, "listAgents" | "getAgent" | "archiveAgent" | "archiveSnapshot">;
+  agentManager: Pick<
+    AgentManager,
+    | "listAgents"
+    | "getAgent"
+    | "archiveAgent"
+    | "archiveSnapshot"
+    | "assertWorkspaceDestructiveOperationAllowed"
+  >;
   agentStorage: Pick<AgentStorage, "listByWorkspace">;
   // Resolves the worktree at a path to its workspaceId for archive-by-path. The
   // path uniquely identifies a worktree workspace; this is a directory lookup for
@@ -133,6 +140,12 @@ async function archiveByScopeWithPriority(
 ): Promise<ArchiveResult> {
   const target = await resolveArchiveTarget(dependencies, request.scope);
   const targetWorkspaceIds = target.workspaceIds;
+
+  // Group gate before any effect: a held SLP group refuses the whole teardown,
+  // not only the per-agent archives that would otherwise be logged and skipped.
+  for (const workspaceId of targetWorkspaceIds) {
+    dependencies.agentManager.assertWorkspaceDestructiveOperationAllowed(workspaceId);
+  }
 
   await stopWorkspaceSetups(dependencies, target.setupWorkspaceIds, request.requestId);
 

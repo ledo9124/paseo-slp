@@ -1,6 +1,6 @@
 # SLP design and role instructions
 
-Status: agreed design direction and instruction drafts for this fork. No SLP runtime, provider hook, checkpoint tool, or compatibility guarantee is implemented by this documentation change.
+Status: agreed design direction, with the runtime through explicit same-role handoff implemented in `packages/server/src/server/slp/` (the handoff tools and instructions sit behind `features.slp.handoff`, off by default); see the [implementation plan](implementation-plan.md) for what is landed. No provider hook, proactive trigger, client entrypoint or compatibility guarantee exists yet; the preparation policy has one recorded live run per provider ([evidence](evidence.md)).
 
 The architecture, handoff, provider and plan documents record the source survey and its review against fork commit `dee2a8d405e02ada2658e674372407f439788bea`. Distinguish verified code behavior, target contracts and provider probes. An absent adapter integration does not establish that the provider cannot support it.
 
@@ -11,9 +11,10 @@ The user chose Supervisor–Lead–Peer to separate Human conversation, project 
 | Document                                      | Owns                                                                               |
 | --------------------------------------------- | ---------------------------------------------------------------------------------- |
 | [Architecture](architecture.md)               | Scope, fixed workspace mode, identity, routing, runtime boundaries and integration |
+| [Admission](admission.md)                     | Turn-admission lanes, lock ordering, and what PR 1 changed                         |
 | [Handoff](handoff.md)                         | Checkpoints, generation transfer, recovery and compaction interception             |
 | [Provider support](providers.md)              | Claude Code/Codex evidence, adapter differences and compatibility proof            |
-| [Shared instructions](roles/common.md)        | Common agent behavior, authority, repository use and handoff behavior              |
+| [Shared instructions](roles/common.md)        | Principles shared by all three roles                                               |
 | [Supervisor](roles/supervisor.md)             | Human intent, conversation, visibility and escalation                              |
 | [Lead](roles/lead.md)                         | Project decisions, bounded delegation, integration and acceptance                  |
 | [Peer](roles/peer.md)                         | Independent bounded work and evidence-backed handback                              |
@@ -27,9 +28,9 @@ The user chose Supervisor–Lead–Peer to separate Human conversation, project 
 | Lead       | Project coherence and engineering judgment | Becoming a task router, biasing independent investigations, treating Peer completion as acceptance |
 | Peer       | Bounded independent technical judgment     | Agreeing without evidence, expanding scope, self-accepting the project result                      |
 
-Load shared instructions plus one role file, not all three roles. Keep assignment context separate from stable role instructions. Snapshot the effective instructions for a generation; a same-role handoff preserves them. User edits apply to future sessions through an explicit configuration path, not an unnoticed live prompt replacement. Prompt text does not enforce provider sandbox or runtime ownership.
+Load shared principles plus one role file, not all three roles. Each role file contains its identity, responsibility and authority boundaries, followed by the Paseo operations it needs. Keep communication and handoff instructions with that role; the shared file contains only principles all three roles need. The task and applicable project guidance determine the workflow and methods. Snapshot the effective instructions for a generation; a same-role handoff preserves them. User edits apply to future sessions through an explicit configuration path, not an unnoticed live prompt replacement. Prompt text does not enforce provider sandbox or runtime ownership.
 
-The role drafts deliberately leave decision quality, neutral delegation, and independent critique in instructions. The architecture owns deterministic boundaries that prompts cannot supply: identity, message delivery, lifecycle, and tool access. The implementation plan defines scenarios to test both kinds of behavior without claiming that a prompt guarantees compliance.
+The role instructions deliberately leave decision quality, neutral delegation, and independent critique in instructions. The architecture owns deterministic boundaries that prompts cannot supply: identity, message delivery, lifecycle, and tool access. The implementation plan defines scenarios to test both kinds of behavior without claiming that a prompt guarantees compliance.
 
 ## Authority and scope
 

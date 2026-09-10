@@ -75,6 +75,8 @@ import {
   type ClaudeProviderOptions,
 } from "./options.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
+import { buildExecutionPolicyHooks } from "./execution-policy.js";
+import { mergeClaudeHooks } from "./hooks.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
@@ -93,6 +95,7 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
+  type AgentExecutionPolicy,
   type AgentFeature,
   type AgentLaunchContext,
   type AgentMetadata,
@@ -413,6 +416,7 @@ interface ClaudeAgentSessionOptions {
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
+  resolveExecutionPolicy?: () => AgentExecutionPolicy;
   persistSession?: boolean;
   logger: Logger;
   queryFactory?: ClaudeQueryFactory;
@@ -1528,6 +1532,7 @@ export class ClaudeAgentClient implements AgentClient {
       runtimeSettings: this.runtimeSettings,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
+      resolveExecutionPolicy: launchContext?.resolveExecutionPolicy,
       persistSession: options?.persistSession,
       logger: this.logger,
       queryFactory: this.queryFactory,
@@ -1557,6 +1562,7 @@ export class ClaudeAgentClient implements AgentClient {
       handle,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
+      resolveExecutionPolicy: launchContext?.resolveExecutionPolicy,
       logger: this.logger,
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
@@ -2030,6 +2036,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly config: ClaudeAgentConfig;
   private readonly launchEnv?: Record<string, string>;
   private readonly agentId?: string;
+  private readonly resolveExecutionPolicy?: () => AgentExecutionPolicy;
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly persistSession?: boolean;
@@ -2108,6 +2115,7 @@ class ClaudeAgentSession implements AgentSession {
     assertClaudeThinkingOptionSupported(config.model, config.thinkingOptionId);
     this.launchEnv = options.launchEnv;
     this.agentId = options.agentId;
+    this.resolveExecutionPolicy = options.resolveExecutionPolicy;
     this.defaults = options.defaults;
     this.runtimeSettings = options.runtimeSettings;
     this.persistSession = options.persistSession;
@@ -3303,7 +3311,7 @@ class ClaudeAgentSession implements AgentSession {
       ...settingsOptions,
       // Provider subagent panes render the child's nested transcript.
       forwardSubagentText: true,
-      hooks: this.buildSubagentEffortHooks(),
+      hooks: this.buildHooks(),
       ...(this.persistSession === undefined ? {} : { persistSession: this.persistSession }),
       env: sdkEnv,
     };
@@ -4747,6 +4755,13 @@ class ClaudeAgentSession implements AgentSession {
 
   private pushEvent(event: AgentStreamEvent) {
     this.notifySubscribers(event);
+  }
+
+  /** Both hook sets are Paseo's; the options object has no user hook channel to keep. */
+  private buildHooks(): NonNullable<ClaudeOptions["hooks"]> {
+    const observation = this.buildSubagentEffortHooks();
+    if (!this.resolveExecutionPolicy) return observation;
+    return mergeClaudeHooks(observation, buildExecutionPolicyHooks(this.resolveExecutionPolicy));
   }
 
   /**

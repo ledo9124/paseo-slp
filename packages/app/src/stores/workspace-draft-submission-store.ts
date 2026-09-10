@@ -18,6 +18,8 @@ export interface PendingWorkspaceDraftSubmission {
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
   allowEmptyText?: boolean;
+  /** Start an SLP group in this mode with the message instead of one agent. */
+  slpMode?: "direct" | "supervised";
 }
 
 export interface PendingWorkspaceDraftSetup {

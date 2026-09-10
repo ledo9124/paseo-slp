@@ -22,7 +22,10 @@ import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
-import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
+import {
+  useWorkspaceDraftSubmissionStore,
+  type PendingWorkspaceDraftSubmission,
+} from "@/stores/workspace-draft-submission-store";
 import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
@@ -34,7 +37,7 @@ import {
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { WorkspaceComposerAttachment } from "@/attachments/types";
+import type { ComposerAttachment, WorkspaceComposerAttachment } from "@/attachments/types";
 import {
   useDraftWorkspaceAttachmentScopeKey,
   useWorkspaceAttachmentScopeKey,
@@ -53,6 +56,9 @@ import {
 } from "@/workspace-tabs/model";
 import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
 import { useSettings } from "@/hooks/use-settings";
+import { useSlpDraftComposer } from "@/slp/draft-composer";
+import type { SlpDraftStartOverride } from "@/slp/draft-submit";
+import type { MessagePayload } from "@/composer/types";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const EMPTY_ONLINE_SERVER_IDS: string[] = [];
@@ -317,6 +323,42 @@ interface WorkspaceDraftAgentTabProps {
   onOpenImportSheet?: () => void;
 }
 
+/**
+ * A pending first message from the New workspace screen either continues the
+ * create attempt it prepared, creates the agent, or, when that composer chose
+ * a group mode, starts the group with the launch it recorded.
+ */
+function runPendingAutoSubmit(input: {
+  submission: PendingWorkspaceDraftSubmission;
+  preparedAttempt: DraftCreateAttempt | null;
+  continueCreateFromAttempt: (input: { attempt: DraftCreateAttempt; cwd: string }) => Promise<void>;
+  createFromInput: (input: {
+    text: string;
+    attachments: ComposerAttachment[];
+    cwd: string;
+  }) => Promise<void>;
+  startSlpGroup: (payload: MessagePayload, override: SlpDraftStartOverride) => Promise<void>;
+}): Promise<void> {
+  const { submission, preparedAttempt } = input;
+  const payload = {
+    text: submission.text,
+    attachments: submission.attachments,
+    cwd: submission.cwd,
+  };
+  if (submission.slpMode) {
+    return input.startSlpGroup(payload, {
+      mode: submission.slpMode,
+      provider: submission.provider,
+      model: submission.model ?? null,
+      modeId: submission.modeId ?? null,
+    });
+  }
+  if (preparedAttempt) {
+    return input.continueCreateFromAttempt({ attempt: preparedAttempt, cwd: submission.cwd });
+  }
+  return input.createFromInput(payload);
+}
+
 function resolveImportPillPress(
   onOpenImportSheet: (() => void) | undefined,
   isSubmitting: boolean,
@@ -562,6 +604,33 @@ export function WorkspaceDraftAgentTab({
       },
     },
   });
+  const slpLaunch = useMemo(
+    () => ({
+      selectedProvider: composerState.selectedProvider,
+      selectedMode: composerState.selectedMode,
+      effectiveModelId: composerState.effectiveModelId,
+      persistFormPreferences: composerState.persistFormPreferences,
+    }),
+    [
+      composerState.effectiveModelId,
+      composerState.persistFormPreferences,
+      composerState.selectedMode,
+      composerState.selectedProvider,
+    ],
+  );
+  const handleSlpSent = useCallback(() => {
+    clearDraftInput("sent");
+    clearWorkspaceAttachments({ scopeKey: draftAttachmentScopeKey });
+  }, [clearDraftInput, clearWorkspaceAttachments, draftAttachmentScopeKey]);
+  const slp = useSlpDraftComposer({
+    serverId,
+    workspaceId,
+    launch: slpLaunch,
+    createAgent: handleCreateFromInput,
+    isCreating: isSubmitting,
+    createError: formErrorMessage,
+    onSent: handleSlpSent,
+  });
   const isReadyForPendingAutoSubmit = Boolean(
     pendingAutoSubmit &&
     draftInput.isHydrated &&
@@ -589,16 +658,13 @@ export function WorkspaceDraftAgentTab({
       initialCreateAttempt?.clientMessageId === submission.clientMessageId
         ? initialCreateAttempt
         : null;
-    const createPromise = preparedAttempt
-      ? continueCreateFromAttempt({
-          attempt: preparedAttempt,
-          cwd: submission.cwd,
-        })
-      : handleCreateFromInput({
-          text: submission.text,
-          attachments: submission.attachments,
-          cwd: submission.cwd,
-        });
+    const createPromise = runPendingAutoSubmit({
+      submission,
+      preparedAttempt,
+      continueCreateFromAttempt,
+      createFromInput: handleCreateFromInput,
+      startSlpGroup: slp.start,
+    });
     void createPromise.catch(() => {
       replaceDraftText(submission.text);
       setDraftAttachments(composerWorkspaceAttachment.userAttachmentsOnly(submission.attachments));
@@ -614,6 +680,7 @@ export function WorkspaceDraftAgentTab({
     serverId,
     setDraftAttachments,
     replaceDraftText,
+    slp.start,
     workspaceId,
   ]);
 
@@ -636,9 +703,10 @@ export function WorkspaceDraftAgentTab({
     () => ({
       ...composerState.agentControls,
       onDropdownClose: handleDropdownCloseFocus,
-      disabled: isSubmitting,
+      disabled: slp.isSending,
+      slpControl: slp.slpControl,
     }),
-    [composerState.agentControls, handleDropdownCloseFocus, isSubmitting],
+    [composerState.agentControls, handleDropdownCloseFocus, slp.isSending, slp.slpControl],
   );
   return (
     <FileDropZone style={styles.container}>
@@ -659,9 +727,9 @@ export function WorkspaceDraftAgentTab({
         ) : (
           <ScrollView style={styles.scrollView} contentContainerStyle={styles.configScrollContent}>
             <View style={styles.configSection}>
-              {formErrorMessage ? (
+              {slp.errorMessage ? (
                 <View style={styles.errorContainer}>
-                  <Text style={styles.errorText}>{formErrorMessage}</Text>
+                  <Text style={styles.errorText}>{slp.errorMessage}</Text>
                 </View>
               ) : null}
             </View>
@@ -683,8 +751,8 @@ export function WorkspaceDraftAgentTab({
           workspaceId={workspaceId}
           externalKeyboardShift
           isPaneFocused={isPaneFocused}
-          onSubmitMessage={handleCreateFromInput}
-          isSubmitLoading={isSubmitting}
+          onSubmitMessage={slp.submit}
+          isSubmitLoading={slp.isSending}
           blurOnSubmit={true}
           value={draftInput.text}
           onChangeText={draftInput.editText}

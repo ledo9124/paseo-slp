@@ -217,6 +217,98 @@ export const ja: TranslationResources = {
       proposedPlan: "提案されたプラン",
     },
   },
+  slp: {
+    roles: {
+      supervisor: "スーパーバイザー",
+      lead: "リード",
+      peer: "ピア",
+    },
+    modes: {
+      direct: "ダイレクト",
+      supervised: "スーパーバイズ",
+    },
+    composer: {
+      title: "ワークスペースモード",
+      hint: "最初のメッセージを送る前に、このワークスペースの動作方法を選びます。",
+      selectWithValue: "ワークスペースモード: {{value}}",
+      options: {
+        single: { label: "単一エージェント", hint: "ロールなしの1つのエージェント。" },
+        direct: {
+          label: "ダイレクト",
+          hint: "Lead と話します。小さな作業は自分で行い、それ以外は Peer に委任します。",
+        },
+        supervised: {
+          label: "スーパーバイズ",
+          hint: "Supervisor と話します。Lead がエンジニアリングを調整します。",
+        },
+      },
+      locked: {
+        group: "グループが存在する間は固定です。選び直すにはグループを終了してください。",
+        agents:
+          "ワークスペースにエージェントがある間は固定です。選び直すにはアーカイブしてください。",
+      },
+      errors: {
+        emptyMessage: "グループへの最初のメッセージを書いてください。",
+      },
+      failed: "ホストがグループの開始を拒否しました。",
+    },
+    end: {
+      menu: "SLP グループを終了",
+      confirmTitle: "SLP グループを終了しますか？",
+      confirmMessage:
+        "すべてのメンバーがアーカイブされ、ワークスペースモードを再び選べるようになります。",
+      confirm: "グループを終了",
+      failed: "ホストがグループの終了を拒否しました。",
+    },
+    settings: {
+      title: "SLP ロール",
+      intro:
+        "グループ開始時に各ロールをどう起動するか。設定のないロールは、コンポーザーに表示されていたプロバイダー・モデル・権限モードを使います。",
+      launchSection: "起動",
+      instructionsSection: "指示",
+      thinkingLabel: "思考",
+      noThinkingOptions: "このモデルには思考レベルがありません",
+      bundledRoleLabel: "{{role}} の指示",
+      bundledSharedLabel: "共通 SLP 指示",
+      bundledAlwaysApplied: "常に適用",
+      bundledLoading: "同梱の指示を読み込み中…",
+      bundledUnavailable: "同梱の指示を読み込めませんでした。",
+      extraPreview: "追加: {{text}}",
+      bundledOnly: "同梱の指示のみ。",
+      descriptions: {
+        supervisor: "Supervised モードでの窓口。意図を保持し、Lead に指示して報告します。",
+        lead: "エンジニアリングの責任者。プロジェクトを読み、計画し、Peer に委任して結果を受け入れます。",
+        peer: "Lead からの限定された 1 件の割り当てを、ハンドバックとして返します。",
+      },
+      defaultWith: "コンポーザーの既定値: {{value}}",
+      defaultSummary: "コンポーザーのプロバイダー・モデル・権限モードを使用します。",
+      hasInstructions: "追加の指示があります。",
+      edit: "編集",
+      reset: "コンポーザーの既定値を使う",
+      editTitle: "{{role}} の設定",
+      instructionsLabel: "追加の指示",
+      instructionsHint: "ロールの組み込み指示の後に追加されます。",
+      instructionsPlaceholder: "日本語で答えてください。報告は10行以内にしてください。",
+      unavailable: "このホストは SLP グループに対応していません。",
+    },
+    banner: {
+      title: "{{role}} · {{mode}}モード · 第 {{number}} 世代",
+      contact: "このワークスペースの窓口",
+      initializing: "グループはまだ初期化中です。最初のメッセージを配信しています。",
+      receiptUncertain:
+        "再起動後、ホストは最初のメッセージがこのエージェントに届いたか判断できません。再送する前に履歴を確認してください。",
+      frozen: "このグループは凍結されています: {{reason}}",
+      transferSource:
+        "引き継ぎ中: このエージェントはチェックポイント後に停止し、後継者の準備が整うと退役します。",
+      transferCandidate: "引き継ぎ準備中: ホストが有効化するまで読み取り専用です。",
+      transferBlocked:
+        "引き継ぎがブロックされました: {{reason}}。ホストを再起動して整合させてください。",
+      retired: "退役した世代です。スロットの現在のエージェントが作業を続けます。",
+      openCurrent: "現在の{{role}}を開く",
+      mailUncertain: "配信が不確かなメッセージ: {{count}}",
+      mailQueued: "ターン待ちのメッセージ: {{count}}",
+    },
+  },
   agentPanel: {
     states: {
       notFound: "エージェントが見つかりません",
@@ -1967,6 +2059,7 @@ export const ja: TranslationResources = {
       providers: "プロバイダー",
       usage: "使用状況",
       terminals: "ターミナル",
+      slp: "SLP ロール",
       plugins: "プラグイン",
       host: "概要",
     },

@@ -21,6 +21,7 @@ import type {
   AgentStreamEvent,
 } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
+import { createHeldTurnClient } from "../test-utils/held-turn-agent-client.js";
 import { validateProviderOptions } from "../agent/provider-options.js";
 import { ClaudeProviderOptionsSchema } from "../agent/providers/claude/options.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -463,16 +464,17 @@ describe("ScheduleService", () => {
     );
   });
 
-  test("delivers agent-target schedules through the steer-or-interrupt path", async () => {
+  test("admits agent-target schedules as a new turn when the agent is idle", async () => {
+    const client = createHeldTurnClient({ provider: "claude", releaseText: "scheduled work done" });
     const manager = new AgentManager({
       logger: createTestLogger(),
-      clients: createTestAgentClients(),
+      clients: { claude: client },
       registry: agentStorage,
     });
     const agent = await manager.createAgent({ provider: "claude", cwd: tempDir }, undefined, {
       workspaceId: undefined,
     });
-    const steerOrReplace = vi.spyOn(manager, "steerOrReplaceActiveTurn");
+    const session = client.sessions[0]!;
     const service = createScheduleService({
       paseoHome: tempDir,
       logger: createTestLogger(),
@@ -487,14 +489,96 @@ describe("ScheduleService", () => {
       target: { type: "agent", agentId: agent.id },
     });
 
-    await service.runOnce(schedule.id);
+    const run = service.runOnce(schedule.id);
+    await session.startSeen;
+    session.release();
+    const inspected = await run;
 
-    expect(steerOrReplace).toHaveBeenCalledTimes(1);
-    expect(steerOrReplace.mock.calls[0]).toEqual([
-      agent.id,
-      expect.stringContaining(`Schedule fired (id=${schedule.id}, run=`),
-      undefined,
-    ]);
+    expect(session.startCount).toBe(1);
+    expect(session.steerPrompts).toEqual([]);
+    expect(session.interruptCount).toBe(0);
+    expect(inspected.runs[0]?.status).toBe("succeeded");
+    expect(inspected.runs[0]?.output).toBe("scheduled work done");
+    expect(session.startPrompts[0]).toContain(`Schedule fired (id=${schedule.id}, run=`);
+  });
+
+  describe("agent-target schedule against a busy agent", () => {
+    async function busyFixture() {
+      const client = createHeldTurnClient({
+        provider: "claude",
+        releaseText: "held turn finished",
+      });
+      const manager = new AgentManager({
+        logger: createTestLogger(),
+        clients: { claude: client },
+        registry: agentStorage,
+      });
+      const agent = await manager.createAgent({ provider: "claude", cwd: tempDir }, undefined, {
+        workspaceId: undefined,
+      });
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: manager,
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+      });
+      const schedule = await service.create({
+        prompt: "Check scheduled work",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: { type: "agent", agentId: agent.id },
+      });
+      // The agent wins the slot before the schedule fires.
+      expect(await manager.admitForegroundTurn(agent.id, "human work")).toEqual({
+        status: "started",
+      });
+      await manager.waitForAgentRunStart(agent.id);
+      const idle = manager.waitForAgentEvent(agent.id, { waitForActive: true });
+      return { manager, agent, service, schedule, session: client.sessions[0]!, idle };
+    }
+
+    test("a losing schedule fails visibly and does not cancel the winning turn", async () => {
+      const { manager, agent, service, schedule, session, idle } = await busyFixture();
+
+      const inspected = await service.runOnce(schedule.id);
+
+      expect(inspected.runs[0]?.status).toBe("failed");
+      expect(inspected.runs[0]?.error).toBe(`Agent ${agent.id} already has an active run`);
+      expect(session.interruptCount).toBe(0);
+      expect(session.startCount).toBe(1);
+      expect(session.steerPrompts).toHaveLength(1);
+      expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+      session.release();
+      await idle;
+      expect(manager.getTimeline(agent.id)).toContainEqual({
+        type: "assistant_message",
+        text: "held turn finished",
+      });
+    });
+
+    test("a losing schedule steers into the live turn when the provider accepts", async () => {
+      const { manager, agent, service, schedule, session, idle } = await busyFixture();
+      session.steerBehavior = "accepted";
+
+      const run = service.runOnce(schedule.id);
+      await session.steerSeen;
+      session.release();
+      await idle;
+      const inspected = await run;
+
+      expect(inspected.runs[0]?.status).toBe("succeeded");
+      expect(inspected.runs[0]?.agentId).toBe(agent.id);
+      expect(inspected.runs[0]?.output).toBe("held turn finished");
+      expect(session.steerPrompts[0]).toContain(`Schedule fired (id=${schedule.id}, run=`);
+      expect(session.interruptCount).toBe(0);
+      expect(session.startCount).toBe(1);
+      expect(manager.getTimeline(agent.id)).toContainEqual({
+        type: "assistant_message",
+        text: "held turn finished",
+      });
+    });
   });
 
   test("titles scheduled new agents from the schedule prompt", async () => {

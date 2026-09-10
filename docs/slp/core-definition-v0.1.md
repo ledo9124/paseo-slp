@@ -1,4 +1,5 @@
 # SLP Core Definition v0.1
+
 ## Supervisor — Lead — Peer
 
 ---

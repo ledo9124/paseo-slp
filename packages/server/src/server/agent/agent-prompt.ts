@@ -8,6 +8,7 @@ import type {
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
+import { drainAgentStream } from "./agent-stream-drain.js";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 
@@ -78,6 +79,16 @@ async function startOrReplaceRun(
   return { iterator, replaced };
 }
 
+function snapshotTraceFields(snapshot: ManagedAgent | null): {
+  provider: string | undefined;
+  providerSessionId: string | undefined;
+} {
+  return {
+    provider: snapshot?.provider,
+    providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
+  };
+}
+
 export async function startAgentRun(
   agentManager: AgentRunController,
   agentId: string,
@@ -89,8 +100,7 @@ export async function startAgentRun(
   logger.trace(
     {
       agentId,
-      provider: snapshot?.provider,
-      providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
+      ...snapshotTraceFields(snapshot),
       turnId: snapshot?.activeForegroundTurnId ?? undefined,
       promptType: typeof prompt === "string" ? "string" : "structured",
       hasRunOptions: Boolean(options?.runOptions),
@@ -114,38 +124,18 @@ export async function startAgentRun(
   logger.trace(
     {
       agentId,
-      provider: snapshot?.provider,
-      providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
+      ...snapshotTraceFields(snapshot),
       shouldReplace: replaced,
     },
     "agent.session.start_stream.iterator_returned",
   );
-  void (async () => {
-    try {
-      for await (const _ of iterator) {
-        // Events are broadcast via AgentManager subscribers.
-      }
-      logger.trace(
-        {
-          agentId,
-          provider: snapshot?.provider,
-          providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
-        },
-        "agent.session.iterator.drained",
-      );
-    } catch (error) {
-      logger.trace(
-        {
-          agentId,
-          provider: snapshot?.provider,
-          providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
-          err: error,
-        },
-        "agent.session.iterator.error",
-      );
-      logger.error({ err: error, agentId }, "Agent stream failed");
-    }
-  })();
+  drainAgentStream(iterator, {
+    logger,
+    agentId,
+    context: {
+      ...snapshotTraceFields(snapshot),
+    },
+  });
   return { disposition: "turn_started" };
 }
 

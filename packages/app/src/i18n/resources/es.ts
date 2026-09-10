@@ -217,6 +217,100 @@ export const es: TranslationResources = {
       proposedPlan: "Plan propuesto",
     },
   },
+  slp: {
+    roles: {
+      supervisor: "Supervisor",
+      lead: "Líder",
+      peer: "Par",
+    },
+    modes: {
+      direct: "Directo",
+      supervised: "Supervisado",
+    },
+    composer: {
+      title: "Modo del espacio de trabajo",
+      hint: "Elige cómo funciona este espacio de trabajo antes de su primer mensaje.",
+      selectWithValue: "Modo del espacio de trabajo: {{value}}",
+      options: {
+        single: { label: "Agente único", hint: "Un agente, sin roles." },
+        direct: {
+          label: "Directo",
+          hint: "Hablas con el Líder. Hace el trabajo pequeño por sí mismo o delega en Pares.",
+        },
+        supervised: {
+          label: "Supervisado",
+          hint: "Hablas con un Supervisor. El Líder coordina la ingeniería.",
+        },
+      },
+      locked: {
+        group: "Fijo una vez que existe el grupo. Finaliza el grupo para elegir de nuevo.",
+        agents:
+          "Fijo mientras el espacio de trabajo tenga agentes. Archívalos para elegir de nuevo.",
+      },
+      errors: {
+        emptyMessage: "Escribe el primer mensaje para el grupo.",
+      },
+      failed: "El host rechazó iniciar el grupo.",
+    },
+    end: {
+      menu: "Finalizar grupo SLP",
+      confirmTitle: "¿Finalizar el grupo SLP?",
+      confirmMessage:
+        "Todos los miembros se archivan y el modo del espacio de trabajo vuelve a abrirse.",
+      confirm: "Finalizar grupo",
+      failed: "El host rechazó finalizar el grupo.",
+    },
+    settings: {
+      title: "Roles SLP",
+      intro:
+        "Cómo se lanza cada rol cuando empieza un grupo. Un rol sin ajustes usa el proveedor, el modelo y el modo de permisos que mostraba el compositor.",
+      defaultSummary: "Usa el proveedor, el modelo y el modo de permisos del compositor.",
+      launchSection: "Lanzamiento",
+      instructionsSection: "Instrucciones",
+      thinkingLabel: "Razonamiento",
+      noThinkingOptions: "Este modelo no tiene niveles de razonamiento",
+      bundledRoleLabel: "Instrucciones de {{role}}",
+      bundledSharedLabel: "Instrucciones SLP compartidas",
+      bundledAlwaysApplied: "siempre aplicadas",
+      bundledLoading: "Cargando instrucciones incluidas…",
+      bundledUnavailable: "No se pudieron cargar las instrucciones incluidas.",
+      extraPreview: "Extra: {{text}}",
+      bundledOnly: "Solo instrucciones incluidas.",
+      descriptions: {
+        supervisor:
+          "Tu contacto en modo supervisado. Guarda tu intención, instruye al Lead e informa.",
+        lead: "Autoridad de ingeniería. Lee el proyecto, planifica, delega en Peers y acepta resultados.",
+        peer: "Una tarea acotada del Lead, devuelta como entrega.",
+      },
+      defaultWith: "Predeterminado del compositor: {{value}}",
+      hasInstructions: "Tiene instrucciones adicionales.",
+      edit: "Editar",
+      reset: "Usar valores del compositor",
+      editTitle: "Ajustes de {{role}}",
+      instructionsLabel: "Instrucciones adicionales",
+      instructionsHint: "Se añaden a las instrucciones incluidas del rol.",
+      instructionsPlaceholder:
+        "Responde en español. Mantén los informes por debajo de diez líneas.",
+      unavailable: "Este host no admite grupos SLP.",
+    },
+    banner: {
+      title: "{{role}} · modo {{mode}} · generación {{number}}",
+      contact: "tu contacto para este espacio de trabajo",
+      initializing: "El grupo aún se está inicializando; se está entregando su primer mensaje.",
+      receiptUncertain:
+        "Tras un reinicio, el host no puede saber si el primer mensaje llegó a este agente. Revisa su historial antes de reenviar.",
+      frozen: "Este grupo está congelado: {{reason}}",
+      transferSource:
+        "Traspaso en curso: este agente se detiene tras su punto de control y se retira cuando su sucesor esté listo.",
+      transferCandidate:
+        "Preparándose para tomar el relevo: solo lectura hasta que el host lo active.",
+      transferBlocked: "Traspaso bloqueado: {{reason}}. Reinicia el host para reconciliarlo.",
+      retired: "Generación retirada. El agente actual del puesto continúa el trabajo.",
+      openCurrent: "Abrir {{role}} actual",
+      mailUncertain: "Mensajes con entrega incierta: {{count}}",
+      mailQueued: "Mensajes esperando un turno: {{count}}",
+    },
+  },
   agentPanel: {
     states: {
       notFound: "Agentno encontrado",
@@ -1995,6 +2089,7 @@ export const es: TranslationResources = {
       providers: "Proveedores",
       usage: "Uso",
       terminals: "Terminals",
+      slp: "Roles SLP",
       plugins: "Plugins",
       host: "Resumen",
     },

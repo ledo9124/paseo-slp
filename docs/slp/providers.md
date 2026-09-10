@@ -1,6 +1,6 @@
 # Claude Code and Codex handoff support
 
-Status: source evidence only; no tested provider version is certified for SLP. A declared capability must describe what the installed runtime can do, not the presence of a handler. The [handoff contract](handoff.md) owns transfer behavior.
+Status: source evidence plus one recorded manual run per provider for the preparation policy and restart recovery ([evidence](evidence.md)); no tested provider version is certified for SLP. A declared capability must describe what the installed runtime can do, not the presence of a handler. The [handoff contract](handoff.md) owns transfer behavior.
 
 ## Support boundary
 
@@ -8,12 +8,12 @@ Support only Claude Code and Codex for SLP v1. Preserve other upstream providers
 
 Certify capability tiers independently. Both providers remain in the v1 target; no tier is certified by this source review.
 
-| Capability | Claude Code | Codex |
-| --- | --- | --- |
-| Roles, prompt composition, delivery | Implementation and evidence required | Implementation and evidence required |
-| Explicit same-role handoff | Stop, preparation and recovery proof required | Stop, preparation and recovery proof required |
-| Proactive handoff from usage | Current telemetry, budget and long-turn proof required | Current telemetry, budget and long-turn proof required |
-| Strict pre-compaction interception | SDK callback integration; probe P1 pending | Adapter hook integration; probe P2 pending |
+| Capability                          | Claude Code                                            | Codex                                                  |
+| ----------------------------------- | ------------------------------------------------------ | ------------------------------------------------------ |
+| Roles, prompt composition, delivery | Implementation and evidence required                   | Implementation and evidence required                   |
+| Explicit same-role handoff          | Stop, preparation and recovery proof required          | Stop, preparation and recovery proof required          |
+| Proactive handoff from usage        | Current telemetry, budget and long-turn proof required | Current telemetry, budget and long-turn proof required |
+| Strict pre-compaction interception  | SDK callback integration; probe P1 pending             | Adapter hook integration; probe P2 pending             |
 
 Proactive handoff can request a transfer early without proving that native compact is intercepted. It must not be presented as strict replacement. Report each installed capability with its evidence status and reason at group initialization; an unverified interception capability remains disabled. Do not collapse proactive and strict behavior into one ambiguous `automaticHandoff` flag.
 
@@ -25,7 +25,7 @@ The terminal hook installer writes user-global activity hooks, gated by terminal
 
 The adapter parses `turn_aborted.reason` and drops it during normalization. Preserve it where available, but do not assume the reason alone identifies a hook stop. Correlate the daemon-owned hook request, source thread/generation, turn ID, and the acknowledged stopping boundary.
 
-The per-thread configuration overlay already exists at thread start/resume and turn start. P2 must test whether the pinned app-server accepts a hook there, loads it under the supported trust workflow, and invokes it for the intended session. Evaluate supported provider configuration paths within the no-global-config-mutation constraint if that overlay is unsuitable. An unsuccessful overlay probe does not prove that all integrations are impossible.
+The per-thread configuration overlay already exists at thread start/resume and turn start; the preparation policy uses it to replace the sandbox and approval policy on both requests and in the inner config, and refuses a thread the app-server resolves with any sandbox but read-only. That is proven against the request parameters, not a live app-server (P7). P2 must test whether the pinned app-server accepts a hook there, loads it under the supported trust workflow, and invokes it for the intended session. Evaluate supported provider configuration paths within the no-global-config-mutation constraint if that overlay is unsuitable. An unsuccessful overlay probe does not prove that all integrations are impossible.
 
 The transport calls `traceRawEvent` before handler lookup; unknown requests already have trace logging, then receive `{}`. Add a dedicated warning for an unhandled request and preserve raw evidence for P2. Do not assume hook trust is delivered as such a request: inspect the provider's actual trust workflow and test it. Instrumentation may be added in the probe itself; absence of a production handler does not make an instrumented probe impossible.
 
@@ -33,7 +33,7 @@ The transport calls `traceRawEvent` before handler lookup; unknown requests alre
 
 The in-process SDK hooks channel is live and proven: the adapter already registers observation callbacks and the options object is rebuilt on every session launch, so create, resume and every restart pass through one assignment site.
 
-The per-event merge helper that keeps a user's hooks alongside Paseo's is already written and unit-tested, and has **no production importer** — the live code assigns rather than merges. Wiring it is small, but do not skip it: it is what satisfies the certification gate that existing user hooks remain effective.
+The per-event merge helper combines Paseo's own hook sets (effort observation and the preparation gate) at that one site. The strict provider-options schema has no hooks key, so there is no in-process user hook to keep; shell hooks from settings files run inside the CLI on a separate channel. The preparation gate is a `PreToolUse` callback that resolves the daemon's execution policy per call, which is what makes lifting it need no query restart.
 
 Two corrections to the earlier reading of the PreCompact contract:
 
@@ -50,13 +50,13 @@ Prepare-then-swap is not what the adapter does today. Its restart path tears the
 
 Reviewed on 2026-09-06 and reconciled against fork commit `dee2a8d405e02ada2658e674372407f439788bea` on 2026-09-07. The earlier upstream snapshot was `38c22139bb191f0ad27b11c16776e93504ddd4fd`. Use the fork paths below for implementation; neither snapshot certifies an installed binary.
 
-| Concern                    | Claude Code                                                                    | Codex                                                                                              |
-| -------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| Existing Paseo integration | Claude Agent SDK session                                                       | Codex App Server thread                                                                            |
-| Context telemetry          | Adapter maps active per-request usage and a model window                       | Adapter maps `thread/tokenUsage/updated`, root thread only                                         |
-| PreCompact control         | In-process callback; only top-level continue/decision expressible              | Documented `continue: false`; SLP adapter integration unproven                                           |
-| Required adapter work      | Wire the existing merge helper, add PreCompact, establish an acknowledged stop | Preserve abort evidence, warn on unhandled requests, and probe installation/trust/invocation |
-| Fresh continuation         | Create a new session; do not resume old context as a substitute                | Start a new thread; do not resume old context as a substitute                                      |
+| Concern                    | Claude Code                                                       | Codex                                                                                        |
+| -------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Existing Paseo integration | Claude Agent SDK session                                          | Codex App Server thread                                                                      |
+| Context telemetry          | Adapter maps active per-request usage and a model window          | Adapter maps `thread/tokenUsage/updated`, root thread only                                   |
+| PreCompact control         | In-process callback; only top-level continue/decision expressible | Documented `continue: false`; SLP adapter integration unproven                               |
+| Required adapter work      | Add PreCompact, establish an acknowledged stop                    | Preserve abort evidence, warn on unhandled requests, and probe installation/trust/invocation |
+| Fresh continuation         | Create a new session; do not resume old context as a substitute   | Start a new thread; do not resume old context as a substitute                                |
 
 Evidence:
 
@@ -105,4 +105,4 @@ The current server CI configuration does not run the real/local provider certifi
 
 The existing real-provider harness routes Claude and Codex through OpenRouter rather than the native authentication paths targeted by certification. Add native/local-auth execution for P1 and P2. Proxy-based results may test parts of the harness, but cannot alone certify production compaction thresholds, model behavior or the native authentication path. Preserve those results with their actual scope.
 
-Run the evidence on both providers within each capability tier, then a mixed topology with Lead and Peer on different providers. Record whether a gap prevents certification. Do not advertise strict handoff replacement on an unsupported version, missing telemetry path, denied hook or unverified stopping boundary. These are implementation gates, not requests for Human to decide adapter internals.
+Run the evidence on both providers within each capability tier, then a mixed topology with Lead and Peer on different providers. Record the result in [the evidence record](evidence.md), one row per gate, replacing the previous run. Record whether a gap prevents certification. Do not advertise strict handoff replacement on an unsupported version, missing telemetry path, denied hook or unverified stopping boundary. These are implementation gates, not requests for Human to decide adapter internals.

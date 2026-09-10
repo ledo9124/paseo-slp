@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { DaemonConfigStore, applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
-import { loadPersistedConfig } from "./persisted-config.js";
+import { loadPersistedConfig, savePersistedConfig } from "./persisted-config.js";
 import type { PersistedConfig } from "./persisted-config.js";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 
@@ -164,6 +164,37 @@ describe("DaemonConfigStore", () => {
       },
     ]);
     expect(store.get().agentProfiles).toHaveLength(1);
+  });
+
+  test("patch writes SLP role settings under features.slp beside the kill switch", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    savePersistedConfig(paseoHome, { version: 1, features: { slp: { enabled: true } } });
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    store.patch({
+      slp: { roles: { lead: { provider: "codex", model: "gpt-6", instructions: "Be brief." } } },
+    });
+
+    expect(loadPersistedConfig(paseoHome).features?.slp).toEqual({
+      enabled: true,
+      roles: { lead: { provider: "codex", model: "gpt-6", instructions: "Be brief." } },
+    });
+    expect(store.get().slp?.roles?.lead?.model).toBe("gpt-6");
+
+    // Removing a role is a whole-object replacement, not a merge that keeps it.
+    store.patch({ slp: { roles: {} } });
+    expect(store.get().slp?.roles).toEqual({});
+    expect(loadPersistedConfig(paseoHome).features?.slp).toEqual({ enabled: true, roles: {} });
   });
 
   test("patch replaces the whole agent profile list rather than merging entries", () => {

@@ -49,10 +49,19 @@ export const CodexProviderOptionsSchema = z
       .strict()
       .optional(),
     web_search: z.enum(["disabled", "cached", "indexed", "live"]).optional(),
+    // `agents.enabled = false` is the switch that removes Codex's own
+    // multi-agent (`collaboration.*`) tools; the `features.multi_agent*`
+    // flags only trade one tool set for another.
+    agents: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     features: z
       .object({
         network_proxy: z.union([z.boolean(), NetworkPolicySchema]).optional(),
-        multi_agent_v2: z.boolean().optional(),
+        multi_agent: z.boolean().optional(),
+        // Codex reads a bare boolean or a table; the table form is what
+        // overrides a host config that already spells the feature out.
+        multi_agent_v2: z
+          .union([z.boolean(), z.object({ enabled: z.boolean() }).strict()])
+          .optional(),
       })
       .strict()
       .optional(),

@@ -579,6 +579,7 @@ function createSessionForWorkspaceTests(
     listAgents: () => [],
     listProviderSubagentActivity: () => [],
     getAgent: () => null,
+    assertWorkspaceDestructiveOperationAllowed: () => {},
     archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
     archiveSnapshot: async () => ({}),
     unarchiveSnapshot: async () => true,

@@ -2,5 +2,16 @@
   "extends": "./tsconfig.server.json",
   "compilerOptions": {
     "rootDir": "../../"
-  }
+  },
+  // The SLP probes are real code that runs against the daemon; without this
+  // they were checked by nothing and a missing import only showed up mid-run.
+  "include": [
+    "src/server/**/*",
+    "src/services/**/*",
+    "src/terminal/**/*",
+    "scripts/slp-probe-lib.ts",
+    "scripts/slp-behavior-probe.ts",
+    "scripts/slp-p5-probe.ts",
+    "scripts/slp-run-report.ts"
+  ]
 }

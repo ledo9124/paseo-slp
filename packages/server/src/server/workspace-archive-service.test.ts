@@ -142,6 +142,7 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
       getSnapshot: vi.fn(async () => null),
     } as unknown as Pick<WorkspaceGitService, "getSnapshot">,
     agentManager: {
+      assertWorkspaceDestructiveOperationAllowed: () => {},
       listAgents: () => [],
       getAgent: () => null,
       archiveAgent: vi.fn(async (agentId: string) => {
@@ -741,6 +742,7 @@ describe("archiveByScope", () => {
       ],
     });
     deps.agentManager = {
+      assertWorkspaceDestructiveOperationAllowed: () => {},
       listAgents: () => [{ id: liveAgentId, workspaceId: targetWorkspaceId }] as ManagedAgent[],
       getAgent: (agentId: string) =>
         agentId === liveAgentId ? ({ id: liveAgentId } as ManagedAgent) : null,
@@ -790,6 +792,7 @@ describe("archiveByScope", () => {
       activeWorkspaces: [{ workspaceId, cwd: repoDir, kind: "local_checkout" }],
     });
     deps.agentManager = {
+      assertWorkspaceDestructiveOperationAllowed: () => {},
       listAgents: () => [{ id: agentId, workspaceId }] as ManagedAgent[],
       getAgent: () => null,
       archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),

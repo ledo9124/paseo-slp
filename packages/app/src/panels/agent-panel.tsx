@@ -108,6 +108,7 @@ import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-w
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-commands";
+import { SlpGroupBanner } from "@/slp/group-banner";
 
 interface ChatAgentStateShape {
   serverId: string | null;
@@ -1386,6 +1387,10 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       <View style={styles.root} collapsable={false}>
         <DockedChatSurface disabled={isArchivingCurrentAgent}>
           {contentContainer}
+
+          {agentId ? (
+            <SlpGroupBanner serverId={serverId} workspaceId={workspaceId} agentId={agentId} />
+          ) : null}
 
           {showHistorySyncError ? (
             <View style={styles.timelineSyncCalloutRail}>

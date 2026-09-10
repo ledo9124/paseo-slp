@@ -52,6 +52,17 @@ $PASEO_HOME/
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
+├── slp/
+│   ├── groups/
+│   │   └── {groupId}.json               # One SLP group: slots, generations, hold, initialization
+│   ├── handbacks/
+│   │   └── {handbackId}.json            # One Peer handback: owner slot, outcome, mail id
+│   ├── mail/
+│   │   └── {mailId}.json                # One slot message: prompt, dispatch attempt, delivery state
+│   ├── checkpoints/
+│   │   └── {slotId|transferId}.json     # A slot's current checkpoint, or the copy a transfer took
+│   └── transfers/
+│       └── {transferId}.json            # One same-role handoff: phase, source, candidate
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── projects/
@@ -173,6 +184,28 @@ Terminals are live daemon state, not persisted JSON records. A terminal carries 
 Terminal activity contributes to the workspace status bucket **per `workspaceId`**: a working terminal drives `running` onto the workspace it carries only. Same-`cwd` siblings are untouched; terminal visibility is likewise `workspaceId`-scoped.
 
 ---
+
+## 1b. SLP Group Record
+
+**Path:** `$PASEO_HOME/slp/groups/{groupId}.json`
+
+One file per group holds the group, its slots and their generations, so a multi-record transition inside a group is one atomic rename. Schema: `packages/server/src/server/slp/store.ts`. The `hold` field is the persisted destructive-operation gate: while it is set, or while `status` is `frozen`, every archive, cascade, delete and workspace teardown touching a member agent or the workspace is refused. Boot recovery resumes an `initializing` group through the agent request journal; a record it cannot parse keeps its gate from the id and membership it can read and is frozen. Design: [docs/slp/architecture.md](slp/architecture.md#stable-identity).
+
+**Path:** `$PASEO_HOME/slp/handbacks/{handbackId}.json`
+
+One file per Peer generation, written before the Peer agent exists and addressed to the owner slot rather than an agent. The record holds the Peer's outcome and the id of the mail that carries it; the composed instruction text itself lives in the agent record's `config.systemPrompt`, not here. Why the built-in finish notification cannot be reused: [docs/slp/handoff.md](slp/handoff.md#relationships-and-background-work).
+
+**Path:** `$PASEO_HOME/slp/mail/{mailId}.json`
+
+One file per message to a slot, holding the provider prompt exactly as it will be dispatched (text, image blocks, attachments) so a queued receipt promises retained input. The dispatch attempt is written before the provider is asked; a record found `dispatching` at boot becomes `uncertain` and is retained, never replayed. States and their meaning: [docs/slp/architecture.md](slp/architecture.md#receipts-and-notifications).
+
+**Path:** `$PASEO_HOME/slp/checkpoints/{slotId}.json` and `{transferId}.json`
+
+The slot's current checkpoint is one file named by the slot, rewritten in place with a rising revision; a transfer copies it under its own id at the switch so the finalized snapshot never changes. The agent-supplied content and the daemon-attached fields (mail watermark, timeline cursor) are separate. The cursor is an epoch and sequence in the daemon's timeline, valid only in that epoch. Contract: [docs/slp/handoff.md](slp/handoff.md#checkpoint).
+
+**Path:** `$PASEO_HOME/slp/transfers/{transferId}.json`
+
+One file per same-role handoff, a phase-discriminated journal. It is a manifest, not the commit: the group record's active-generation pointer is the commit, and boot recovery reconciles the two — pointer still at the source restores the source, pointer at the candidate rolls forward, anything else freezes the group. From the stop on, the record carries what the stop found (pending permissions and the bounded history tail after the checkpoint); a blocked or aborted record keeps it if it had it. Recovery rule: [docs/slp/handoff.md](slp/handoff.md#the-recovery-rule).
 
 ## 2. Daemon Configuration
 

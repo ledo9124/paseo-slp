@@ -519,6 +519,25 @@ function resolveProfileLists(persisted: ReturnType<typeof loadPersistedConfig>) 
   };
 }
 
+/** On by default; the switch exists so a host can turn the feature off without a code change. */
+function resolveSlpEnabled(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): boolean {
+  return parseBooleanEnv(env.PASEO_SLP_ENABLED) ?? persisted.features?.slp?.enabled ?? true;
+}
+
+function resolveSlpSettings(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): Pick<PaseoDaemonConfig, "slpEnabled" | "slpHandoff" | "slpRoles"> {
+  return {
+    slpEnabled: resolveSlpEnabled(env, persisted),
+    slpHandoff: parseBooleanEnv(env.PASEO_SLP_HANDOFF) ?? persisted.features?.slp?.handoff ?? false,
+    slpRoles: persisted.features?.slp?.roles,
+  };
+}
+
 function resolveStaticLoadConfigSettings(
   env: NodeJS.ProcessEnv,
   cli: CliConfigOverrides | undefined,
@@ -528,6 +547,7 @@ function resolveStaticLoadConfigSettings(
     mcpEnabled: cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true,
     mcpInjectIntoAgents:
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
+    ...resolveSlpSettings(env, persisted),
     browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
@@ -563,6 +583,8 @@ export function resolveConfigFromPersisted(
   const {
     mcpEnabled,
     mcpInjectIntoAgents,
+    slpEnabled,
+    slpHandoff,
     browserToolsEnabled,
     autoArchiveAfterMerge,
     appendSystemPrompt,
@@ -629,6 +651,8 @@ export function resolveConfigFromPersisted(
     relayPublicUseTls: relay.publicUseTls,
     serviceProxy,
     webUi,
+    slpEnabled,
+    slpHandoff,
     appBaseUrl,
     auth: resolveAuthConfig(env, persisted),
     openai,
@@ -757,6 +781,8 @@ function resolveServiceAndWebUiOverridePaths(
     paths.push("features.webUi.enabled");
   }
   if (env.PASEO_WEB_UI_DIST_DIR !== undefined) paths.push("features.webUi.distDir");
+  if (parseBooleanEnv(env.PASEO_SLP_ENABLED) !== undefined) paths.push("features.slp.enabled");
+  if (parseBooleanEnv(env.PASEO_SLP_HANDOFF) !== undefined) paths.push("features.slp.handoff");
   return paths;
 }
 

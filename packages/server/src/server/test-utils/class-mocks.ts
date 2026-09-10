@@ -36,6 +36,9 @@ export function createStub<T extends object>(stubs: { [K in keyof T]?: unknown }
     get(target, prop, receiver) {
       if (Reflect.has(target, prop)) return Reflect.get(target, prop, receiver);
       if (typeof prop === "symbol") return undefined;
+      // Awaiting a stub, or returning it from an async function, probes `then`;
+      // a stub is a plain value, not a thenable.
+      if (prop === "then") return undefined;
       return (..._args: unknown[]): never => {
         throw new Error(`createStub: "${prop}" was called but not stubbed`);
       };

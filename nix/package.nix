@@ -29,6 +29,9 @@ buildNpmPackage rec {
       let
         baseName = builtins.baseNameOf path;
         relPath = lib.removePrefix (toString ./..) path;
+        # The server build copies docs/slp/roles into dist (see build:lib in
+        # packages/server/package.json), so that directory and its parents stay.
+        isRoleDoc = p: p == "/docs" || p == "/docs/slp" || lib.hasPrefix "/docs/slp/roles" p;
       in
       # Exclude non-daemon workspace contents (keep package.json for workspace resolution)
       !(lib.hasPrefix "/packages/app/android" relPath)
@@ -37,12 +40,13 @@ buildNpmPackage rec {
       && !(lib.hasPrefix "/packages/website/public" relPath)
       && !(lib.hasPrefix "/packages/desktop/src" relPath)
       && !(lib.hasPrefix "/packages/desktop/src-tauri" relPath)
-      # Documentation, CI definitions and agent/editor configuration. None of
-      # these reach the build. Excluding them here also matters for the desktop
-      # derivation, which inherits this package's npmDeps: leaving them in makes
-      # a docs-only commit produce a new npm-deps .drv, and so a new desktop
-      # .drv, and so a full rebuild for a byte-identical result.
-      && !(lib.hasPrefix "/docs" relPath)
+      # Documentation, CI definitions and agent/editor configuration. Apart
+      # from the SLP role files, none of these reach the build. Excluding them
+      # here also matters for the desktop derivation, which inherits this
+      # package's npmDeps: leaving them in makes a docs-only commit produce a
+      # new npm-deps .drv, and so a new desktop .drv, and so a full rebuild for
+      # a byte-identical result.
+      && (!(lib.hasPrefix "/docs" relPath) || isRoleDoc relPath)
       && !(lib.hasPrefix "/.github" relPath)
       && !(lib.hasPrefix "/.agents" relPath)
       && !(lib.hasPrefix "/.claude" relPath)

@@ -5,6 +5,7 @@ import {
   type AgentClient,
   type AgentCreateSessionOptions,
   type AgentFeature,
+  type AgentExecutionPolicy,
   type AgentLaunchContext,
   type AgentResumeSessionOptions,
   type AgentMode,
@@ -50,6 +51,7 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
+import { PASEO_MCP_SERVER_NAME } from "../runtime-mcp-config.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { curateAgentActivity } from "../activity-curator.js";
 import {
@@ -273,6 +275,24 @@ interface CodexModePreset {
   approvalPolicy: string;
   sandbox: string;
   approvalsReviewer?: "auto_review";
+}
+
+/**
+ * Receive-only preparation (docs/slp/handoff.md#transfer-sequence): read-only
+ * sandbox and no approval route that could grant a write, regardless of the
+ * session's own mode and native options.
+ */
+const PREPARATION_PRESET: CodexModePreset = { approvalPolicy: "never", sandbox: "read-only" };
+
+/** The app-server resolved a thread with a sandbox the preparation policy forbids. */
+export class CodexPreparationSandboxError extends Error {
+  constructor(
+    readonly sandboxType: string,
+    readonly reason: string,
+  ) {
+    super(`Codex resolved sandbox ${sandboxType} while ${reason}; preparation requires readOnly`);
+    this.name = "CodexPreparationSandboxError";
+  }
 }
 
 const MODE_PRESETS: Record<string, CodexModePreset> = {
@@ -817,6 +837,7 @@ interface CodexMcpServerConfig {
   args?: string[];
   env?: Record<string, string>;
   tool_timeout_sec?: number;
+  default_tools_approval_mode?: "approve" | "prompt";
 }
 
 function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
@@ -3392,6 +3413,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
+    private readonly resolveExecutionPolicy?: () => AgentExecutionPolicy,
   ) {
     this.logger = logger.child({
       module: "agent",
@@ -3524,6 +3546,10 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private rememberResolvedSandboxPolicy(response: unknown): void {
     const sandbox = toObjectRecord(toObjectRecord(response)?.sandbox);
+    const policy = this.executionPolicy();
+    if (policy.kind === "preparation" && sandbox && sandbox.type !== "readOnly") {
+      throw new CodexPreparationSandboxError(String(sandbox.type), policy.reason);
+    }
     this.resolvedSandboxPolicy = sandbox ?? null;
     if (sandbox?.type !== "workspaceWrite") return;
     this.resolvedWorkspaceWrite = readSandboxWorkspaceWrite(sandbox);
@@ -4052,6 +4078,14 @@ export class CodexAppServerAgentSession implements AgentSession {
     params: Record<string, unknown>,
     preset: CodexModePreset,
   ): { approvalPolicy?: string; sandboxPolicyType?: string } {
+    if (this.executionPolicy().kind === "preparation") {
+      params.approvalPolicy = PREPARATION_PRESET.approvalPolicy;
+      params.sandboxPolicy = toSandboxPolicy(PREPARATION_PRESET.sandbox);
+      return {
+        approvalPolicy: PREPARATION_PRESET.approvalPolicy,
+        sandboxPolicyType: PREPARATION_PRESET.sandbox,
+      };
+    }
     const approvalPolicy = this.hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
     const sandboxPolicyType =
       this.providerOptions.sandbox_mode ??
@@ -5069,6 +5103,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     approvalPolicy?: string;
     sandbox?: string;
   } {
+    const preparing = this.executionPolicy().kind === "preparation";
     const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
     const approvalPolicy = this.hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
     const sandbox = this.hasWorkflowModeOverride ? preset.sandbox : undefined;
@@ -5088,10 +5123,23 @@ export class CodexAppServerAgentSession implements AgentSession {
       ...(innerConfig ? { config: innerConfig } : {}),
       ...(this.ephemeral ? { ephemeral: true } : {}),
     };
+    if (preparing) {
+      params.approvalPolicy = PREPARATION_PRESET.approvalPolicy;
+      params.sandbox = PREPARATION_PRESET.sandbox;
+      return {
+        params,
+        approvalPolicy: PREPARATION_PRESET.approvalPolicy,
+        sandbox: PREPARATION_PRESET.sandbox,
+      };
+    }
     if (this.hasWorkflowModeOverride) {
       applyApprovalsReviewerParam(params, preset);
     }
     return { params, approvalPolicy, sandbox };
+  }
+
+  private executionPolicy(): AgentExecutionPolicy {
+    return this.resolveExecutionPolicy?.() ?? { kind: "authorized" };
   }
 
   private buildCodexInnerConfig(): Record<string, unknown> | null {
@@ -5100,10 +5148,22 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.deps.customCodexConfig) {
       Object.assign(innerConfig, this.deps.customCodexConfig);
     }
+    if (this.executionPolicy().kind === "preparation") {
+      // Native options outrank the mode preset on both thread and turn start,
+      // so the preparation policy has to replace them, not sit beside them.
+      innerConfig.sandbox_mode = PREPARATION_PRESET.sandbox;
+      innerConfig.approval_policy = PREPARATION_PRESET.approvalPolicy;
+    }
     if (this.config.mcpServers) {
       const mcpServers: Record<string, CodexMcpServerConfig> = {};
       for (const [name, serverConfig] of Object.entries(this.config.mcpServers)) {
         mcpServers[name] = toCodexMcpConfig(serverConfig);
+      }
+      const paseo = mcpServers[PASEO_MCP_SERVER_NAME];
+      if (paseo && this.executionPolicy().kind === "preparation") {
+        // "never" also refuses MCP calls that would prompt, which would take the
+        // readiness channel with it. The daemon gates its own tools per call.
+        mcpServers[PASEO_MCP_SERVER_NAME] = { ...paseo, default_tools_approval_mode: "approve" };
       }
       innerConfig.mcp_servers = mcpServers;
     }
@@ -6987,6 +7047,8 @@ export class CodexAppServerAgentClient implements AgentClient {
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
+      "interactive",
+      launchContext?.resolveExecutionPolicy,
     );
     await session.connect();
     return session;
@@ -7019,6 +7081,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       autoReviewEnabled,
       launchContext?.agentId,
       options?.purpose ?? "interactive",
+      launchContext?.resolveExecutionPolicy,
     );
     await session.connect();
     return session;

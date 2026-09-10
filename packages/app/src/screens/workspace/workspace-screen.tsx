@@ -41,6 +41,7 @@ import { WorkspaceActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/workspace/open-in-editor/button";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
+import { useSlpEndGroup } from "@/slp/use-end-group";
 import { useNavigateToImportedAgent } from "@/hooks/use-import-session";
 import { useToast } from "@/contexts/toast-context";
 import { getOrCreateClientId } from "@/utils/client-id";
@@ -962,6 +963,7 @@ interface WorkspaceHeaderTitleBarProps {
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
+  onEndSlpGroup?: () => void;
   onScriptTerminalStarted: (terminalId: string) => void;
   onViewScriptTerminal: (terminalId: string) => void;
   onOpenUrlInBrowserTab: (url: string) => void;
@@ -991,6 +993,7 @@ function WorkspaceHeaderTitleBar({
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
+  onEndSlpGroup,
   onScriptTerminalStarted,
   onViewScriptTerminal,
   onOpenUrlInBrowserTab,
@@ -1029,6 +1032,7 @@ function WorkspaceHeaderTitleBar({
             onCopyWorkspacePath={onCopyWorkspacePath}
             onCopyBranchName={onCopyBranchName}
             onOpenSetupTab={onOpenSetupTab}
+            onEndSlpGroup={onEndSlpGroup}
           />
         ) : (
           <WorkspaceHeaderMenuDesktop
@@ -1040,6 +1044,7 @@ function WorkspaceHeaderTitleBar({
             onCopyWorkspacePath={onCopyWorkspacePath}
             onCopyBranchName={onCopyBranchName}
             onOpenSetupTab={onOpenSetupTab}
+            onEndSlpGroup={onEndSlpGroup}
           />
         )}
         {isMobile && workspaceScripts.length > 0 ? (
@@ -1572,6 +1577,10 @@ function WorkspaceScreenContent({
   const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
   const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
   const [isImportSheetVisible, setIsImportSheetVisible] = useState(false);
+  const endSlpGroup = useSlpEndGroup({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+  });
   const canOpenImportSheet = [client, isConnected, workspaceDirectory].every(Boolean);
   const openImportSheet = useCallback(() => {
     setIsImportSheetVisible(true);
@@ -3889,6 +3898,7 @@ function WorkspaceScreenContent({
                 onCopyWorkspacePath={handleCopyWorkspacePath}
                 onCopyBranchName={handleCopyBranchName}
                 onOpenSetupTab={handleOpenSetupTab}
+                onEndSlpGroup={endSlpGroup}
                 onScriptTerminalStarted={handleScriptTerminalStarted}
                 onViewScriptTerminal={handleViewScriptTerminal}
                 onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
@@ -3919,6 +3929,7 @@ function WorkspaceScreenContent({
       normalizedServerId,
       normalizedWorkspaceId,
       openImportSheet,
+      endSlpGroup,
       showCreateBrowserTab,
       showScreenHeader,
       showWorkspaceSetup,

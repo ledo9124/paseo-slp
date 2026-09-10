@@ -3,6 +3,7 @@ import type { Server as HTTPServer } from "http";
 import type pino from "pino";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
+import type { AgentRequests } from "./agent/requests/index.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
 import type { ScheduleService } from "./schedule/service.js";
@@ -141,6 +142,7 @@ function createServer(terminalManager: TerminalManager, workspaceRegistry?: Work
     "srv-test",
     createStub<AgentManager>(agentManager),
     createStub<AgentStorage>({}),
+    createStub<AgentRequests>({}),
     createStub<DownloadTokenStore>({}),
     "/tmp/paseo-test",
     createStub<DaemonConfigStore>(daemonConfigStore),

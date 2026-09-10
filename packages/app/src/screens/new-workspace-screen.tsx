@@ -7,6 +7,7 @@ import { Pressable, StyleSheet as RNStyleSheet, Text, View } from "react-native"
 import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { toSlpGroupMode, useSlpNewWorkspaceMode, type SlpGroupMode } from "@/slp/composer-mode";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
@@ -759,6 +760,7 @@ interface SubmitDraftInput {
   provider: AgentProvider;
   composerState: NewWorkspaceComposerState;
   supportsForgeSearch: boolean;
+  slpMode: SlpGroupMode | null;
 }
 
 type NewWorkspaceComposerState = NonNullable<
@@ -863,6 +865,7 @@ interface CreateChatAgentInput {
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   draftId?: string;
   supportsForgeSearch: boolean;
+  slpMode: SlpGroupMode | null;
   labels: {
     composerStateRequired: string;
     selectModel: string;
@@ -964,6 +967,7 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
     provider,
     composerState,
     supportsForgeSearch: input.supportsForgeSearch,
+    slpMode: input.slpMode,
   });
 }
 
@@ -1040,6 +1044,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     provider,
     composerState,
     initialSetup,
+    slpMode,
   } = input;
   const draftId = draftIdInput?.trim() || generateDraftId();
   const clientMessageId = generateMessageId();
@@ -1056,17 +1061,20 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     composerState,
     initialSetup,
   });
-  useCreateFlowStore.getState().setPending({
-    serverId,
-    draftId,
-    workspaceId,
-    agentId: null,
-    clientMessageId,
-    text: text.trim(),
-    timestamp,
-    ...(wirePayload.images.length > 0 ? { images: wirePayload.images } : {}),
-    ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
-  });
+  // A group start has no agent to stream into until the daemon answers.
+  if (!slpMode) {
+    useCreateFlowStore.getState().setPending({
+      serverId,
+      draftId,
+      workspaceId,
+      agentId: null,
+      clientMessageId,
+      text: text.trim(),
+      timestamp,
+      ...(wirePayload.images.length > 0 ? { images: wirePayload.images } : {}),
+      ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
+    });
+  }
   useWorkspaceDraftSubmissionStore.getState().setPending({
     serverId,
     workspaceId,
@@ -1081,6 +1089,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     ...(submission.model ? { model: submission.model } : {}),
     ...(submission.thinkingOptionId ? { thinkingOptionId: submission.thinkingOptionId } : {}),
     ...(submission.featureValues ? { featureValues: submission.featureValues } : {}),
+    ...(slpMode ? { slpMode } : {}),
     allowEmptyText: true,
   });
   clearDraft("sent");
@@ -1582,6 +1591,8 @@ export function NewWorkspaceScreen({
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
+  const slpControl = useSlpNewWorkspaceMode({ serverId: selectedServerId });
+  const slpMode = toSlpGroupMode(slpControl);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
     typeof normalizeWorkspaceDescriptor
@@ -2071,6 +2082,7 @@ export function NewWorkspaceScreen({
           clearDraft: chatDraft.clear,
           draftId,
           supportsForgeSearch,
+          slpMode,
           labels: {
             composerStateRequired: t("newWorkspace.errors.composerStateRequired"),
             selectModel: t("newWorkspace.errors.selectModel"),
@@ -2091,6 +2103,7 @@ export function NewWorkspaceScreen({
       forkDraftSetup,
       launchTarget,
       selectedServerId,
+      slpMode,
       supportsForgeSearch,
       t,
       toast,
@@ -2205,9 +2218,10 @@ export function NewWorkspaceScreen({
         ? {
             ...composerState.agentControls,
             disabled: isPending,
+            slpControl,
           }
         : undefined,
-    [composerState, isPending],
+    [composerState, isPending, slpControl],
   );
 
   const pickerEmptyText =

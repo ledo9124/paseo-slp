@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "pino";
 import { z } from "zod";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
@@ -130,6 +131,8 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
+import { AgentRequests } from "./agent/requests/index.js";
+import { SlpService } from "./slp/service.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -177,6 +180,7 @@ import type {
   AgentSkillSelection,
   FirstAgentContext,
   PluginSource,
+  SlpRolesConfig,
   TerminalProfile,
 } from "@getpaseo/protocol/messages";
 import type {
@@ -213,6 +217,7 @@ import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
 import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
 import {
   createAgentCommand,
+  formatProviderModel,
   type CreateAgentCommandDependencies,
 } from "./agent/create-agent/create.js";
 import { archiveAgentCommand, cancelAgentRunCommand } from "./agent/lifecycle-command.js";
@@ -229,6 +234,19 @@ import {
 import { DaemonExecutions } from "./hub/daemon-executions.js";
 import { PluginService } from "./plugins/index.js";
 import { ManagedPluginSources } from "./plugins/managed-source.js";
+
+/**
+ * Removes a header from both views of a Node request: the SDK's transport
+ * rebuilds the web Request from `rawHeaders` through Hono, so clearing the
+ * parsed `headers` alone changes nothing it sees.
+ */
+function dropRequestHeader(req: express.Request, name: string): void {
+  delete req.headers[name];
+  const raw = req.rawHeaders;
+  for (let index = raw.length - 2; index >= 0; index -= 2) {
+    if (raw[index]?.toLowerCase() === name) raw.splice(index, 2);
+  }
+}
 
 const MCP_DEBUG_BATCH_LIMIT = 10;
 const MCP_DEBUG_SECRET = "[redacted]";
@@ -394,6 +412,12 @@ export interface PaseoDaemonConfig {
   trustedProxies?: true | string[];
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
+  /** Off hides the SLP feature and refuses the group RPCs; existing groups still recover their gates. */
+  slpEnabled?: boolean;
+  /** Same-role handoff tools and instructions for SLP members; off until P5 says the loop is worth it. */
+  slpHandoff?: boolean;
+  /** Per-role launch settings; see packages/protocol SlpRolesConfigSchema. */
+  slpRoles?: SlpRolesConfig;
   browserToolsEnabled?: boolean;
   git?: {
     maxProcessesPerSecond: number;
@@ -462,6 +486,7 @@ export interface PaseoDaemon {
   config: PaseoDaemonConfig;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
+  slp: SlpService;
   terminalManager: TerminalManager;
   serviceProxy: ServiceProxySubsystem;
   scriptRuntimeStore: WorkspaceScriptRuntimeStore;
@@ -551,6 +576,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
     skills: { selection: config.skillSelection },
+    slp: { roles: config.slpRoles },
   };
 
   if (config.terminalProfiles !== undefined) {
@@ -856,6 +882,9 @@ export async function createPaseoDaemon(
   }
 
   const agentStorage = new AgentStorage(config.agentStoragePath, logger);
+  // Daemon-owned so services constructed here (not only socket sessions) can
+  // use its keyed create. The directory and receipt format are unchanged.
+  const agentRequests = new AgentRequests(path.join(config.paseoHome, "agent-requests"));
   const projectRegistry = new FileBackedProjectRegistry(
     path.join(config.paseoHome, "projects", "projects.json"),
     logger,
@@ -1163,6 +1192,48 @@ export async function createPaseoDaemon(
   };
   const createAgent = (input: Parameters<typeof createAgentCommand>[1]) =>
     createAgentCommand(createAgentCommandDependencies, input);
+  // SLP groups join the recovery that already ran for agent storage and the
+  // workspace registries; this sits after the create funnel is bound because
+  // resuming an interrupted initialization may have to create the Lead.
+  const slpService = new SlpService({
+    paseoHome: config.paseoHome,
+    logger,
+    agentManager,
+    agentStorage,
+    agentRequests,
+    createMemberAgent: async (input) => {
+      await createAgent({
+        kind: "mcp",
+        agentId: input.agentId,
+        provider: formatProviderModel(input.source.provider, input.source.model),
+        title: input.title,
+        cwd: input.source.cwd,
+        workspaceId: input.workspaceId,
+        mode: input.source.modeId ?? undefined,
+        thinking: input.source.thinkingOptionId ?? undefined,
+        config: {
+          systemPrompt: input.systemPrompt,
+          ...(input.source.providerOptions
+            ? { providerOptions: input.source.providerOptions }
+            : {}),
+        },
+        labels: input.labels,
+        background: true,
+        notifyOnFinish: false,
+      });
+    },
+    isDelegationToolingEnabled: () => {
+      const mcp = daemonConfigStore.get().mcp;
+      return mcp.enabled !== false && mcp.injectIntoAgents;
+    },
+    roleSettings: () => daemonConfigStore.get().slp?.roles ?? {},
+    isHandoffEnabled: () => config.slpHandoff === true,
+  });
+  // Peers are created by the Lead through the create funnel; the service is
+  // constructed after the funnel is bound, so the hook is attached here.
+  createAgentCommandDependencies.slp = slpService;
+  await slpService.recover();
+  logger.info({ elapsed: elapsed() }, "SLP groups recovered");
   const archiveWorkspaceByIdExternal = (workspaceId: string, requestId: string) =>
     archiveByScope(
       {
@@ -1359,6 +1430,7 @@ export async function createPaseoDaemon(
     scheduleService,
     providerSnapshotManager,
     daemonConfigStore,
+    slp: slpService,
     github,
     workspaceGitService,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
@@ -1521,6 +1593,21 @@ export async function createPaseoDaemon(
           void server.close();
         });
 
+        // COMPAT(mcpProtocolHeader): some MCP clients (seen in a provider CLI
+        // released 2026-09) stamp every request with their own protocol
+        // version (2026-07-28) instead of the negotiated one,
+        // and the SDK answers 400 to a version it does not know, so the agent
+        // ends up with no Paseo tools at all. The session is stateless, so
+        // dropping the header makes the SDK fall back to the negotiated
+        // version. Remove after 2026-12-01 or once the SDK knows that version.
+        const protocolVersionHeader = req.header("mcp-protocol-version");
+        if (
+          protocolVersionHeader !== undefined &&
+          !SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersionHeader)
+        ) {
+          dropRequestHeader(req, "mcp-protocol-version");
+        }
+
         await transport.handleRequest(
           req as unknown as IncomingMessage,
           res as unknown as ServerResponse,
@@ -1644,6 +1731,7 @@ export async function createPaseoDaemon(
               serverId,
               agentManager,
               agentStorage,
+              agentRequests,
               downloadTokenStore,
               config.paseoHome,
               daemonConfigStore,
@@ -1707,6 +1795,7 @@ export async function createPaseoDaemon(
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
+              config.slpEnabled === false ? undefined : slpService,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
@@ -1774,6 +1863,9 @@ export async function createPaseoDaemon(
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();
+    // Stop the SLP watchers before agents close, so a member's shutdown close
+    // is not read as a handback and no SLP record lands after shutdown.
+    await slpService.dispose().catch(() => undefined);
     await closeAllAgents(logger, agentManager);
     await agentManager.flushForShutdown().catch(() => undefined);
     detachAgentStoragePersistence();
@@ -1808,6 +1900,7 @@ export async function createPaseoDaemon(
     config,
     agentManager,
     agentStorage,
+    slp: slpService,
     terminalManager,
     serviceProxy,
     scriptRuntimeStore,

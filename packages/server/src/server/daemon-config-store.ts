@@ -31,6 +31,7 @@ interface SupportedMutableConfigPatch {
   skills?: MutableDaemonConfig["skills"];
   pluginsEnabled?: boolean;
   plugins?: MutableDaemonConfig["plugins"];
+  slp?: MutableDaemonConfig["slp"];
 }
 
 interface LoggerLike {
@@ -276,6 +277,7 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
     ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
+    ...(patch.slp?.roles !== undefined ? { slp: { roles: patch.slp.roles } } : {}),
   };
 }
 
@@ -368,6 +370,10 @@ export class DaemonConfigStore {
       merged.skills = { selection: parsedPatch.skills.selection };
     }
     if (parsedPatch.plugins !== undefined) merged.plugins = parsedPatch.plugins;
+    // Role settings are replaced as a whole: a merge would keep a role the client removed.
+    if (parsedPatch.slp?.roles !== undefined) {
+      merged.slp = { ...merged.slp, roles: parsedPatch.slp.roles };
+    }
     const next = MutableDaemonConfigSchema.parse(
       omitMetadataGenerationProvidersFromConfig(
         omitProvidersFromConfig(merged, removedProviders),
@@ -588,6 +594,14 @@ function mergeMutablePatchIntoPersistedConfig(params: {
     ...persisted,
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
+    ...(patch.slp?.roles !== undefined
+      ? {
+          features: {
+            ...persisted.features,
+            slp: { ...persisted.features?.slp, roles: patch.slp.roles },
+          },
+        }
+      : {}),
     ...(daemon ? { daemon } : { daemon: undefined }),
     ...(agents ? { agents } : { agents: undefined }),
   } as PersistedConfig;

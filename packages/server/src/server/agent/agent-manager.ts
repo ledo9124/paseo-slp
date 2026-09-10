@@ -25,6 +25,7 @@ import {
   type AgentCreateSessionOptions,
   type AgentResumeSessionOptions,
   type AgentFeature,
+  type AgentExecutionPolicy,
   type AgentLaunchContext,
   type AgentSlashCommand,
   type AgentMode,
@@ -74,6 +75,7 @@ import {
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
+import { drainAgentStream } from "./agent-stream-drain.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
@@ -312,6 +314,44 @@ export interface AgentManagerOptions {
 export type ActiveTurnSteerDispatchResult =
   | { status: "inactive" | "steered" }
   | { status: "replaced"; iterator: AsyncGenerator<AgentStreamEvent> };
+
+/**
+ * Outcome of {@link AgentManager.admitForegroundTurn}. `busy` never cancels
+ * the run that owns the slot. `turnId` is null when no turn id can be
+ * correlated yet: the owning run has not reached `started`, a replacement is
+ * pending, or the agent reports `running` with no tracked turn.
+ */
+export type ForegroundTurnAdmission =
+  | { status: "started" }
+  | { status: "steered" }
+  | { status: "busy"; turnId: string | null };
+
+/**
+ * Group-level refusal for destructive operations. Installed by the SLP
+ * service; checked before the per-agent lifecycle lane is entered, never
+ * from inside one. Throws to refuse.
+ */
+export interface DestructiveOperationGate {
+  assertAgentOperationAllowed(agentId: string, operation: "archive" | "delete"): void;
+  assertWorkspaceOperationAllowed(workspaceId: string, operation: "archive"): void;
+}
+
+/**
+ * What an agent may run right now, decided by daemon-owned state (SLP
+ * generations). `assertTurnAllowed` is checked synchronously at the run-slot
+ * claim, so every route into a turn sees it; it throws to refuse.
+ * `executionPolicyFor` is handed to the provider session through its launch
+ * context and consulted at each of the provider's own policy decisions.
+ */
+export interface AgentAdmissionGate {
+  assertTurnAllowed(agentId: string): void;
+  executionPolicyFor(agentId: string): AgentExecutionPolicy;
+}
+
+export interface AdmitForegroundTurnOptions extends AgentRunOptions {
+  /** When the slot is busy, deliver into the live turn instead of reporting busy. */
+  steer?: boolean;
+}
 
 function stripSteerOptions(options?: AgentSteerOptions): AgentRunOptions | undefined {
   if (!options) return undefined;
@@ -718,6 +758,8 @@ export class AgentManager {
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
+  private destructiveOperationGate: DestructiveOperationGate | null = null;
+  private admissionGate: AgentAdmissionGate | null = null;
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
@@ -797,6 +839,26 @@ export class AgentManager {
 
   setAgentArchivedCallback(callback: AgentArchivedCallback): void {
     this.onAgentArchived = callback;
+  }
+
+  setDestructiveOperationGate(gate: DestructiveOperationGate): void {
+    this.destructiveOperationGate = gate;
+  }
+
+  setAdmissionGate(gate: AgentAdmissionGate): void {
+    this.admissionGate = gate;
+  }
+
+  /** Workspace archive and project removal call this before any teardown effect. */
+  assertWorkspaceDestructiveOperationAllowed(workspaceId: string): void {
+    this.destructiveOperationGate?.assertWorkspaceOperationAllowed(workspaceId, "archive");
+  }
+
+  private assertAgentDestructiveOperationAllowed(
+    agentId: string,
+    operation: "archive" | "delete",
+  ): void {
+    this.destructiveOperationGate?.assertAgentOperationAllowed(agentId, operation);
   }
 
   setMcpBaseUrl(url: string | null): void {
@@ -1656,6 +1718,7 @@ export class AgentManager {
   }
 
   private async archiveAgentUnlocked(agentId: string): Promise<{ archivedAt: string }> {
+    this.assertAgentDestructiveOperationAllowed(agentId, "archive");
     const agent = this.requireAgent(agentId);
     if (!this.registry) {
       throw new Error("Agent storage is not configured");
@@ -2002,6 +2065,7 @@ export class AgentManager {
   }
 
   async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
+    this.assertAgentDestructiveOperationAllowed(agentId, "archive");
     const registry = this.requireRegistry();
     const liveAgent = this.getAgent(agentId);
     if (liveAgent) {
@@ -2314,6 +2378,7 @@ export class AgentManager {
       );
       throw new Error(`Agent ${agentId} already has an active run`);
     }
+    this.admissionGate?.assertTurnAllowed(agentId);
 
     const agent = existingAgent;
     const isReplacement = agent.pendingReplacement;
@@ -2594,23 +2659,87 @@ export class AgentManager {
     expectedTurnId: string,
     operation: () => Promise<T>,
   ): Promise<T> {
-    return this.runForegroundMutation(agent.id, async () => {
-      await this.drainSessionEvents(agent.id);
-      this.agentStreamCoalescer.flushFor(agent.id);
-      this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
-      const barrier: SteerEventBarrier = { events: [] };
-      this.steerEventBarriers.set(agent.id, barrier);
-      try {
-        return await operation();
-      } finally {
-        if (this.steerEventBarriers.get(agent.id) === barrier) {
-          this.steerEventBarriers.delete(agent.id);
-        }
-        for (const event of barrier.events) {
-          this.enqueueSessionEvent(agent.id, event);
-        }
-        await this.drainSessionEvents(agent.id);
+    return this.runForegroundMutation(agent.id, () =>
+      this.steerWithinLane(agent, expectedTurnId, operation),
+    );
+  }
+
+  /** Steer body for callers that already hold the agent's foreground lane. */
+  private async steerWithinLane<T>(
+    agent: ActiveManagedAgent,
+    expectedTurnId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    await this.drainSessionEvents(agent.id);
+    this.agentStreamCoalescer.flushFor(agent.id);
+    this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
+    const barrier: SteerEventBarrier = { events: [] };
+    this.steerEventBarriers.set(agent.id, barrier);
+    try {
+      return await operation();
+    } finally {
+      if (this.steerEventBarriers.get(agent.id) === barrier) {
+        this.steerEventBarriers.delete(agent.id);
       }
+      for (const event of barrier.events) {
+        this.enqueueSessionEvent(agent.id, event);
+      }
+      await this.drainSessionEvents(agent.id);
+    }
+  }
+
+  /**
+   * Admit a prompt as a new foreground turn if the agent has no run in
+   * flight; otherwise, with `steer`, deliver it into the live turn. Unlike
+   * {@link replaceAgentRun} and {@link steerOrReplaceActiveTurn} this never
+   * cancels: a busy agent is reported, not interrupted.
+   *
+   * One lane entry covers the whole decision. Session events are drained
+   * first so the busy answer is not taken from a queued terminal event, and
+   * the steer targets the same turn the busy answer saw. The operation must
+   * not call anything that re-enters the lane for the same agent; the lane
+   * is a promise chain and would deadlock. See docs/slp/admission.md.
+   */
+  async admitForegroundTurn(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AdmitForegroundTurnOptions,
+  ): Promise<ForegroundTurnAdmission> {
+    const { steer, ...runOptions } = options ?? {};
+    return this.runForegroundMutation(agentId, async () => {
+      await this.drainSessionEvents(agentId);
+      const agent = this.requireSessionAgent(agentId);
+      // A pending replacement has reserved the slot for a caller that is still
+      // awaiting its cancel; hasInFlightRun cannot see that reservation once
+      // the cancelled turn ends in error.
+      if (!agent.pendingReplacement && !this.hasInFlightRun(agentId)) {
+        // INVARIANT: no await between the busy check above and this call.
+        // streamAgent claims the run slot synchronously, before its generator
+        // body exists, so check-and-claim in one tick is atomic against every
+        // other writer in the daemon. An await here reopens the race.
+        const iterator = this.streamAgent(agentId, prompt, runOptions);
+        drainAgentStream(iterator, { logger: this.logger, agentId });
+        return { status: "started" };
+      }
+      const expectedTurnId = agent.pendingReplacement
+        ? null
+        : (agent.activeForegroundTurnId ?? this.runs.getTurnId(agentId));
+      if (!steer || !expectedTurnId || !agent.session.steerActiveTurn) {
+        return { status: "busy", turnId: expectedTurnId };
+      }
+      const admission = await this.steerWithinLane(agent, expectedTurnId, async () => {
+        const result = await agent.session.steerActiveTurn!(prompt, {
+          ...runOptions,
+          expectedTurnId,
+        });
+        if (result.status === "accepted") {
+          await this.recordAcceptedSteer(agent, prompt, runOptions.clientMessageId, expectedTurnId);
+        }
+        return result;
+      });
+      return admission.status === "accepted"
+        ? { status: "steered" }
+        : { status: "busy", turnId: expectedTurnId };
     });
   }
 
@@ -3003,6 +3132,7 @@ export class AgentManager {
   }
 
   async deleteAgentState(agentId: string): Promise<void> {
+    this.assertAgentDestructiveOperationAllowed(agentId, "delete");
     this.discardRetainedAgentState(agentId);
     await this.deleteCommittedTimeline(agentId);
   }
@@ -4789,7 +4919,16 @@ export class AgentManager {
       if (!subscriber.agentId && this.eventBelongsToInternalAgent(event)) {
         continue;
       }
-      subscriber.callback(event);
+      // One throwing subscriber must not starve the subscribers after it or
+      // propagate into the provider ingestion path that called dispatch.
+      try {
+        subscriber.callback(event);
+      } catch (error) {
+        this.logger.error(
+          { err: error, eventType: event.type, subscriberAgentId: subscriber.agentId },
+          "Agent manager subscriber threw",
+        );
+      }
     }
   }
 
@@ -4950,6 +5089,10 @@ export class AgentManager {
         PASEO_AGENT_CWD: cwd,
       },
     };
+    const gate = this.admissionGate;
+    if (gate) {
+      context.resolveExecutionPolicy = () => gate.executionPolicyFor(agentId);
+    }
     if (
       this.paseoToolsEnabled &&
       isPaseoToolPolicyEnabled(paseoToolPolicy) &&

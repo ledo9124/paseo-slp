@@ -163,6 +163,32 @@ const FeatureWebUiSchema = z
   })
   .strict();
 
+const SlpRoleConfigSchema = z
+  .object({
+    provider: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    modeId: z.string().min(1).optional(),
+    thinkingOptionId: z.string().min(1).optional(),
+    instructions: z.string().optional(),
+  })
+  .strict();
+
+const FeatureSlpSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    /** Same-role handoff: the checkpoint and handoff tools and their role instructions. Off by default. */
+    handoff: z.boolean().optional(),
+    roles: z
+      .object({
+        supervisor: SlpRoleConfigSchema.optional(),
+        lead: SlpRoleConfigSchema.optional(),
+        peer: SlpRoleConfigSchema.optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
 const StructuredGenerationProviderConfigSchema = z
   .object({
     provider: z.string().min(1),
@@ -327,6 +353,7 @@ export const PersistedConfigSchema = z
         dictation: FeatureDictationSchema.optional(),
         voiceMode: FeatureVoiceModeSchema.optional(),
         webUi: FeatureWebUiSchema.optional(),
+        slp: FeatureSlpSchema.optional(),
       })
       .strict()
       .optional(),
