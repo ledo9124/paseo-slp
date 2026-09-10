@@ -254,7 +254,7 @@ async function main(): Promise<void> {
     });
     groupId = group.id;
     say(`group ${group.id}`);
-    describeGroup(probe, group);
+    describeGroup(group);
     const contactId = probe.daemon.slp.summarize(group).contactAgentId ?? "";
     if (!contactId) throw new Error("group has no contact agent");
     say(`contact ${contactId}`);

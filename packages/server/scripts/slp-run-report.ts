@@ -173,7 +173,7 @@ function usageFor(member: Member): Promise<Usage | null> {
   return Promise.resolve(null);
 }
 
-function roleOf(members: Member[], slotId: string | undefined): string {
+function roleOf(members: Member[], slotId: string | null | undefined): string {
   const member = members.find((candidate) => candidate.slotId === slotId);
   return member ? `${member.role}` : "?";
 }

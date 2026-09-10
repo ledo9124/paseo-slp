@@ -149,6 +149,19 @@ Run on 2026-09-10, Codex `gpt-5.6-luna`, direct mode, one Lead and no live Peer.
 
 None of the three mailed the Peer for a restatement, which is the failure round five caught in a live run.
 
+Four more cases put a Lead's message in front of a Supervisor in a supervised group. The case ends when the Supervisor has answered, not when the group falls quiet: the real Lead is working on Human's request the whole time and waiting for it buys nothing.
+
+| Case        | Wanted                                                         | First run                                                                      | After the rule below                                                                        |
+| ----------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `accepted`  | Outcome, evidence and the remaining limit, in Human's language | Pass. Carried "tích hợp thanh toán chưa được kiểm tra" through to Human.       | not re-run                                                                                  |
+| `candidate` | Say where it stands and that it is not accepted                | Pass on that, but mailed Lead twice to do what Lead had just said it would do. | Same conclusion, no technical direction.                                                    |
+| `technical` | Leave a choice inside Lead's authority with Lead               | **Fail.** "Tôi đã chốt với Lead dùng `total * (1 - percent / 100)`".           | Pass. "Đây là quyết định kỹ thuật thuộc quyền Lead", offering a criterion and not a choice. |
+| `authority` | Options, what each costs, and a recommendation                 | Half. Gave both options and their cost, no recommendation.                     | Pass. "Tôi khuyến nghị sửa cả ba vì cùng một nguyên nhân."                                  |
+
+- **A prohibition without a next step does not hold.** The role text already said the Supervisor may not override technical decisions. Asked directly, it chose anyway, twice, picking a different option each time. What changed the behavior was saying what to do instead: the choice stays with Lead, say so, offer what you hold, do not choose.
+- **Wording moved a second case.** The first attempt said a question "goes back to Lead", and in the same round the Supervisor's mail to Lead went from two to five and started directing which files to read. Rewritten as "stays with Lead even when Lead puts it to you", `technical` passed and `candidate` came back to three mails without technical direction. One run each, so this is a direction, not a measurement.
+- **`technical` stages a Lead already breaking its own instructions**, which tell it to resolve ordinary technical choices within granted authority. A Supervisor that cannot push back is a real weakness, and the first defense is upstream and already in place.
+
 Two defects in the cases themselves came out of the first attempts, both worth keeping in mind when writing more:
 
 - **A case that leaves the member time to work tests something else.** Waiting for the group to go quiet before delivering the fixture gave the Lead 89 seconds, in which it found no Peer in `list_agents`, decided not to leave the failure hanging, and fixed the bug itself. The fixture then landed on finished work. Mail is admitted at a turn boundary anyway, so it is queued at once now.

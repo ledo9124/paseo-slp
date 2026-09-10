@@ -189,7 +189,7 @@ export async function transcript(probe: Probe, groupId: string): Promise<string>
   return `${lines.join("\n")}\n`;
 }
 
-export function describeGroup(probe: Probe, group: SlpGroupRecord): void {
+export function describeGroup(group: SlpGroupRecord): void {
   for (const slot of Object.values(group.slots)) {
     const active = slot.generations.find((entry) => entry.id === slot.activeGenerationId);
     say(`  ${slot.role} ${active?.agentId ?? "(none)"}`);

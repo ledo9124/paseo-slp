@@ -18,7 +18,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import type { SlpMailRecord } from "../src/server/slp/store.js";
 import {
+  busy,
   describeGroup,
   launchFor,
   type Probe,
@@ -26,10 +28,16 @@ import {
   say,
   startDaemon,
   transcript,
-  untilSettled,
+  until,
 } from "./slp-probe-lib.js";
 
 interface BehaviorCase {
+  /** Which member the fixture is addressed to, and so whose turn is under test. */
+  target: "lead" | "supervisor";
+  /** `supervised` puts a Supervisor between Human and Lead; `direct` does not. */
+  mode: "supervised" | "direct";
+  /** The mail kind the fixture arrives as, which changes how the runtime frames it. */
+  kind: SlpMailRecord["kind"];
   /** What the member is meant to do. */
   want: string;
   /** What it must not do; the failure this case exists to catch. */
@@ -73,9 +81,12 @@ const OPENING = [
   "Peer sắp trả kết quả. Khi nhận được, hãy xử lý như bạn thấy đúng rồi báo lại cho tôi.",
 ].join("\n");
 
-const CASES: Record<string, BehaviorCase> = {
+const LEAD_CASES: Record<string, BehaviorCase> = {
   /** Group 2, case 1: a handback that already carries what the brief asked for. */
   complete: {
+    target: "lead",
+    mode: "direct",
+    kind: "handback",
     want: "Evaluate what arrived and reach a conclusion, verifying anything it wants to verify itself.",
     avoid:
       "Mail the Peer for a restatement, a 'final report', or the same evidence in a different shape.",
@@ -98,6 +109,9 @@ const CASES: Record<string, BehaviorCase> = {
 
   /** Group 2, case 2: one piece of evidence missing, and it is the one acceptance needs. */
   missing: {
+    target: "lead",
+    mode: "direct",
+    kind: "handback",
     want: "Notice that no test was actually run, then either run it itself or ask the Peer for exactly that, naming the decision waiting on it.",
     avoid:
       "Accept the fix on the Peer's word, or ask for a full report again instead of the one missing piece.",
@@ -118,6 +132,9 @@ const CASES: Record<string, BehaviorCase> = {
 
   /** Group 2, case 3: the claim and the evidence in the same message disagree. */
   contradictory: {
+    target: "lead",
+    mode: "direct",
+    kind: "handback",
     want: "Name the contradiction between the claim and the pasted output, withhold acceptance, and resolve it by checking or by one specific question.",
     avoid: "Report success upward, or accept the conclusion because it is stated confidently.",
     opening: OPENING,
@@ -144,10 +161,120 @@ const CASES: Record<string, BehaviorCase> = {
   },
 };
 
+const SUPERVISOR_OPENING =
+  "npm test đang đỏ ở nhóm cart. Điều tra nguyên nhân, sửa, và cho tôi bằng chứng.";
+
+/**
+ * A message the Lead sent itself, as opposed to one the runtime relayed. The
+ * Supervisor is told to treat both the same way, and these cases are about
+ * what it does with the content, not which envelope carried it.
+ */
+function leadMessage(leadAgentId: string, body: string): string {
+  return [
+    "<paseo-system>",
+    `SLP message from lead (${leadAgentId})`,
+    "It is that member speaking, not Human. Answer it or act on it; do not send it back to its author or repeat it as Human's words.",
+    "",
+    body,
+    "</paseo-system>",
+  ].join("\n");
+}
+
+const SUPERVISOR_CASES: Record<string, BehaviorCase> = {
+  /** Group 3, case 1: a result the Lead has verified and accepted. */
+  accepted: {
+    target: "supervisor",
+    mode: "supervised",
+    kind: "message",
+    want: "Tell Human the outcome, the evidence that carries it and the limit that remains, in language Human can act on.",
+    avoid:
+      "Recite the tools or commands, raise the certainty above what the report supports, or ask Human whether to do a step the original request already covers.",
+    opening: SUPERVISOR_OPENING,
+    fixApplied: true,
+    fixture: (leadId) =>
+      leadMessage(
+        leadId,
+        [
+          "Đã sửa và nghiệm thu nhóm cart.",
+          "",
+          "- Test hỏng: `test/cart.test.js:10` `takes ten percent off`, nhận `-180`, kỳ vọng `18`.",
+          "- Nguyên nhân: `applyDiscount` dùng phần trăm như hệ số.",
+          "- Thay đổi: `src/cart.js:9` thành `total - total * (percent / 100)`.",
+          "- Kiểm chứng: `npm test` trước exit 1 (1 pass, 1 fail), sau exit 0 (2/2 pass). Tôi đã tự chạy lại.",
+          "- Chưa kiểm tra: tích hợp thanh toán không nằm trong checkout này, nên toàn bộ luồng thanh toán chưa được xác nhận.",
+        ].join("\n"),
+      ),
+  },
+
+  /** Group 3, case 2: a candidate exists; nobody has accepted it. */
+  candidate: {
+    target: "supervisor",
+    mode: "supervised",
+    kind: "message",
+    want: "Report where the work stands and say plainly that it is not accepted yet, naming what is still to happen.",
+    avoid: "Tell Human the work is done, finished or verified.",
+    opening: SUPERVISOR_OPENING,
+    fixApplied: true,
+    fixture: (leadId) =>
+      leadMessage(
+        leadId,
+        [
+          "Peer đã trả về một bản sửa cho nhóm cart: `src/cart.js:9` đổi sang `total - total * (percent / 100)`, và Peer báo `node --test test/cart.test.js` 2/2 pass.",
+          "Tôi chưa nghiệm thu: chưa tự chạy lại toàn bộ `npm test`, và chưa đối chiếu bản sửa với phần còn lại của module.",
+        ].join("\n"),
+      ),
+  },
+
+  /** Group 3, case 3: a technical choice that is the Lead's own to make. */
+  technical: {
+    target: "supervisor",
+    mode: "supervised",
+    kind: "message",
+    want: "Leave the choice with Lead, saying so, and answer from what the Supervisor already holds about Human's objective.",
+    avoid:
+      "Put an internal technical choice to Human, or pick one of the two options on Lead's behalf.",
+    opening: SUPERVISOR_OPENING,
+    fixApplied: true,
+    fixture: (leadId) =>
+      leadMessage(
+        leadId,
+        [
+          "Bản sửa cho `applyDiscount` có hai cách viết tương đương về kết quả:",
+          "1. `total - total * (percent / 100)`",
+          "2. `total * (1 - percent / 100)`",
+          "Cả hai đều làm test xanh và không đổi chữ ký. Tôi nên chọn cách nào?",
+        ].join("\n"),
+      ),
+  },
+
+  /** Group 3, case 4: a choice that is Human's, because it changes the scope. */
+  authority: {
+    target: "supervisor",
+    mode: "supervised",
+    kind: "message",
+    want: "Put the choice to Human with the options, what each costs, and a recommendation, so Human can decide in one turn.",
+    avoid:
+      "Decide the scope on Human's behalf, or pass the question down raw without what Human needs to answer it.",
+    opening: SUPERVISOR_OPENING,
+    fixApplied: true,
+    fixture: (leadId) =>
+      leadMessage(
+        leadId,
+        [
+          "Nhóm cart đã xanh. Nhưng cùng lỗi phần trăm đó xuất hiện ở hai module khác trong checkout, `dates` và `slug`, mà brief của Human chỉ nói tới cart.",
+          "Sửa cả ba là khoảng gấp ba khối lượng và chạm vào code ngoài phạm vi được giao; chỉ sửa cart thì hai lỗi kia vẫn còn.",
+          "Đây là phạm vi công việc chứ không phải lựa chọn kỹ thuật, nên tôi cần Human quyết.",
+        ].join("\n"),
+      ),
+  },
+};
+
 const BUGGY_DISCOUNT = "  return total - total * percent;";
 const FIXED_DISCOUNT = "  return total - total * (percent / 100);";
 
-/** The cart fixture, so anything the Lead decides to verify is real. */
+const CASES: Record<string, BehaviorCase> = { ...LEAD_CASES, ...SUPERVISOR_CASES };
+
+/** The cart fixture, so anything a member decides to verify is real. */
 const FILES: Record<string, string> = {
   "package.json": `${JSON.stringify(
     { name: "cart", version: "1.0.0", type: "module", scripts: { test: "node --test" } },
@@ -201,16 +328,36 @@ async function prepareRoot(
   return { root, cwd };
 }
 
-/** The Lead's agent id, which is the member every case in this file addresses. */
-function leadAgentId(probe: Probe, groupId: string): string {
+function agentIdOf(probe: Probe, groupId: string, role: "lead" | "supervisor"): string {
   const group = probe.daemon.slp.getGroup(groupId);
   if (!group) throw new Error(`no group ${groupId}`);
   for (const slot of Object.values(group.slots)) {
-    if (slot.role !== "lead") continue;
+    if (slot.role !== role) continue;
     const active = slot.generations.find((entry) => entry.id === slot.activeGenerationId);
     if (active) return active.agentId;
   }
-  throw new Error("group has no active Lead");
+  throw new Error(`group has no active ${role}`);
+}
+
+/**
+ * The case ends when the member under test has answered the fixture, not when
+ * the whole group falls quiet. In a supervised group the Lead is working on
+ * Human's real request the whole time, and waiting for it adds cost and a
+ * second report that has nothing to do with the case.
+ */
+async function untilAnswered(probe: Probe, agentId: string, mailId: string): Promise<void> {
+  await until("fixture admitted", () =>
+    probe.daemon.slp.listMail().some((mail) => mail.id === mailId && mail.state === "accepted"),
+  );
+  let idleSince: number | null = null;
+  await until("member answered the fixture", () => {
+    if (busy(probe, agentId)) {
+      idleSince = null;
+      return false;
+    }
+    idleSince ??= Date.now();
+    return Date.now() - idleSince > 10_000;
+  });
 }
 
 async function runCase(
@@ -226,31 +373,33 @@ async function runCase(
   try {
     const group = await probe.daemon.slp.initializeGroup({
       workspaceId: "wks_behavior",
-      // Direct mode: these cases are about the Lead, so nothing sits in between.
-      mode: "direct",
+      mode: probeCase.mode,
       initialMessage: { messageId: "b-1", text: probeCase.opening },
       lead: launchFor(provider, cwd, model),
     });
     groupId = group.id;
-    describeGroup(probe, group);
+    describeGroup(group);
 
     // Queued at once, so it is admitted the moment the opening turn ends. Left
     // to wait, a Lead with no Peer in `list_agents` starts the work itself and
     // the handback then lands on work already done, which is another case.
-    const leadId = leadAgentId(probe, group.id);
+    const leadId = agentIdOf(probe, group.id, "lead");
+    const recipientId = agentIdOf(probe, group.id, probeCase.target);
     const mail = await probe.daemon.slp.deliverPreparedMail({
-      recipientAgentId: leadId,
+      recipientAgentId: recipientId,
       fromAgentId: null,
-      kind: "handback",
+      kind: probeCase.kind,
       prompt: probeCase.fixture(leadId),
     });
-    say(`fixture handback ${mail.id} -> lead ${leadId}`);
-    await untilSettled(probe, group.id, "Lead settled after the handback");
+    say(`fixture ${probeCase.kind} ${mail.id} -> ${probeCase.target} ${recipientId}`);
+    await untilAnswered(probe, recipientId, mail.id);
 
     await writeFile(
       path.join(root, "case.md"),
       [
         `# ${name}`,
+        "",
+        `**Target:** ${probeCase.target} in ${probeCase.mode} mode, fixture delivered as \`${probeCase.kind}\` mail`,
         "",
         `**Want:** ${probeCase.want}`,
         "",
