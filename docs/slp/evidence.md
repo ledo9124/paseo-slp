@@ -15,7 +15,7 @@ Status: one manual run per provider of the preparation policy (P7), the daemon h
 
 ## Probe P5: role behavior and cost
 
-Twenty-one runs on 2026-09-10 with the runner `packages/server/scripts/slp-p5-probe.ts`, `features.slp.handoff` off, isolated daemons, each on a fresh checkout with real defects and a runnable suite. Round one is nine Codex `gpt-6-astra` runs; round two re-ran two scenarios after the fixes those runs produced; round three is nine Codex `gpt-5.6-luna` runs that confirm the fix on the provider that showed the defect. A mixed topology is NOT_RUN, and Claude has one scenario only.
+Twenty-five runs on 2026-09-10 with the runner `packages/server/scripts/slp-p5-probe.ts`, `features.slp.handoff` off, isolated daemons, each on a fresh checkout with real defects and a runnable suite. Round one is nine Codex `gpt-6-astra` runs; round two re-ran two scenarios after the fixes those runs produced; round three is nine Codex `gpt-5.6-luna` runs that confirm the fix on the provider that showed the defect; round four is four more of them measuring what removing the Peer's second channel did. A mixed topology is NOT_RUN, and Claude has one scenario only.
 
 The probe's stopping condition is quiet, not correctness: no member busy and no mail queued for 15 seconds. It records what happened; it does not decide pass or fail, and the elapsed column includes that quiet window. Every claim below was read off the transcripts and the mail records.
 
@@ -81,6 +81,24 @@ The cheaper model, and the first Codex round after the named-mail fix. Every run
 - **The Lead reports upward on every input it receives.** 15 mails to the Supervisor across those 14 turns, ending in a run of "final confirmation … No new action" messages, the last two of which came back in Hindi after the Lead had accumulated 1,959,342 input tokens against the Supervisor's 377,674. Deduplicating the handback would remove about a third of these; the rest is the Lead having no stopping rule.
 - **A second handback per Peer is sometimes the result.** The Lead's follow-up in both runs asked for a structured closing report after a mid-work first handback, and got it, which the one-shot handback this branch replaced would have dropped. That is the case the every-turn rule exists for, and it is not the same case as a Peer that already mailed its result in the turn being handed back.
 
+### Round four: the Peer's handback as its only channel
+
+`delegate` twice in each mode on `gpt-5.6-luna`, with `send_agent_prompt` gone from the Peer role. Same scenario, same model and same role settings as round three's `delegate` pair, so the rows below compare directly against it.
+
+| Mode                    | Elapsed | Mail | Peer -> Lead messages | Handbacks | Lead -> Sup, its own | Relayed | Tokens    |
+| ----------------------- | ------- | ---- | --------------------- | --------- | -------------------- | ------- | --------- |
+| supervised              | 203s    | 19   | 0                     | 6         | 6                    | 3       | 1,665,255 |
+| supervised              | 200s    | 18   | 0                     | 6         | 5                    | 3       | 1,657,869 |
+| direct                  | 161s    | 5    | 0                     | 4         | -                    | -       | 1,188,188 |
+| direct                  | 162s    | 9    | 0                     | 6         | -                    | -       | 1,418,437 |
+| supervised, round three | 284s    | 34   | 5                     | 8         | 15                   | 0       | 3,011,579 |
+| direct, round three     | 177s    | 12   | 3                     | 6         | -                    | -       | 1,657,489 |
+
+- **Supervised halved.** 3,011,579 to 1,665,255 and 1,657,869, mail 34 to 19 and 18, the Lead's own input 1,959,342 to 916,468 and 984,182, and elapsed 284s to about 200s. Two runs 0.4% apart is a reproducible number, not one lucky run.
+- **Direct fell by about a fifth**, 1,657,489 to 1,188,188 and 1,418,437. The gap between the two direct runs is wider than between the two supervised ones, so treat the direct figure as a range.
+- **Supervised over Direct is now about 1.3x**, down from 1.8x. Parity is not the target and this is not parity; what left the total was turns spent on input the runtime had already delivered.
+- **The Lead's redundant tail did not disappear — it moved into the relay.** Both supervised runs ended with three relayed reports, where round three relayed none on this model. The Lead's last turns now end without mailing the Supervisor, and the relay turns each into a Supervisor wake-up carrying "báo cáo độc lập bổ sung, nhất quán với kết quả đã nghiệm thu" — a restatement of a result the Supervisor already had. The relay's floor rule cannot tell a turn with nothing new to say from a turn whose report the Lead forgot to send. That is the open question on the Lead-to-Supervisor direction, and it is smaller than the one just closed.
+
 ### A group does not share its model unless you configure it
 
 The three Peers in the first pair of `delegate` runs launched on `gpt-6-astra` inside a `gpt-5.6-luna` group. A Peer's launch comes from `features.slp.roles.peer`, and with nothing configured it keeps the Lead's `create_agent` request, which named no model, so the provider's own default won — `~/.codex/config.toml` here. Set `features.slp.roles.<role>.model` for every role you care about, or a group launched on a cheap model will run its Peers on the machine's expensive one. The contaminated pair is not in the table above; it read 1,771,065 supervised against 1,173,923 direct.
@@ -93,8 +111,9 @@ The three Peers in the first pair of `delegate` runs launched on `gpt-6-astra` i
 - A Peer no longer has `send_agent_prompt`. The duplication came from having two channels into the Lead, so the fix removes one rather than adding a rule for when to suppress it: the last message of a Peer's turn is the handback, and a result, a question, a dependency and a blocker all travel that way. Suppressing the handback of a turn that had already mailed was the other candidate and is worse — a Peer that reports progress early and finishes the work later would have had the finish dropped.
 - Lead to Supervisor keeps both channels for now. A Lead can need to report a decision and carry on coordinating, and its traffic has not been traced the way the Peer's has.
 - Parity with Direct is not the target. A Supervisor costs what it costs; what has to go is turns spent on input the runtime delivered twice.
-- How much this removes is unmeasured. Dropping duplicated input changes what the Lead does next, so the next `delegate` runs decide it, not arithmetic on the old ones.
-- Still to run: `delegate` repeated on one model with the Peer's send tool gone, a Peer that returns a weak result for the Lead to reject, a dependency or blocker signal, and the other scenarios on Claude. A mixed topology is still NOT_RUN. Chasing a task that makes a Lead delegate every time is not a goal; a Lead declining a Peer can be the right call.
+- Measured in round four: supervised `delegate` halved, direct fell about a fifth, and the supervised-over-direct ratio went from 1.8x to about 1.3x.
+- The remaining redundancy is the relay reporting a Lead turn that had nothing new. Look at that next, on evidence, the way this one was.
+- Still to run: a Peer that returns a weak result for the Lead to reject, a dependency or blocker signal, and the other scenarios on Claude. A mixed topology is still NOT_RUN. Chasing a task that makes a Lead delegate every time is not a goal; a Lead declining a Peer can be the right call.
 
 ## Results by gate
 
