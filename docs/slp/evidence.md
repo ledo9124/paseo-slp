@@ -160,6 +160,7 @@ Four more cases put a Lead's message in front of a Supervisor in a supervised gr
 
 - **A prohibition without a next step does not hold.** The role text already said the Supervisor may not override technical decisions. Asked directly, it chose anyway, twice, picking a different option each time. What changed the behavior was saying what to do instead: the choice stays with Lead, say so, offer what you hold, do not choose.
 - **Wording moved a second case.** The first attempt said a question "goes back to Lead", and in the same round the Supervisor's mail to Lead went from two to five and started directing which files to read. Rewritten as "stays with Lead even when Lead puts it to you", `technical` passed and `candidate` came back to three mails without technical direction. One run each, so this is a direction, not a measurement.
+- **The Supervisor invented a figure while restating, in both `accepted` runs.** "giảm 10% của 200" where the report's subtotal is 20. Nothing else in either answer was wrong and the limit came through both times, but a role whose duty is to preserve meaning added a number its source never gave. Reproducible, and not addressed by anything above.
 - **`technical` stages a Lead already breaking its own instructions**, which tell it to resolve ordinary technical choices within granted authority. A Supervisor that cannot push back is a real weakness, and the first defense is upstream and already in place.
 
 Two defects in the cases themselves came out of the first attempts, both worth keeping in mind when writing more:
