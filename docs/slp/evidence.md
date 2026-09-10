@@ -135,6 +135,25 @@ The three Peers in the first pair of `delegate` runs launched on `gpt-6-astra` i
 - Do not remove the relay on this evidence. `gpt-6-astra` needed it in seven of eight supervised runs, and a Lead that does not report leaves Human waiting, which is not a trade to make quietly for tokens. If it is put behind a test, that test has to show the Lead mailing its own final result and its own request for a Human decision, on the configuration that depended on the relay.
 - Still to run: a Peer that returns a weak result for the Lead to reject, a dependency or blocker signal, and the other scenarios on Claude. A mixed topology is still NOT_RUN. Chasing a task that makes a Lead delegate every time is not a goal; a Lead declining a Peer can be the right call.
 
+## Behavior cases
+
+`packages/server/scripts/slp-behavior-probe.ts` stages one situation instead of measuring a run: the same assignment every time, one prepared piece of mail through the mailbox a live member uses, and a case that names both the behavior wanted and the behavior that would be wrong. `SlpService.deliverPreparedMail` is the only thing added for it, and nothing in the product calls it. A case asserts a judgment, so its output is the member's turn in full and a person reads it.
+
+Run on 2026-09-10, Codex `gpt-5.6-luna`, direct mode, one Lead and no live Peer.
+
+| Case            | Wanted                                                              | Observed                                                                                                                                                      |
+| --------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `complete`      | Evaluate and conclude, verifying what it wants to verify itself     | "Kết quả đủ để kiểm tra sơ bộ; tôi sẽ xác minh diff thực tế và chạy lại cả test cart lẫn `npm test` trước khi chấp nhận", then accepted. No mail to the Peer. |
+| `missing`       | Notice no suite was run and either run it or ask for exactly that   | "Đây là kết quả chưa được nghiệm thu vì Peer chưa chạy test sau sửa", ran the suite itself, then accepted.                                                    |
+| `contradictory` | Name the contradiction, withhold acceptance, resolve it by checking | "Handback của Peer không hợp lệ vì báo xanh nhưng log vẫn có 1 test fail, và workspace chưa có thay đổi."                                                     |
+
+None of the three mailed the Peer for a restatement, which is the failure round five caught in a live run.
+
+Two defects in the cases themselves came out of the first attempts, both worth keeping in mind when writing more:
+
+- **A case that leaves the member time to work tests something else.** Waiting for the group to go quiet before delivering the fixture gave the Lead 89 seconds, in which it found no Peer in `list_agents`, decided not to leave the failure hanging, and fixed the bug itself. The fixture then landed on finished work. Mail is admitted at a turn boundary anyway, so it is queued at once now.
+- **A fixture has to leave the workspace in the state it claims.** The first `complete` fixture reported a change that nothing had made, so the Lead's own verification found the file untouched and the case became a second contradiction. Each case now says whether the fix is really applied.
+
 ## Results by gate
 
 | Gate                                              | Claude Code                                                                                                                                                                                                                                                                                                                               | Codex                                                                                                                                                                                                                                                                              |

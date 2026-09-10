@@ -355,6 +355,34 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   }
 
   /**
+   * Queue prepared mail into a member's slot, so a behavior probe can put a
+   * specific handback in front of a Lead instead of waiting for a live Peer to
+   * happen to return one. It takes the same enqueue and admission path as real
+   * mail and carries the caller's whole prompt, so the fixture is responsible
+   * for saying what it is. Nothing in the product calls this; see
+   * packages/server/scripts/slp-behavior-probe.ts.
+   */
+  async deliverPreparedMail(input: {
+    recipientAgentId: string;
+    fromAgentId: string | null;
+    kind: SlpMailRecord["kind"];
+    prompt: string;
+  }): Promise<SlpMailRecord> {
+    const group = this.requireGroupForAgent(input.recipientAgentId);
+    const recipient = membershipOf(group, input.recipientAgentId);
+    const fromSlotId = input.fromAgentId ? membershipOf(group, input.fromAgentId).slot.id : null;
+    const mail = await this.mailbox.enqueue({
+      groupId: group.id,
+      slotId: recipient.slot.id,
+      fromSlotId,
+      kind: input.kind,
+      prompt: input.prompt,
+    });
+    this.mailbox.pump(group.id, recipient.slot.id);
+    return mail;
+  }
+
+  /**
    * Fires with the group id after every durable change to a group, one of
    * its transfers or its mail. Listeners read the current state back through
    * `getGroup` and `summarize`; a change is a wake-up, not a payload.
