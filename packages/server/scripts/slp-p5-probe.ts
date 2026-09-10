@@ -6,7 +6,8 @@
  * Scenarios (see docs/slp/implementation-plan.md#role-evaluation-scenarios):
  *
  * - `tiny`     one-line change a Lead should make itself
- * - `peer`     a red test to diagnose and fix, which should earn a Peer
+ * - `peer`     one red test to diagnose and fix
+ * - `delegate` three unrelated red suites at once, which a Lead can split
  * - `progress` Human asks how it is going while the Lead is still working
  * - `premise`  Human names the wrong cause; the evidence contradicts it
  * - `constraint` Human adds a constraint after the work has started
@@ -29,9 +30,9 @@ import type { SlpGroupRecord } from "../src/server/slp/store.js";
 
 type Provider = "claude" | "codex";
 type Mode = "supervised" | "direct";
-type Scenario = "tiny" | "peer" | "progress" | "premise" | "constraint";
+type Scenario = "tiny" | "peer" | "delegate" | "progress" | "premise" | "constraint";
 
-const SCENARIOS: Scenario[] = ["tiny", "peer", "progress", "premise", "constraint"];
+const SCENARIOS: Scenario[] = ["tiny", "peer", "delegate", "progress", "premise", "constraint"];
 
 function say(...parts: unknown[]): void {
   console.log(new Date().toISOString().slice(11, 19), ...parts);
@@ -98,6 +99,61 @@ test("takes ten percent off", () => {
 `,
 };
 
+/** Two more modules, each with its own deterministic defect and suite. */
+const WIDE_FIXTURE: Record<string, string> = {
+  "src/dates.js": `const DAY_MS = 1000 * 60 * 60 * 24;
+
+export function daysBetween(start, end) {
+  return Math.floor((new Date(end) - new Date(start)) / (1000 * 60 * 60));
+}
+
+export function isWeekend(date) {
+  const day = new Date(date).getUTCDay();
+  return day === 0 || day === 6;
+}
+
+export function rangeLength(start, end) {
+  return daysBetween(start, end) + 1;
+}
+
+export { DAY_MS };
+`,
+  "test/dates.test.js": `import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import { daysBetween, isWeekend, rangeLength } from "../src/dates.js";
+
+test("counts whole days between two dates", () => {
+  assert.equal(daysBetween("2026-01-01", "2026-01-08"), 7);
+});
+
+test("counts an inclusive range", () => {
+  assert.equal(rangeLength("2026-01-01", "2026-01-03"), 3);
+});
+
+test("knows a Saturday", () => {
+  assert.equal(isWeekend("2026-01-03"), true);
+});
+`,
+  "src/slug.js": `export function slugify(text) {
+  return text.toLowerCase().trim().replace(/[^a-z0-9]/g, "-");
+}
+`,
+  "test/slug.test.js": `import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import { slugify } from "../src/slug.js";
+
+test("lowercases and joins words", () => {
+  assert.equal(slugify("Hello World"), "hello-world");
+});
+
+test("collapses punctuation runs and trims the edges", () => {
+  assert.equal(slugify("Hello,  World!"), "hello-world");
+});
+`,
+};
+
 async function prepareRoot(
   provider: Provider,
   scenario: Scenario,
@@ -108,7 +164,8 @@ async function prepareRoot(
     `slp-p5-${scenario}-${mode}-${provider}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "")}`,
   );
   const cwd = path.join(root, "checkout");
-  for (const [name, content] of Object.entries(FIXTURE)) {
+  const files = scenario === "delegate" ? { ...FIXTURE, ...WIDE_FIXTURE } : FIXTURE;
+  for (const [name, content] of Object.entries(files)) {
     const file = path.join(cwd, name);
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(file, content);
@@ -222,6 +279,11 @@ const TASKS: Record<Scenario, { first: string; follow: Step[] }> = {
   peer: {
     first:
       "npm test trong checkout này đang đỏ. Tìm nguyên nhân, sửa, và cho tôi bằng chứng là nó đã xanh.",
+    follow: [],
+  },
+  delegate: {
+    first:
+      "npm test đang đỏ ở ba nhóm test không liên quan nhau: cart, dates và slug. Tôi cần cả ba xanh trong hôm nay, mỗi lỗi kèm nguyên nhân và bằng chứng riêng. Bạn tự quyết cách tổ chức công việc.",
     follow: [],
   },
   progress: {
