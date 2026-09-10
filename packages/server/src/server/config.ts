@@ -530,9 +530,10 @@ function resolveSlpEnabled(
 function resolveSlpSettings(
   env: NodeJS.ProcessEnv,
   persisted: ReturnType<typeof loadPersistedConfig>,
-): Pick<PaseoDaemonConfig, "slpEnabled" | "slpRoles"> {
+): Pick<PaseoDaemonConfig, "slpEnabled" | "slpHandoff" | "slpRoles"> {
   return {
     slpEnabled: resolveSlpEnabled(env, persisted),
+    slpHandoff: parseBooleanEnv(env.PASEO_SLP_HANDOFF) ?? persisted.features?.slp?.handoff ?? false,
     slpRoles: persisted.features?.slp?.roles,
   };
 }
@@ -583,6 +584,7 @@ export function resolveConfigFromPersisted(
     mcpEnabled,
     mcpInjectIntoAgents,
     slpEnabled,
+    slpHandoff,
     browserToolsEnabled,
     autoArchiveAfterMerge,
     appendSystemPrompt,
@@ -650,6 +652,7 @@ export function resolveConfigFromPersisted(
     serviceProxy,
     webUi,
     slpEnabled,
+    slpHandoff,
     appBaseUrl,
     auth: resolveAuthConfig(env, persisted),
     openai,
@@ -779,6 +782,7 @@ function resolveServiceAndWebUiOverridePaths(
   }
   if (env.PASEO_WEB_UI_DIST_DIR !== undefined) paths.push("features.webUi.distDir");
   if (parseBooleanEnv(env.PASEO_SLP_ENABLED) !== undefined) paths.push("features.slp.enabled");
+  if (parseBooleanEnv(env.PASEO_SLP_HANDOFF) !== undefined) paths.push("features.slp.handoff");
   return paths;
 }
 

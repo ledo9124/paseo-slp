@@ -20,6 +20,7 @@ import { withSlpProviderOptions } from "./launch.js";
 import {
   SlpDelegationUnavailableError,
   SlpGenerationRetiredError,
+  SlpHandoffDisabledError,
   SlpGroupFrozenError,
   SlpGroupHeldError,
   SlpInitializationConflictError,
@@ -39,6 +40,7 @@ import {
 } from "./mailbox.js";
 import {
   composeSlpSystemPrompt,
+  slpInstructionsVersion,
   loadSlpInstructions,
   resolveBundledSlpRolesDir,
   type SlpAddressBook,
@@ -91,6 +93,12 @@ export interface SlpServiceOptions {
   isDelegationToolingEnabled: () => boolean;
   /** Where the role instruction files live; defaults to the bundled copy of docs/slp/roles. */
   instructionsDir?: string;
+  /**
+   * `features.slp.handoff`: whether members get the checkpoint and handoff
+   * tools and the role text that uses them. In-flight transfers still finish
+   * and recover with it off.
+   */
+  isHandoffEnabled: () => boolean;
   /** Host-configured launch settings per role, read at every generation's creation. */
   roleSettings: () => SlpRolesConfig;
   now?: () => Date;
@@ -159,6 +167,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   private readonly createMemberAgent: SlpServiceOptions["createMemberAgent"];
   private readonly roleSettings: SlpServiceOptions["roleSettings"];
   private readonly isDelegationToolingEnabled: SlpServiceOptions["isDelegationToolingEnabled"];
+  private readonly isHandoffEnabled: SlpServiceOptions["isHandoffEnabled"];
   private readonly instructionsDir: string;
   private instructionsLoad: Promise<SlpInstructions> | null = null;
   private readonly now: () => Date;
@@ -187,6 +196,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       });
     this.roleSettings = options.roleSettings;
     this.isDelegationToolingEnabled = options.isDelegationToolingEnabled;
+    this.isHandoffEnabled = options.isHandoffEnabled;
     this.instructionsDir = options.instructionsDir ?? resolveBundledSlpRolesDir();
     this.now = options.now ?? (() => new Date());
     this.mailbox = new SlpMailbox({
@@ -239,7 +249,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       composePrompt: async (group, slot, generationNumber) => {
         const instructions = await this.instructions();
         return {
-          instructionsVersion: instructions.version,
+          instructionsVersion: this.instructionsVersion(instructions),
           systemPrompt: this.composeRolePrompt(instructions, {
             role: slot.role,
             groupId: group.id,
@@ -432,7 +442,12 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   isToolAllowed(callerAgentId: string, tool: string): boolean {
     const group = this.getGroupForAgent(callerAgentId);
     if (!group) return !SLP_CONTROL_TOOLS.has(tool);
-    return isToolVisibleToRole(membershipOf(group, callerAgentId).slot.role, tool);
+    const { slot, generation } = membershipOf(group, callerAgentId);
+    if (SLP_CONTROL_TOOLS.has(tool) && !this.isHandoffEnabled()) {
+      // A candidate of a transfer that started before the flag was turned off still reports ready.
+      return tool === "slp_ready" && generation.state === "preparing";
+    }
+    return isToolVisibleToRole(slot.role, tool);
   }
 
   assertToolExecutionAllowed(callerAgentId: string, tool: string): void {
@@ -451,6 +466,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     callerAgentId: string,
     content: SlpCheckpointContent,
   ): Promise<{ checkpointId: string; revision: number }> {
+    if (!this.isHandoffEnabled()) throw new SlpHandoffDisabledError("slp_checkpoint");
     const group = this.requireGroupForAgent(callerAgentId);
     const { slot, generation } = membershipOf(group, callerAgentId);
     if (slot.activeGenerationId !== generation.id) {
@@ -486,6 +502,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
    * transfer starts from that checkpoint, never from a prompt for one.
    */
   async requestHandoff(callerAgentId: string, reason: string): Promise<{ transferId: string }> {
+    if (!this.isHandoffEnabled()) throw new SlpHandoffDisabledError("slp_request_handoff");
     const group = this.requireGroupForAgent(callerAgentId);
     const { slot, generation } = membershipOf(group, callerAgentId);
     if (slot.activeGenerationId !== generation.id) {
@@ -817,7 +834,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     const generation = newGeneration({
       number: generationNumber,
       agentId,
-      instructionsVersion: instructions.version,
+      instructionsVersion: this.instructionsVersion(instructions),
       at,
     });
     generation.state = "active";
@@ -857,7 +874,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     const generation = newGeneration({
       number: 1,
       agentId: randomUUID(),
-      instructionsVersion: instructions.version,
+      instructionsVersion: this.instructionsVersion(instructions),
       at,
     });
     peerSlot.generations.push(generation);
@@ -1015,9 +1032,13 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   /** The bundled role prompt plus whatever the host configured for that role. */
   private composeRolePrompt(instructions: SlpInstructions, identity: SlpIdentity): string {
     return appendRoleInstructions(
-      composeSlpSystemPrompt(instructions, identity),
+      composeSlpSystemPrompt(instructions, identity, { handoff: this.isHandoffEnabled() }),
       this.roleSettings()[identity.role],
     );
+  }
+
+  private instructionsVersion(instructions: SlpInstructions): string {
+    return slpInstructionsVersion(instructions, { handoff: this.isHandoffEnabled() });
   }
 
   private instructions(): Promise<SlpInstructions> {

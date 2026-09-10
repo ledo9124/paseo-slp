@@ -37,6 +37,8 @@ export interface SlpTestDaemonOptions {
   isDelegationToolingEnabled?: () => boolean;
   roleSettings?: () => SlpRolesConfig;
   instructionsDir?: string;
+  /** Defaults to on so the handoff suites run; the flag's own test turns it off. */
+  isHandoffEnabled?: () => boolean;
 }
 
 /**
@@ -102,6 +104,7 @@ export async function startSlpTestDaemon(options: SlpTestDaemonOptions): Promise
     },
     isDelegationToolingEnabled: options.isDelegationToolingEnabled ?? (() => true),
     roleSettings: options.roleSettings ?? (() => ({})),
+    isHandoffEnabled: options.isHandoffEnabled ?? (() => true),
     ...(options.instructionsDir ? { instructionsDir: options.instructionsDir } : {}),
   };
   const service = new SlpService(serviceOptions);

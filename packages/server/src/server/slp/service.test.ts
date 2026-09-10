@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
+import { createPaseoToolCatalog } from "../agent/tools/paseo-tools.js";
+import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
+import { createTestLogger } from "../../test-utils/test-logger.js";
 import { archiveByScope, type ArchiveDependencies } from "../workspace-archive-service.js";
 import { createNoopWorkspaceGitService } from "../test-utils/workspace-git-service-stub.js";
 import {
@@ -16,6 +19,7 @@ import {
 import {
   SlpDelegationUnavailableError,
   SlpGroupHeldError,
+  SlpHandoffDisabledError,
   SlpInitializationConflictError,
   SlpInstructionsUnavailableError,
   SlpNoGroupError,
@@ -62,6 +66,55 @@ describe("SlpService", () => {
       await readFile(path.join(paseoHome, "slp", "groups", `${groupId}.json`), "utf8"),
     ) as SlpGroupRecord;
   }
+
+  test("with features.slp.handoff off, members get neither the handoff tools nor the handoff text", async () => {
+    const daemon = await startDaemon({ isHandoffEnabled: () => false });
+    const group = await daemon.service.initializeGroup(input());
+    const leadId = leadAgentId(group);
+    const lead = await daemon.storage.get(leadId);
+    const prompt = lead?.config.systemPrompt ?? "";
+    expect(prompt).toContain("# Lead instructions");
+    expect(prompt).toContain("## Using Paseo");
+    expect(prompt).not.toContain("## Handoff");
+    expect(prompt).not.toContain("slp_checkpoint");
+    expect(prompt).not.toContain("slp_request_handoff");
+    expect(prompt).toContain("# Shared SLP instructions");
+    const stored = daemon.service.getGroup(group.id)!;
+    const generation = stored.slots[stored.leadSlotId]!.generations[0]!;
+    expect(generation.instructionsVersion).toMatch(/-nohandoff$/);
+
+    const tools = createPaseoToolCatalog({
+      agentManager: daemon.manager,
+      agentStorage: daemon.storage,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      slp: daemon.service,
+      callerAgentId: leadId,
+      logger: createTestLogger(),
+    });
+    expect(tools.getTool("slp_checkpoint")).toBeUndefined();
+    expect(tools.getTool("slp_request_handoff")).toBeUndefined();
+    expect(tools.getTool("slp_ready")).toBeUndefined();
+    expect(tools.getTool("send_agent_prompt")).toBeDefined();
+    expect(tools.getTool("create_agent")).toBeDefined();
+    // The service refuses even a call that bypasses the catalog.
+    await expect(
+      daemon.service.recordCheckpoint(leadId, { objective: "x", nextAction: "y" }),
+    ).rejects.toThrow(SlpHandoffDisabledError);
+    await expect(daemon.service.requestHandoff(leadId, "context")).rejects.toThrow(
+      SlpHandoffDisabledError,
+    );
+  });
+
+  test("with the flag on, the composed prompt carries the Handoff section and the tools", async () => {
+    const daemon = await startDaemon();
+    const group = await daemon.service.initializeGroup(input());
+    const lead = await daemon.storage.get(leadAgentId(group));
+    const prompt = lead?.config.systemPrompt ?? "";
+    expect(prompt).toContain("## Handoff");
+    expect(prompt).toContain("slp_request_handoff");
+    const generation = daemon.service.getGroup(group.id)!.slots[group.leadSlotId]!.generations[0]!;
+    expect(generation.instructionsVersion).not.toMatch(/-nohandoff$/);
+  });
 
   test("concurrent clients and retries converge on one group, mode and receipt", async () => {
     const daemon = await startDaemon();

@@ -83,6 +83,11 @@ export interface SlpIdentity {
   addressBook: SlpAddressBook;
 }
 
+export interface SlpComposeOptions {
+  /** Whether the role's `## Handoff` section (checkpoint, own handoff, successor preparation) is included. */
+  handoff: boolean;
+}
+
 /**
  * The runtime identity first, then exactly one role, then the shared block.
  * Providers append this text after their own system prompts, so the agent
@@ -92,10 +97,39 @@ export interface SlpIdentity {
 export function composeSlpSystemPrompt(
   instructions: SlpInstructions,
   identity: SlpIdentity,
+  options: SlpComposeOptions,
 ): string {
-  return [describeIdentity(identity), instructions.roles[identity.role], instructions.common].join(
-    "\n\n---\n\n",
-  );
+  const role = instructions.roles[identity.role];
+  return [
+    describeIdentity(identity),
+    options.handoff ? role : withoutSection(role, HANDOFF_HEADING),
+    instructions.common,
+  ].join("\n\n---\n\n");
+}
+
+/** The instruction version a generation records, distinguishing the two texts one file set composes. */
+export function slpInstructionsVersion(
+  instructions: SlpInstructions,
+  options: SlpComposeOptions,
+): string {
+  return options.handoff ? instructions.version : `${instructions.version}-nohandoff`;
+}
+
+const HANDOFF_HEADING = "## Handoff";
+
+/** Drops one `## ` section, heading through the line before the next `## ` heading or the end. */
+function withoutSection(markdown: string, heading: string): string {
+  const lines = markdown.split("\n");
+  const start = lines.indexOf(heading);
+  if (start === -1) return markdown;
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (lines[index]!.startsWith("## ")) {
+      end = index;
+      break;
+    }
+  }
+  return [...lines.slice(0, start), ...lines.slice(end)].join("\n").trim();
 }
 
 const ROLE_TITLES: Record<SlpRole, string> = {

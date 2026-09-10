@@ -168,6 +168,7 @@ async function startDaemon(root: string, logName: string): Promise<Probe> {
       hostnames: true,
       mcpEnabled: true,
       mcpInjectIntoAgents: true,
+      slpHandoff: true,
       staticDir,
       mcpDebug: false,
       agentClients: {},

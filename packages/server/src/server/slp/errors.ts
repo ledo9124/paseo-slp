@@ -50,6 +50,16 @@ export class SlpDelegationUnavailableError extends Error {
   }
 }
 
+/** The checkpoint and handoff tools are off for this daemon (`features.slp.handoff`). */
+export class SlpHandoffDisabledError extends Error {
+  constructor(public readonly tool: string) {
+    super(
+      `${tool} is unavailable: same-role handoff is off for this daemon (features.slp.handoff)`,
+    );
+    this.name = "SlpHandoffDisabledError";
+  }
+}
+
 /** A required role instruction file is missing or unreadable. */
 export class SlpInstructionsUnavailableError extends Error {
   constructor(

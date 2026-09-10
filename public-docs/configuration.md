@@ -147,6 +147,22 @@ Or persist it in `config.json`:
 }
 ```
 
+Same-role handoff (an agent checkpoints and asks Paseo to replace its session with a fresh one in the same role) is off by default. Turn it on to give group members the `slp_checkpoint` and `slp_request_handoff` tools and the handoff section of their role instructions:
+
+```bash
+PASEO_SLP_HANDOFF=true paseo daemon start
+```
+
+```json
+{
+  "features": {
+    "slp": {
+      "handoff": true
+    }
+  }
+}
+```
+
 Each role can launch with its own provider, model and permission mode, and carry extra instructions appended to its bundled prompt. Set them under `features.slp.roles` or in the app under Settings → host → SLP roles. A role without settings launches with the provider, model and permission mode the composer showed when the group started; a configured provider replaces the composer's model and mode with the configured ones.
 
 ```json

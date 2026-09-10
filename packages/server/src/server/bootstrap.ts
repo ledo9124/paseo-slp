@@ -414,6 +414,8 @@ export interface PaseoDaemonConfig {
   mcpInjectIntoAgents?: boolean;
   /** Off hides the SLP feature and refuses the group RPCs; existing groups still recover their gates. */
   slpEnabled?: boolean;
+  /** Same-role handoff tools and instructions for SLP members; off until P5 says the loop is worth it. */
+  slpHandoff?: boolean;
   /** Per-role launch settings; see packages/protocol SlpRolesConfigSchema. */
   slpRoles?: SlpRolesConfig;
   browserToolsEnabled?: boolean;
@@ -1225,6 +1227,7 @@ export async function createPaseoDaemon(
       return mcp.enabled !== false && mcp.injectIntoAgents;
     },
     roleSettings: () => daemonConfigStore.get().slp?.roles ?? {},
+    isHandoffEnabled: () => config.slpHandoff === true,
   });
   // Peers are created by the Lead through the create funnel; the service is
   // constructed after the funnel is bound, so the hook is attached here.
