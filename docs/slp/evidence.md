@@ -4,18 +4,18 @@ Status: one manual run per provider of the preparation policy (P7), the daemon h
 
 ## Pinned environment
 
-| Item            | Value                                                                                                                                   |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Fork commit     | `9e6e994f3` plus the probe's `restart` mode that followed it                                                                            |
-| Platform        | Linux 6.6.87 WSL2 x86_64, Node v22.22.0                                                                                                 |
-| Claude Code     | CLI 2.1.234, `@anthropic-ai/claude-agent-sdk` 0.3.246, model `claude-opus-5`, mode `bypassPermissions`                                  |
-| Codex           | codex-cli 0.153.4 app-server, model `gpt-6-astra`, mode `full-access` with `sandbox_mode: danger-full-access`, `approval_policy: never` |
-| Hook definition | `packages/server/src/server/agent/providers/claude/execution-policy.ts` at the pinned commit; in-process, no file                       |
-| Authentication  | The machine's own Claude and Codex logins; no OpenRouter                                                                                |
+| Item            | Value                                                                                                                                                       |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fork commit     | `9e6e994f3` plus the probe's `restart` mode that followed it                                                                                                |
+| Platform        | Linux 6.6.87 WSL2 x86_64, Node v22.22.0                                                                                                                     |
+| Claude Code     | CLI 2.1.234, `@anthropic-ai/claude-agent-sdk` 0.3.246, model `claude-opus-5`, mode `bypassPermissions`                                                      |
+| Codex           | codex-cli 0.153.4 app-server, models `gpt-6-astra` and `gpt-5.6-luna`, mode `full-access` with `sandbox_mode: danger-full-access`, `approval_policy: never` |
+| Hook definition | `packages/server/src/server/agent/providers/claude/execution-policy.ts` at the pinned commit; in-process, no file                                           |
+| Authentication  | The machine's own Claude and Codex logins; no OpenRouter                                                                                                    |
 
 ## Probe P5: role behavior and cost
 
-Twelve runs on 2026-09-10 with the runner `packages/server/scripts/slp-p5-probe.ts`, `features.slp.handoff` off, isolated daemons, each on a fresh checkout with real defects and a runnable suite. Round one is nine Codex `gpt-6-astra` runs; round two re-ran two scenarios after the fixes those runs produced. A mixed topology is NOT_RUN, and Claude has one scenario only.
+Twenty-one runs on 2026-09-10 with the runner `packages/server/scripts/slp-p5-probe.ts`, `features.slp.handoff` off, isolated daemons, each on a fresh checkout with real defects and a runnable suite. Round one is nine Codex `gpt-6-astra` runs; round two re-ran two scenarios after the fixes those runs produced; round three is nine Codex `gpt-5.6-luna` runs that confirm the fix on the provider that showed the defect. A mixed topology is NOT_RUN, and Claude has one scenario only.
 
 Every run that reached a provider ended with the suite green and the right cause named, so the numbers compare cost and behavior, not correctness.
 
@@ -57,12 +57,38 @@ The echo had a runtime cause, not a prompt cause: a member's `send_agent_prompt`
 - **The relay is not load-bearing on Claude.** That Lead mailed its own closing report. On Codex it never did, across six supervised runs.
 - **Claude cost about three times Codex** for the same scenario.
 
+### Round three, Codex on `gpt-5.6-luna`
+
+The cheaper model, and the first Codex round after the named-mail fix. Every run set `features.slp.roles.*.model`, so all members share the model.
+
+| Scenario | Mode       | Elapsed | Sup->Lead | Lead->Sup, its own | Relayed | Handbacks | Peers | Tokens    |
+| -------- | ---------- | ------- | --------- | ------------------ | ------- | --------- | ----- | --------- |
+| tiny     | supervised | 55s     | 1         | 1                  | 0       | 0         | 0     | 201,697   |
+| tiny     | direct     | 37s     | -         | -                  | -       | 0         | 0     | 71,051    |
+| peer     | supervised | 70s     | 1         | 1                  | 0       | 0         | 0     | 227,646   |
+| peer     | direct     | 50s     | -         | -                  | -       | 0         | 0     | 90,949    |
+| progress | supervised | 77s     | 1         | 1                  | 0       | 0         | 0     | 249,659   |
+| delegate | supervised | 284s    | 1         | 15                 | 0       | 8         | 3     | 3,011,579 |
+| delegate | direct     | 177s    | -         | -                  | -       | 6         | 3     | 1,657,489 |
+
+- **The named-mail fix holds on Codex.** In `progress` the Supervisor answered "Đang tới đâu rồi?" itself, from the brief it had already sent, and did not wake the working Lead; the Lead's report arrived named and went up to Human as a report. No echo in any run. That closes the item round two could only show on Claude.
+- **The relay is not load-bearing on `gpt-5.6-luna`.** The Lead mailed its own closing report in every supervised run of this round, the contaminated one included, where `gpt-6-astra` never did in six. The relay stays: it is the floor for a Lead that does not report, and two of three tested configurations need it.
+- **This Lead delegates where `gpt-6-astra` declined.** Both `delegate` runs created three Peers and took their handbacks. The Peer path now has evidence from a Lead that chose it without being told to.
+- **Supervised still costs more and buys nothing here**: tiny 2.8x, peer 2.5x, delegate 1.8x, and Direct was faster in every scenario.
+- **The Lead, not the Supervisor, is the cost.** In `delegate` supervised the Lead alone spent 1,959,342 input tokens against the Supervisor's 377,674. It mailed the Supervisor 15 times: once per handback, again per duplicate handback, then a run of "final confirmation … No new action" messages, the last two of which came back in Hindi. Each of those wakes the Supervisor for a turn that carries no decision. The role text tells the Lead what to report and never when to stop; that is the next role-text change, and it is worth more than any topology tuning.
+- **A second handback per Peer is not waste.** The Lead's follow-up in both runs asked for a structured closing report after a mid-work first handback, and got it. The one-shot handback this branch replaced would have dropped exactly that turn.
+
+### A group does not share its model unless you configure it
+
+The three Peers in the first pair of `delegate` runs launched on `gpt-6-astra` inside a `gpt-5.6-luna` group. A Peer's launch comes from `features.slp.roles.peer`, and with nothing configured it keeps the Lead's `create_agent` request, which named no model, so the provider's own default won — `~/.codex/config.toml` here. Set `features.slp.roles.<role>.model` for every role you care about, or a group launched on a cheap model will run its Peers on the machine's expensive one. The contaminated pair is not in the table above; it read 1,771,065 supervised against 1,173,923 direct.
+
 ### What this decides
 
-- Keep the report relay. On Codex the prompt does not carry the report at all.
-- Supervised is not justified for work of this size. The comparison for work that earns a Peer is still open.
+- Keep the report relay. Two of the three tested configurations do not mail the report themselves.
+- Supervised is not justified for work of this size, on either Codex model. The comparison for work that earns a Peer is still open.
 - Do not reopen PR 6. Handoff is not the constraint.
-- Still to run: Codex after the usage limit resets, the other scenarios on Claude, a mixed topology, and a task large enough that a Lead delegates every time.
+- The next role-text change is a stopping rule for the Lead's reporting, not anything about topology.
+- Still to run: the other scenarios on Claude, a mixed topology, and a task large enough that a Lead delegates every time.
 
 ## Results by gate
 

@@ -181,7 +181,13 @@ interface Probe {
   paseoHome: string;
 }
 
-async function startDaemon(root: string): Promise<Probe> {
+/**
+ * Every role gets the model the run was launched with. Without this a Peer the
+ * Lead creates takes the provider's own default — `~/.codex/config.toml` in
+ * practice — so a group launched on one model quietly runs its Peers on
+ * another, and the token totals stop comparing like with like.
+ */
+async function startDaemon(root: string, model: string | null): Promise<Probe> {
   const paseoHome = path.join(root, "paseo-home");
   const staticDir = path.join(root, "static");
   await mkdir(paseoHome, { recursive: true });
@@ -202,6 +208,7 @@ async function startDaemon(root: string): Promise<Probe> {
       relayEnabled: false,
       relayEndpoint: "relay.paseo.sh:443",
       appBaseUrl: "https://app.paseo.sh",
+      slpRoles: model ? { supervisor: { model }, lead: { model }, peer: { model } } : undefined,
     },
     logger,
   );
@@ -378,7 +385,7 @@ async function main(): Promise<void> {
 
   const { root, cwd } = await prepareRoot(provider, scenario, mode);
   say(`scenario ${scenario}  mode ${mode}  provider ${provider}  root ${root}`);
-  const probe = await startDaemon(root);
+  const probe = await startDaemon(root, model);
   const started = Date.now();
   let groupId = "";
   try {
