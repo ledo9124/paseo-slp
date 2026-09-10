@@ -15,17 +15,54 @@ Status: one manual run per provider of the preparation policy (P7), the daemon h
 
 ## Probe P5: role behavior and cost
 
-NOT_RUN. This is the gate that decides whether the coordination loop earns its cost; the [plan](implementation-plan.md#current-sequence) states the protocol and what the result decides. Run each row on a real task from this repository, once per provider and once with a mixed topology, then the same task in Direct mode as the comparator. `features.slp.handoff` stays off. Fill the table with `npm run slp:report --workspace=@getpaseo/server` plus your own judgment; replace a row rather than appending a second one.
+Twelve runs on 2026-09-10 with the runner `packages/server/scripts/slp-p5-probe.ts`, `features.slp.handoff` off, isolated daemons, each on a fresh checkout with real defects and a runnable suite. Round one is nine Codex `gpt-6-astra` runs; round two re-ran two scenarios after the fixes those runs produced. A mixed topology is NOT_RUN, and Claude has one scenario only.
 
-| Scenario                               | Provider | Human interventions | Turns with no work | Tokens vs Direct | Result quality |
-| -------------------------------------- | -------- | ------------------- | ------------------ | ---------------- | -------------- |
-| Tiny authorized change                 |          |                     |                    |                  |                |
-| Human asks progress while Lead is busy |          |                     |                    |                  |                |
-| Work that needs a Peer                 |          |                     |                    |                  |                |
-| Peer finds a premise wrong             |          |                     |                    |                  |                |
-| Human changes a constraint mid-flight  |          |                     |                    |                  |                |
+Every run that reached a provider ended with the suite green and the right cause named, so the numbers compare cost and behavior, not correctness.
 
-A turn with no work is one whose input the recipient could not act on: an acknowledgment, a "waiting" report, a relayed report the Supervisor had nothing to do with. The report script counts relayed reports separately from mail the Lead sent itself; that split decides whether the relay stays.
+### Round one, Codex
+
+| Scenario   | Mode       | Elapsed | Sup->Lead | Lead->Sup, its own | Relayed | Handbacks | Tokens  |
+| ---------- | ---------- | ------- | --------- | ------------------ | ------- | --------- | ------- |
+| tiny       | supervised | 76s     | 1         | 0                  | 1       | 0         | 136,570 |
+| tiny       | direct     | 55s     | -         | -                  | -       | 0         | 67,784  |
+| peer       | supervised | 104s    | 1         | 0                  | 1       | 0         | 161,400 |
+| peer       | direct     | 60s     | -         | -                  | -       | 0         | 69,681  |
+| delegate   | supervised | 127s    | 2         | 1                  | 1       | 0         | 229,949 |
+| delegate   | direct     | 160s    | -         | -                  | -       | 0         | 136,035 |
+| premise    | supervised | 102s    | 1         | 0                  | 1       | 0         | 198,655 |
+| progress   | supervised | 149s    | 3         | 2                  | 1       | 0         | 305,571 |
+| constraint | supervised | 238s    | 2         | 0                  | 1       | 0         | 221,646 |
+
+- **Supervised costs about twice Direct and bought nothing on these tasks.** tiny 2.0x, peer 2.3x, delegate 1.7x, and Direct was faster on every scenario but `delegate`. A member's turn starts near 68,000 input tokens before it reads anything, so every extra member and every extra hop is expensive.
+- **The Supervisor sent the Lead's own report back to the Lead**, in `delegate` and `progress`, once under the words "Human vừa cung cấp cập nhật sau". The Lead spent a full turn answering "this is my own report". That was the largest source of turns carrying no work.
+- **The Supervisor forwarded "Đang tới đâu rồi?" to a working Lead** instead of answering from the brief and the activity it already had. The scenario expects the opposite.
+- **The relay was load-bearing on Codex**: it carried the closing report in all six supervised runs, and the Lead never mailed its own closing report.
+- **Delegation was rare, not absent.** `delegate` gave the Lead three unrelated failing suites in three modules and left the organization to it; the Lead declined in writing, "repo nhỏ 3 module/7 test", in the round-one run. A later run of the same scenario did create a Peer and took its handback, so the Peer path works and the Lead's choice varies. Nothing here tells you which choice is right.
+- **Role behavior that held up.** The Lead tested Human's wrong premise instead of confirming it and said so ("giả thuyết Math.round không đúng với lỗi tái hiện này"); the Supervisor labelled that hypothesis as a hypothesis when briefing. A constraint added mid-flight reached the Lead and was honoured. Every Lead reported the exact command, exit code and test counts, and kept before/after logs.
+
+### What round one changed
+
+The echo had a runtime cause, not a prompt cause: a member's `send_agent_prompt` mail arrived as bare text, while a relayed report and a handback arrive named inside a `paseo-system` block. Human's own message reaches the contact unwrapped, so an unattributed prompt is indistinguishable from Human's words, and the Supervisor relayed it down as Human's. Member mail is now named with its sender (`SlpService.routeSend`). The Supervisor's instructions gained the two rules the runs broke: what Lead tells you is never new input for Lead, and a progress question is answered from what you hold.
+
+### Round two
+
+| Scenario | Provider | Change under test        | Sup->Lead | Lead->Sup, its own | Relayed | Handbacks | Tokens  |
+| -------- | -------- | ------------------------ | --------- | ------------------ | ------- | --------- | ------- |
+| delegate | Codex    | role text only           | 1         | 1                  | 0       | 1         | 211,861 |
+| progress | Codex    | role text only           | 2         | 1                  | 1       | 0         | 275,417 |
+| progress | Claude   | role text and named mail | 1         | 1                  | 0       | 0         | 859,006 |
+
+- **The role text alone did not stop the echo.** The Codex `progress` re-run still returned the Lead's own words down, still labelled as Human's, which is what pointed at the runtime cause.
+- **With named mail the echo is gone.** In the Claude run the Supervisor received the Lead's message inside the system block, answered Human from what it held, and never forwarded the progress question. Mail fell from six to two. One run on a different provider cannot separate the fix from the provider; re-running Codex is blocked on that account's usage limit and is the first thing to do when it resets.
+- **The relay is not load-bearing on Claude.** That Lead mailed its own closing report. On Codex it never did, across six supervised runs.
+- **Claude cost about three times Codex** for the same scenario.
+
+### What this decides
+
+- Keep the report relay. On Codex the prompt does not carry the report at all.
+- Supervised is not justified for work of this size. The comparison for work that earns a Peer is still open.
+- Do not reopen PR 6. Handoff is not the constraint.
+- Still to run: Codex after the usage limit resets, the other scenarios on Claude, a mixed topology, and a task large enough that a Lead delegates every time.
 
 ## Results by gate
 

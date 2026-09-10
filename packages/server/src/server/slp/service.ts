@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 
 import type { AgentManager, DestructiveOperationGate } from "../agent/agent-manager.js";
 import type { AgentExecutionPolicy } from "../agent/agent-sdk-types.js";
+import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
 import type { AgentRequests } from "../agent/requests/index.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import type { SlpCreationHook, SlpPeerCreation } from "../agent/create-agent/create.js";
@@ -572,7 +573,18 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       slotId: target.slot.id,
       fromSlotId: caller.slot.id,
       kind: "message",
-      prompt: input.prompt,
+      // Named, the way a report and a handback are. Human's own messages
+      // reach the contact's chat unwrapped, so an unattributed prompt reads
+      // as Human's: a Supervisor mistook the Lead's progress note for Human's
+      // and relayed it back down (docs/slp/evidence.md).
+      prompt: formatSystemNotificationPrompt(
+        [
+          `SLP message from ${caller.slot.role} (${input.callerAgentId})`,
+          "It is that member speaking, not Human. Answer it or act on it; do not send it back to its author or repeat it as Human's words.",
+          "",
+          input.prompt,
+        ].join("\n"),
+      ),
     });
     return { mailId: mail.id };
   }

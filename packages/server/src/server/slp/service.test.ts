@@ -273,10 +273,16 @@ describe("SlpService", () => {
       "relay accepted by the Lead",
     );
     expect(daemon.manager.getAgent(leadId)?.lifecycle).toBe("running");
-    expect(sessionOf(daemon, leadId).startPrompts).toEqual([
+    // Named, so the Lead cannot read a member's message as Human's.
+    const delivered = sessionOf(daemon, leadId).startPrompts[0] ?? "";
+    expect(sessionOf(daemon, leadId).startPrompts).toHaveLength(1);
+    expect(delivered).toMatch(/^<paseo-system>\n[\s\S]*\n<\/paseo-system>$/);
+    expect(delivered).toContain(`SLP message from supervisor (${supervisorId})`);
+    expect(delivered).toContain(
       "Investigate login latency; report the cause and the measured result.",
-    ]);
+    );
 
+    // Human's own message reaches the contact unwrapped; only mail is named.
     // The Lead's held turn does not block the Human: the Supervisor takes the next message.
     const admission = await daemon.manager.admitForegroundTurn(supervisorId, "How is it going?");
     expect(admission.status).toBe("started");

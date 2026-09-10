@@ -84,6 +84,20 @@ describe("SLP slot mailbox", () => {
     };
   }
 
+  /**
+   * The initial prompt stands alone; every later message is mail, named with
+   * its sender so the recipient cannot read it as Human's.
+   */
+  function expectDelivered(prompts: string[], texts: string[], fromAgentId: string): void {
+    expect(prompts).toHaveLength(texts.length + 1);
+    expect(prompts[0]).toBe("Start the assignment");
+    for (const [index, text] of texts.entries()) {
+      const delivered = prompts[index + 1] ?? "";
+      expect(delivered).toContain(`SLP message from lead (${fromAgentId})`);
+      expect(delivered).toContain(text);
+    }
+  }
+
   function mail(daemon: Daemon, id: string): SlpMailRecord {
     const record = daemon.service.listMail().find((candidate) => candidate.id === id);
     if (!record) throw new Error(`no mail ${id}`);
@@ -165,11 +179,11 @@ describe("SLP slot mailbox", () => {
 
     peer.release();
     await untilSettled(() => mail(daemon, firstId).state === "accepted", "first admitted");
-    expect(peer.startPrompts).toEqual(["Start the assignment", "first"]);
+    expectDelivered(peer.startPrompts, ["first"], leadId);
     expect(mail(daemon, secondId).state).toBe("queued");
     peer.release();
     await untilSettled(() => mail(daemon, secondId).state === "accepted", "second admitted");
-    expect(peer.startPrompts).toEqual(["Start the assignment", "first", "second"]);
+    expectDelivered(peer.startPrompts, ["first", "second"], leadId);
     expect(peer.interruptCount).toBe(0);
     // The Lead hears from the Peer only through the SLP handback, never the
     // built-in finish notification the send tool would otherwise arm.
@@ -308,8 +322,12 @@ describe("SLP slot mailbox", () => {
     });
     expect(reply.structuredContent).toMatchObject({ success: true, mailId: expect.any(String) });
     expect(daemon.service.listMail()).toMatchObject([
-      { slotId: group.leadSlotId, kind: "message", prompt: "question for Lead" },
+      { slotId: group.leadSlotId, kind: "message" },
     ]);
+    // Named with its sender, so the Lead cannot read a Peer's words as Human's.
+    const queued = daemon.service.listMail()[0]?.prompt ?? "";
+    expect(queued).toContain(`SLP message from peer (${peerId})`);
+    expect(queued).toContain("question for Lead");
 
     // The Lead may cancel its own Peer: the target check passes and the tool runs.
     const canceled = await leadTools.executeTool("cancel_agent", { agentId: peerId });
