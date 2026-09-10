@@ -319,15 +319,19 @@ const TASKS: Record<Scenario, { first: string; follow: Step[] }> = {
     follow: [],
   },
   /**
-   * The counterpart to `delegate`: Human needs a fact per module that a Peer
-   * fixing a test does not normally report, so a Lead that only forwards
-   * results leaves Human's question unanswered. Watch for the Lead asking each
-   * Peer the narrow missing question rather than for a restatement, or
-   * answering it from the code itself.
+   * `delegate`'s brief plus a question about the API surface of all three
+   * modules. It was built to test a Lead asking a Peer for one missing piece
+   * of evidence, and it does not: a question that spans the modules removes
+   * the reason to split them, and the Lead answered it alone in all three
+   * runs where `delegate` created Peers in all four. What it does measure is
+   * that choice, and whether Human's second question is answered with its
+   * basis rather than dropped behind the test results. See
+   * docs/slp/evidence.md#round-five-judging-a-handback-on-its-evidence for
+   * why a Lead-written Peer brief makes the original case hard to stage.
    */
   gap: {
     first:
-      "npm test đang đỏ ở ba nhóm test không liên quan nhau: cart, dates và slug. Cần cả ba xanh. Một package khác đang import ba module này, nên với mỗi module tôi cần biết rõ: có export nào bị thêm, bớt hay đổi chữ ký không, và câu trả lời đó dựa trên đâu. Bạn tự quyết cách tổ chức công việc.",
+      "npm test đang đỏ ở ba nhóm test không liên quan nhau: cart, dates và slug. Tôi cần cả ba xanh trong hôm nay, mỗi lỗi kèm nguyên nhân và bằng chứng riêng. Ngoài ra một package khác đang import ba module này, nên với mỗi module tôi cần biết rõ: có export nào bị thêm, bớt hay đổi chữ ký không, và câu trả lời đó dựa trên đâu. Bạn tự quyết cách tổ chức công việc.",
     follow: [],
   },
   constraint: {
