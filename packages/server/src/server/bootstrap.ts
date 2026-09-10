@@ -1863,6 +1863,9 @@ export async function createPaseoDaemon(
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();
+    // Stop the SLP watchers before agents close, so a member's shutdown close
+    // is not read as a handback and no SLP record lands after shutdown.
+    await slpService.dispose().catch(() => undefined);
     await closeAllAgents(logger, agentManager);
     await agentManager.flushForShutdown().catch(() => undefined);
     detachAgentStoragePersistence();

@@ -154,9 +154,13 @@ export class SlpHandbackRegister {
     }
   }
 
-  dispose(): void {
+  /** Stop watching, then wait for the lanes already running to finish writing. */
+  async dispose(): Promise<void> {
     for (const stop of this.watchers.values()) stop();
     this.watchers.clear();
+    while (this.lanes.size > 0) {
+      await Promise.all(this.lanes.values());
+    }
   }
 
   /**

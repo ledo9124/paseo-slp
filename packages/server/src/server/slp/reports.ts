@@ -37,6 +37,8 @@ export class SlpLeadReports {
   private readonly resolveLead: SlpLeadReportsOptions["resolveLead"];
   private readonly now: () => Date;
   private readonly turns = new Map<string, TurnWatch>();
+  /** Relays already started; `dispose` awaits them so no mail lands after shutdown. */
+  private readonly pending = new Set<Promise<void>>();
   private stop: (() => void) | null = null;
 
   constructor(options: SlpLeadReportsOptions) {
@@ -63,16 +65,23 @@ export class SlpLeadReports {
         const turn = this.turns.get(agentId);
         if (!turn) return;
         this.turns.delete(agentId);
-        if (lifecycle === "idle") void this.report(agentId, turn);
+        if (lifecycle === "idle") this.track(this.report(agentId, turn));
       },
       { replayState: false },
     );
   }
 
-  dispose(): void {
+  /** Stop watching, then wait for the relays already in flight to finish writing. */
+  async dispose(): Promise<void> {
     this.stop?.();
     this.stop = null;
     this.turns.clear();
+    await Promise.all(this.pending);
+  }
+
+  private track(operation: Promise<void>): void {
+    this.pending.add(operation);
+    void operation.finally(() => this.pending.delete(operation));
   }
 
   private async report(agentId: string, turn: TurnWatch): Promise<void> {

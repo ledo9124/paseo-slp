@@ -54,6 +54,10 @@ export class SlpMailbox {
   private readonly records = new Map<string, SlpMailRecord>();
   /** One dispatch loop per slot; a second pump while one runs is a no-op. */
   private readonly pumps = new Map<string, Promise<void>>();
+  private closing = false;
+  /** Resolved by `close`, so a loop parked on a turn boundary stops waiting. */
+  private readonly closed: Promise<void>;
+  private announceClosed: () => void = () => undefined;
   private nextSequence = 0;
 
   constructor(options: SlpMailboxOptions) {
@@ -64,6 +68,9 @@ export class SlpMailbox {
     this.resolveSlot = options.resolveSlot;
     this.now = options.now;
     this.onChange = options.onChange ?? (() => undefined);
+    this.closed = new Promise<void>((resolve) => {
+      this.announceClosed = resolve;
+    });
   }
 
   list(): SlpMailRecord[] {
@@ -129,8 +136,22 @@ export class SlpMailbox {
     }
   }
 
+  /**
+   * Stop dispatching and wait for the loops already running. A loop waiting
+   * for a busy recipient's turn to end would never return on its own, so it
+   * is released here; its mail stays `queued` for the next daemon.
+   */
+  async close(): Promise<void> {
+    this.closing = true;
+    this.announceClosed();
+    while (this.pumps.size > 0) {
+      await Promise.all(this.pumps.values());
+    }
+  }
+
   /** Re-check a slot whose destination changed (a hold lifted, a generation activated). */
   pump(groupId: string, slotId: string): void {
+    if (this.closing) return;
     const key = `${groupId}/${slotId}`;
     if (this.pumps.has(key)) return;
     const run = this.drain(groupId, slotId)
@@ -145,6 +166,7 @@ export class SlpMailbox {
 
   private async drain(groupId: string, slotId: string): Promise<void> {
     for (;;) {
+      if (this.closing) return;
       const next = this.nextQueued(groupId, slotId);
       if (!next) return;
       const destination = this.resolveSlot(groupId, slotId);
@@ -159,7 +181,7 @@ export class SlpMailbox {
       const boundary = nextTurnBoundary(this.agentManager, destination.agentId);
       try {
         const outcome = await this.dispatch(next, destination);
-        if (outcome === "busy") await boundary.reached;
+        if (outcome === "busy") await Promise.race([boundary.reached, this.closed]);
       } finally {
         boundary.stop();
       }

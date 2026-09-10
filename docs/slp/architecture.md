@@ -48,6 +48,8 @@ SLP owns its records under `$PASEO_HOME/slp/`. Use existing agent fields for the
 
 Where a mutation spans records, persist its intent and recovery progress before publication. Atomic replacement of one file alone does not make a multi-record transition atomic. Recovery runs at boot, in the existing block that already recovers agent storage and the workspace registries before the WebSocket server is constructed. Avoid task databases, a separate broker, or a generic distributed scheduler.
 
+Shutdown stops the watchers and then waits for the writes they already started: `SlpService.dispose` (called before the daemon closes agents) awaits the handback lanes and report relays, then closes the mailbox, which releases a dispatch loop parked on a busy recipient's turn boundary and leaves that mail `queued` for the next daemon. Without the wait a record lands after the daemon is gone, and on Windows it also defeats the caller's cleanup of the home directory.
+
 The daemon pid lock guarantees one daemon per `$PASEO_HOME`. In-process promise chains are therefore sufficient serialization; do not add cross-process locking.
 
 ## Prompt composition

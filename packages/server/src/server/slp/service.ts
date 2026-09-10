@@ -578,9 +578,14 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   }
 
   /** Stops watching agents. Tests use it to end a daemon; bootstrap never needs it. */
-  dispose(): void {
-    this.handbacks.dispose();
-    this.leadReports.dispose();
+  /**
+   * Stop every watcher, then wait for the writes they already started. A
+   * record that lands after shutdown belongs to no running daemon, and on
+   * Windows it also defeats the caller's cleanup of the home directory.
+   */
+  async dispose(): Promise<void> {
+    await Promise.all([this.handbacks.dispose(), this.leadReports.dispose()]);
+    await this.mailbox.close();
   }
 
   /** The bundled role text every generation is composed from, before host extras. */

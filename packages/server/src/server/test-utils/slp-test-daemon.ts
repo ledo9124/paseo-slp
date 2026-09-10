@@ -118,7 +118,7 @@ export async function startSlpTestDaemon(options: SlpTestDaemonOptions): Promise
     creations,
     createAgent,
     stop: async () => {
-      service.dispose();
+      await service.dispose();
       manager.prepareForShutdown();
       for (const agent of manager.listAgents()) {
         await manager.closeAgent(agent.id).catch(() => undefined);
