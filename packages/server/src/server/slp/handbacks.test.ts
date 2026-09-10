@@ -237,6 +237,27 @@ describe("SLP Peer creation and handback", () => {
     ]);
   });
 
+  test("a Peer that errors reaches the Lead as an error, not as a result", async () => {
+    const daemon = await startDaemon();
+    const group = await readyGroup(daemon);
+    const leadId = leadAgentId(group);
+    const created = await daemon.createAgent(peerCreation(leadId));
+    const lead = daemon.client.sessions[0]!;
+    const peer = daemon.client.sessions[1]!;
+
+    // The handback is the Peer's only channel, so a failed turn has to say so itself.
+    peer.fail();
+    await untilSettled(() => accepted(daemon, created.snapshot.id), "error handback delivered");
+
+    expect(lead.startPrompts).toHaveLength(2);
+    const delivered = lead.startPrompts[1]!;
+    expect(delivered).toContain("errored before handing back");
+    expect(delivered).not.toContain("returned its turn");
+    expect(delivered).toContain(`Peer: Investigate login latency (${created.snapshot.id})`);
+    // Nothing is left to hand back, so the record closes instead of re-arming.
+    expect(handbackFor(daemon, created.snapshot.id)).toMatchObject({ state: "delivered" });
+  });
+
   test("a busy Lead is never steered or interrupted; handbacks arrive in order after its turn", async () => {
     const daemon = await startDaemon();
     const group = await readyGroup(daemon);

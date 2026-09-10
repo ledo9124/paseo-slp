@@ -34,9 +34,9 @@ export interface SlpHandbackRegistration {
  * at boot, and addressed to the owner slot's mailbox so it can never cancel
  * the owner's live turn or bind to a retired generation. It fires on every
  * turn the Peer returns, not once: a Lead's follow-up starts a new Peer turn
- * whose answer is a handback too. A Peer that also mailed the Lead during a
- * turn produces one extra wake rather than a lost result; the runtime does
- * not judge which turn ends carry work. This replaces
+ * whose answer is a handback too. It is also the Peer's only channel — the
+ * role cannot call `send_agent_prompt` — so the runtime never has to judge
+ * which turn ends carry work, and no result arrives twice. This replaces
  * `setupFinishNotification` for SLP Peers; see
  * docs/slp/handoff.md#relationships-and-background-work for why that channel
  * cannot carry it.

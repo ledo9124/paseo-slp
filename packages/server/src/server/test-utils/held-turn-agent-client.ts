@@ -113,6 +113,14 @@ export class HeldTurnSession implements AgentSession {
     this.emit({ type: "turn_completed", provider: this.provider, turnId });
   }
 
+  /** End the held turn the way a provider failure does, so the agent reaches an error lifecycle. */
+  fail(error = "provider failed"): void {
+    const turnId = this.activeTurnId;
+    if (!turnId) throw new Error("no held turn to fail");
+    this.activeTurnId = null;
+    this.emit({ type: "turn_failed", provider: this.provider, turnId, error });
+  }
+
   async steerActiveTurn(
     prompt: AgentPromptInput,
     _options: SteerActiveTurnOptions,

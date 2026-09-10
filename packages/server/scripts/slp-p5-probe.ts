@@ -3,6 +3,10 @@
  *
  *   npx tsx scripts/slp-p5-probe.ts <claude|codex> <scenario> [supervised|direct] [model]
  *
+ * Name a cheap model. A run burns the account's quota on every member, and
+ * the behavior these scenarios test does not need the top one: `gpt-5.6-luna`
+ * on Codex, Sonnet on Claude.
+ *
  * Scenarios (see docs/slp/implementation-plan.md#role-evaluation-scenarios):
  *
  * - `tiny`     one-line change a Lead should make itself

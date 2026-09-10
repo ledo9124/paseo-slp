@@ -8,6 +8,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentPromptInput } from "../agent/agent-sdk-types.js";
 import type { CreateAgentFromMcpInput } from "../agent/create-agent/create.js";
 import { createPaseoToolCatalog } from "../agent/tools/paseo-tools.js";
+import { isTargetAllowed } from "./authority.js";
 import {
   allMailQueued,
   slpLeadAgentId as leadAgentId,
@@ -286,7 +287,7 @@ describe("SLP slot mailbox", () => {
 
   test("roles see and act only within their authority; agents outside a group are unchanged", async () => {
     const daemon = await startDaemon();
-    const { group, leadId, peerId } = await groupWithPeer(daemon);
+    const { leadId, peerId } = await groupWithPeer(daemon);
     const outsider = await daemon.manager.createAgent({ provider: "codex", cwd }, undefined, {
       workspaceId: "wks_other",
     });
@@ -298,7 +299,9 @@ describe("SLP slot mailbox", () => {
     expect(leadTools.getTool("cancel_agent")).toBeDefined();
     expect(peerTools.getTool("create_agent")).toBeUndefined();
     expect(peerTools.getTool("cancel_agent")).toBeUndefined();
-    expect(peerTools.getTool("send_agent_prompt")).toBeDefined();
+    // A Peer reaches its Lead by ending its turn, so it has no send tool at all.
+    expect(peerTools.getTool("send_agent_prompt")).toBeUndefined();
+    expect(isTargetAllowed("peer", "send_agent_prompt", "owner")).toBe(false);
     expect(outsiderTools.getTool("create_agent")).toBeDefined();
     // The SLP control channel exists only for members.
     expect(leadTools.getTool("slp_checkpoint")).toBeDefined();
@@ -306,28 +309,23 @@ describe("SLP slot mailbox", () => {
     expect(outsiderTools.getTool("slp_checkpoint")).toBeUndefined();
     expect(outsiderTools.getTool("slp_ready")).toBeUndefined();
 
-    // A Peer writes only to its Lead; the Lead writes only to its Peers and cannot reach a stranger.
-    await expect(
-      peerTools.executeTool("send_agent_prompt", { agentId: outsider.id, prompt: "hi" }),
-    ).rejects.toThrow(SlpRoleAuthorityError);
+    // The Lead writes only to its Peers and cannot reach a stranger.
     await expect(
       leadTools.executeTool("send_agent_prompt", { agentId: outsider.id, prompt: "hi" }),
     ).rejects.toThrow(SlpRoleAuthorityError);
     await expect(leadTools.executeTool("cancel_agent", { agentId: outsider.id })).rejects.toThrow(
       SlpRoleAuthorityError,
     );
-    const reply = await peerTools.executeTool("send_agent_prompt", {
-      agentId: leadId,
-      prompt: "question for Lead",
+    const reply = await leadTools.executeTool("send_agent_prompt", {
+      agentId: peerId,
+      prompt: "answer for the Peer",
     });
     expect(reply.structuredContent).toMatchObject({ success: true, mailId: expect.any(String) });
-    expect(daemon.service.listMail()).toMatchObject([
-      { slotId: group.leadSlotId, kind: "message" },
-    ]);
-    // Named with its sender, so the Lead cannot read a Peer's words as Human's.
+    expect(daemon.service.listMail()).toMatchObject([{ kind: "message" }]);
+    // Named with its sender, so the recipient cannot read a member's words as Human's.
     const queued = daemon.service.listMail()[0]?.prompt ?? "";
-    expect(queued).toContain(`SLP message from peer (${peerId})`);
-    expect(queued).toContain("question for Lead");
+    expect(queued).toContain(`SLP message from lead (${leadId})`);
+    expect(queued).toContain("answer for the Peer");
 
     // The Lead may cancel its own Peer: the target check passes and the tool runs.
     const canceled = await leadTools.executeTool("cancel_agent", { agentId: peerId });

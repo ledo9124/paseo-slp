@@ -207,9 +207,9 @@ function reachability(identity: SlpIdentity): string[] {
       ];
     case "peer":
       return [
-        `- Your Lead is agent id \`${lead ?? "unknown"}\`. Questions and scope changes go there with \`send_agent_prompt\`.`,
-        "- Your final assistant message is your handback. Paseo delivers it to your Lead when your turn ends; do not send it again through another route.",
-        `- ${mail}`,
+        `- Your Lead is agent id \`${lead ?? "unknown"}\`. You have no tool that reaches it and do not need one.`,
+        "- The last message of your turn is your handback: Paseo delivers it to your Lead when the turn ends. A result, a question, a dependency or a blocker all travel that way — write it as the last thing you say, then end the turn.",
+        "- Lead's replies and follow-ups arrive here as SLP mail and start a new turn, which ends in a handback of its own. A send returns a mail id, not a reply.",
         `- ${paseoOnly}`,
       ];
   }

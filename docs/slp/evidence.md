@@ -90,8 +90,11 @@ The three Peers in the first pair of `delegate` runs launched on `gpt-6-astra` i
 - Keep the report relay. Two of the three tested configurations do not mail the report themselves.
 - Supervised is not justified for work of this size, on either Codex model. The comparison for work that earns a Peer is still open.
 - Do not reopen PR 6. Handoff is not the constraint.
-- The next change is in the runtime, not the role text: decide whether a Peer turn that already mailed the owner slot should also hand back. That question is open, and the measurement above is the argument for reopening it.
-- Still to run, after that: `delegate` repeated on one model to see whether the duplication accounts for the spread, a Peer that returns a weak result for the Lead to reject, a dependency or blocker signal, and the other scenarios on Claude. A mixed topology is still NOT_RUN. Chasing a task that makes a Lead delegate every time is not a goal; a Lead declining a Peer can be the right call.
+- A Peer no longer has `send_agent_prompt`. The duplication came from having two channels into the Lead, so the fix removes one rather than adding a rule for when to suppress it: the last message of a Peer's turn is the handback, and a result, a question, a dependency and a blocker all travel that way. Suppressing the handback of a turn that had already mailed was the other candidate and is worse — a Peer that reports progress early and finishes the work later would have had the finish dropped.
+- Lead to Supervisor keeps both channels for now. A Lead can need to report a decision and carry on coordinating, and its traffic has not been traced the way the Peer's has.
+- Parity with Direct is not the target. A Supervisor costs what it costs; what has to go is turns spent on input the runtime delivered twice.
+- How much this removes is unmeasured. Dropping duplicated input changes what the Lead does next, so the next `delegate` runs decide it, not arithmetic on the old ones.
+- Still to run: `delegate` repeated on one model with the Peer's send tool gone, a Peer that returns a weak result for the Lead to reject, a dependency or blocker signal, and the other scenarios on Claude. A mixed topology is still NOT_RUN. Chasing a task that makes a Lead delegate every time is not a goal; a Lead declining a Peer can be the right call.
 
 ## Results by gate
 

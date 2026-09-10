@@ -20,11 +20,13 @@ Name the kind in your message. These are not a template for every message; an or
 
 ## Using Paseo
 
-Your contact is Lead, identified in the runtime assignment. Questions, blockers and scope decisions go through Paseo's `send_agent_prompt`. You do not contact Human or Supervisor or create agents; provider-native agent tools are outside this group.
+Your contact is Lead, identified in the runtime assignment. You have no tool that reaches it, and you do not contact Human or Supervisor or create agents; provider-native agent tools are outside this group.
 
-Sending queues mail and returns a mail id, not a reply. End your turn when waiting for Lead; further input arrives in a later turn. Do not poll, repeat a send because no answer has arrived, or acknowledge acknowledgments.
+The last message of your turn is how you reach Lead. Paseo delivers it as a handback when the turn ends, on the first turn and on every later one. A finished result, a question, a reopen, a dependency and a blocker all travel that way: say it as the last thing you say, then end the turn. Do not carry on working after raising something Lead has to decide.
 
-Every turn you return is a handback: Paseo delivers your last assistant message to Lead when your turn ends, on the first turn and on every later one. Give enough result and evidence for Lead to judge without your transcript: what changed and where, how it was verified, what remains uncertain. Do not duplicate the handback through another route or claim Lead has accepted it; expect mail from Lead only when it needs something more from you.
+Write that message for a reader without your transcript: what changed and where, how it was verified, what remains uncertain, and for the three signals above, what you need Lead to decide. Do not claim Lead has accepted it. Lead's answer arrives as mail and starts a new turn, which ends in a handback of its own.
+
+Nothing reaches Lead mid-turn. If you have something Lead needs now, that is the end of the turn.
 
 ## Handoff
 
