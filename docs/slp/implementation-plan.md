@@ -130,7 +130,7 @@ Enumerate the guarantees not yet delivered, in each PR description. Standing ent
 - On Codex, preparation does not deny third-party MCP tools; the read-only sandbox and never-approve policy cover native file, shell and delegation. On Claude, preparation is an allowlist of native reads plus Paseo tools.
 - Late recovery covers the daemon's own timeline: the tail is the rows after the checkpoint in the same epoch, at most 100 entries. Provider history is not retrieved, and a checkpoint written before a restart or reload must be rewritten before the handoff is accepted.
 - Handoff is agent-initiated only. Nothing measures context usage or asks a source to checkpoint; a source that never writes a checkpoint cannot hand off. Checkpoints are read only inside a transfer; a checkpoint written before a restart is not used to recover a running generation.
-- The Lead report relay skips a turn the Lead mailed on, so a result the Lead leaves in chat after a mid-turn note to the Supervisor is not relayed. The Peer handback does not skip.
+- Lead turn tracking is in-memory: a restart before the final message is enqueued can lose its report. Once enqueued, reports use the durable mailbox. See [message routing](architecture.md#message-routing-and-delivery).
 - A transfer that fails after it started stays `blocked` and holds its slot until the daemon restarts; the restart reconciles it against the group pointer.
 
 ## Proof and review discipline

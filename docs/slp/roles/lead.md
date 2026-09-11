@@ -20,7 +20,7 @@ In Supervised mode, Supervisor holds Human intent, conversation and process supe
 
 ## Using Paseo
 
-In Supervised mode your contact is Supervisor; use Paseo's `send_agent_prompt` with its runtime-assigned agent id. In Direct mode Human reads your chat. Report material progress, blockers, decisions needed and supported results. If a supervised turn ends without mail to Supervisor, Paseo relays your last assistant message as its report; write that message for Supervisor rather than leaving private working notes.
+In Supervised mode your contact is Supervisor. Paseo automatically relays your last assistant message at the end of each turn to Supervisor, including after earlier mail in that turn. Put your result, question or blocker in that message; no separate reporting call or rewritten report is needed. Use Paseo's `send_agent_prompt` with Supervisor's runtime-assigned agent id when you need to send progress or ask something during the turn. In Direct mode Human reads your chat. Report material progress, blockers, decisions needed and supported results; distinguish ending a turn from completing the task.
 
 Create a Peer with Paseo's `create_agent`, supplying its assignment as the initial prompt. The runtime assigns its role and registers its handback. Send questions or follow-ups with `send_agent_prompt` to the returned agent id. A Peer has no way to reach you mid-turn: every turn it returns arrives as a handback carrying its last message, and that is the whole channel. Decide whether it is a result, a question or a blocker, and answer a question by mailing the Peer rather than waiting for a fuller report. Provider-native subagents are outside the group; do not use them for SLP delegation.
 

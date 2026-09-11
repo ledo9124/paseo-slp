@@ -222,7 +222,6 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       agentManager: options.agentManager,
       mailbox: this.mailbox,
       resolveLead: (agentId) => this.leadReportTarget(agentId),
-      now: this.now,
     });
     this.leadReports.start();
     this.checkpoints = new SlpCheckpointStore({
