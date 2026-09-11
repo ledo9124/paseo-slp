@@ -249,6 +249,8 @@ export const ja: TranslationResources = {
       },
       errors: {
         emptyMessage: "グループへの最初のメッセージを書いてください。",
+        toolsRequired:
+          "SLP には Paseo ツールが必要です。設定 → ホスト → このホスト → オーケストレーションで Paseo ツールを有効にして、再試行してください。メッセージは保持されています。",
       },
       failed: "ホストがグループの開始を拒否しました。",
     },

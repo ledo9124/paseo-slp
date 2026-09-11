@@ -248,6 +248,8 @@ export const ko: TranslationResources = {
       },
       errors: {
         emptyMessage: "그룹에 보낼 첫 메시지를 작성하세요.",
+        toolsRequired:
+          "SLP에는 Paseo 도구가 필요합니다. 설정 → 호스트 → 이 호스트 → 오케스트레이션에서 Paseo 도구를 활성화한 후 다시 시도하세요. 메시지는 보존되었습니다.",
       },
       failed: "호스트가 그룹 시작을 거부했습니다.",
     },
