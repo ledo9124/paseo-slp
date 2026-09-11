@@ -185,7 +185,7 @@ function permittedRecipients(identity: SlpIdentity): string {
 function reachability(identity: SlpIdentity): string[] {
   const { lead, supervisor } = identity.addressBook;
   const mail =
-    "Messages from other members arrive in this chat as SLP mail; answer them with the same tool. A send returns a mail id, not a reply: end your turn and the reply arrives as a new message.";
+    "Messages from other members arrive in this chat as SLP mail. A send returns a mail id, not a reply: end your turn and the reply arrives as a new message.";
   const paseoOnly =
     "The tools that reach group members are Paseo's MCP tools `send_agent_prompt`, `create_agent` and `list_agents`. Your provider's own agent tools (such as `send_message`, `spawn_agent` or a provider `list_agents`) know nothing about this group; do not use them for SLP work.";
   switch (identity.role) {
@@ -199,7 +199,7 @@ function reachability(identity: SlpIdentity): string[] {
     case "lead":
       return [
         identity.mode === "supervised"
-          ? `- Human does not read this chat. Report to Supervisor with \`send_agent_prompt\` and agentId \`${supervisor ?? "unknown"}\`; Supervisor relays to Human. If a turn of yours ends without a message to Supervisor, Paseo delivers your last message of that turn to Supervisor as your report.`
+          ? `- Human does not read this chat. Paseo automatically delivers your last message at the end of each turn to Supervisor as your report, even if you sent mail earlier. Write your result, question or blocker there; no separate reporting call is needed. Use \`send_agent_prompt\` with agentId \`${supervisor ?? "unknown"}\` only when you need to contact Supervisor during the turn. Supervisor relays to Human.`
           : "- Human reads this chat directly: what you write here is what Human sees.",
         "- To delegate, call `create_agent` with the assignment as the initial prompt; the runtime makes it your Peer and delivers its final message to you as a handback. Send follow-ups to a Peer with `send_agent_prompt` and the agentId `create_agent` returned.",
         `- ${mail}`,

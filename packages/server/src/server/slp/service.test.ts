@@ -201,6 +201,9 @@ describe("SlpService", () => {
     expect((await daemon.storage.get(leadId))?.config.systemPrompt).toContain(
       `Supervisor (agent id ${supervisorId})`,
     );
+    expect((await daemon.storage.get(leadId))?.config.systemPrompt).toContain(
+      "no separate reporting call is needed",
+    );
     expect((await daemon.storage.get(supervisorId))?.title).toBe("Supervisor");
     expect(await readGroupFile(group.id)).toEqual(group);
     // A retry after restart creates nothing: both roots are journaled.
@@ -210,7 +213,7 @@ describe("SlpService", () => {
     expect(second.client.sessions).toHaveLength(0);
   });
 
-  test("supervised mode: a Lead turn that sent the Supervisor nothing is relayed as its report", async () => {
+  test("supervised mode: the final Lead message reaches a busy Supervisor after a progress message", async () => {
     const daemon = await startDaemon({
       releaseText: "Analysis done: three phases, one open decision.",
     });
@@ -221,7 +224,7 @@ describe("SlpService", () => {
     await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
     const reports = () => daemon.service.listMail().filter((mail) => mail.kind === "report");
 
-    // Turn one: the Lead reports itself; the runtime adds nothing.
+    // A progress message starts a Supervisor turn; the final answer must follow it.
     expect((await daemon.manager.admitForegroundTurn(leadId, "Analyze the project")).status).toBe(
       "started",
     );
@@ -237,7 +240,34 @@ describe("SlpService", () => {
       () => mailState(daemon, sent?.mailId ?? "") === "accepted",
       "the Lead's own report reached the Supervisor",
     );
-    expect(reports()).toHaveLength(0);
+    await untilSettled(() => reports().length === 1, "the final answer was queued after progress");
+    const firstReport = reports()[0]!;
+    expect(firstReport.state).toBe("queued");
+    expect(firstReport.slotId).toBe(group.supervisorSlotId);
+    expect(firstReport.fromSlotId).toBe(group.leadSlotId);
+    expect(JSON.stringify(firstReport.prompt)).toContain(
+      "Analysis done: three phases, one open decision.",
+    );
+    // The report is durable before the busy Supervisor can receive it.
+    const persistedReport = JSON.parse(
+      await readFile(path.join(paseoHome, "slp", "mail", `${firstReport.id}.json`), "utf8"),
+    );
+    expect(persistedReport).toMatchObject({ id: firstReport.id, state: "queued" });
+    expect(sessionOf(daemon, supervisorId).startPrompts).toHaveLength(2);
+    expect(sessionOf(daemon, supervisorId).interruptCount).toBe(0);
+    sessionOf(daemon, supervisorId).release();
+    await untilSettled(
+      () => mailState(daemon, firstReport.id) === "accepted",
+      "the queued final answer reached the Supervisor",
+    );
+    await untilSettled(
+      () => sessionOf(daemon, supervisorId).startPrompts.length === 3,
+      "the Supervisor started a turn for the final answer",
+    );
+    expect(sessionOf(daemon, supervisorId).startPrompts[2]).toContain(
+      "Analysis done: three phases, one open decision.",
+    );
+    expect(sessionOf(daemon, supervisorId).interruptCount).toBe(0);
     sessionOf(daemon, supervisorId).release();
     await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
 
@@ -245,14 +275,36 @@ describe("SlpService", () => {
     expect((await daemon.manager.admitForegroundTurn(leadId, "Continue")).status).toBe("started");
     await daemon.manager.waitForAgentRunStart(leadId);
     sessionOf(daemon, leadId).release();
-    await untilSettled(() => reports().length === 1, "the runtime relayed the Lead's last message");
-    const report = reports()[0]!;
+    await untilSettled(() => reports().length === 2, "the next turn also produced one report");
+    const report = reports()[1]!;
     expect(report.slotId).toBe(group.supervisorSlotId);
     expect(report.fromSlotId).toBe(group.leadSlotId);
     expect(JSON.stringify(report.prompt)).toContain(
       "Analysis done: three phases, one open decision.",
     );
   });
+
+  test.each([
+    { mode: "direct" as const, releaseText: "Analysis done." },
+    { mode: "supervised" as const, releaseText: "" },
+  ])(
+    "does not relay a report for $mode with final text '$releaseText'",
+    async ({ mode, releaseText }) => {
+      const daemon = await startDaemon({ releaseText });
+      const group = await daemon.service.initializeGroup(input({ mode }));
+      const leadId = leadAgentId(group);
+      const contactId = daemon.service.contactAgentId(group);
+      sessionOf(daemon, contactId).release();
+      await daemon.manager.waitForAgentEvent(contactId, { waitForActive: true });
+      await daemon.manager.admitForegroundTurn(leadId, "Analyze the project");
+      await daemon.manager.waitForAgentRunStart(leadId);
+      sessionOf(daemon, leadId).release();
+      await daemon.manager.waitForAgentEvent(leadId, { waitForActive: true });
+      // Drain report writes before asserting absence; no timer-shaped negative assertion.
+      await daemon.service.dispose();
+      expect(daemon.service.listMail().filter((mail) => mail.kind === "report")).toEqual([]);
+    },
+  );
 
   test("supervised mode: the Human keeps a contact while the Lead is busy", async () => {
     const daemon = await startDaemon();
