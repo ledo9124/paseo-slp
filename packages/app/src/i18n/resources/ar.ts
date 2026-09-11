@@ -245,6 +245,8 @@ export const ar: TranslationResources = {
       },
       errors: {
         emptyMessage: "اكتب الرسالة الأولى للمجموعة.",
+        toolsRequired:
+          "يحتاج SLP إلى أدوات Paseo. في الإعدادات ← المضيفون ← هذا المضيف ← التنسيق، فعّل أدوات Paseo ثم أعد المحاولة. تم الاحتفاظ برسالتك.",
       },
       failed: "رفض المضيف بدء المجموعة.",
     },

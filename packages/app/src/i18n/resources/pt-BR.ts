@@ -248,6 +248,8 @@ export const ptBR: TranslationResources = {
       },
       errors: {
         emptyMessage: "Escreva a primeira mensagem para o grupo.",
+        toolsRequired:
+          "O SLP precisa das ferramentas do Paseo. Em Configurações → Hosts → este host → Orquestração, ative as ferramentas do Paseo e tente novamente. Sua mensagem foi mantida.",
       },
       failed: "O host recusou iniciar o grupo.",
     },

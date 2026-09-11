@@ -249,6 +249,8 @@ export const es: TranslationResources = {
       },
       errors: {
         emptyMessage: "Escribe el primer mensaje para el grupo.",
+        toolsRequired:
+          "SLP necesita las herramientas de Paseo. En Ajustes → Hosts → este host → Orquestación, activa las herramientas de Paseo y vuelve a intentarlo. Tu mensaje se ha conservado.",
       },
       failed: "El host rechazó iniciar el grupo.",
     },

@@ -245,6 +245,8 @@ export const en = {
       },
       errors: {
         emptyMessage: "Write the first message for the group.",
+        toolsRequired:
+          "SLP needs Paseo tools. In Settings → Hosts → this host → Orchestration, enable Paseo tools, then retry. Your message has been kept.",
       },
       failed: "The host refused to start the group.",
     },

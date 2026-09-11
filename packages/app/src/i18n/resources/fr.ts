@@ -251,6 +251,8 @@ export const fr: TranslationResources = {
       },
       errors: {
         emptyMessage: "Rédigez le premier message pour le groupe.",
+        toolsRequired:
+          "SLP nécessite les outils Paseo. Dans Paramètres → Hôtes → cet hôte → Orchestration, activez les outils Paseo, puis réessayez. Votre message a été conservé.",
       },
       failed: "L'hôte a refusé de démarrer le groupe.",
     },

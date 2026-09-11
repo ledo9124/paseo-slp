@@ -1,7 +1,13 @@
 import { useCallback, useMemo } from "react";
+import type { SlpGroupSummary } from "@getpaseo/protocol/messages";
 import type { MessagePayload } from "@/composer/types";
-import { useSlpComposerMode, type SlpModeControlValue } from "./composer-mode";
+import {
+  useSlpComposerMode,
+  type SlpModeControlValue,
+  type SlpComposerMode,
+} from "./composer-mode";
 import { useSlpDraftSubmit, type SlpDraftLaunch, type SlpDraftStartOverride } from "./draft-submit";
+import { slpDraftKey, useSlpDraftLaunchStore } from "./draft-state";
 
 type Submit = (payload: MessagePayload) => Promise<void>;
 
@@ -13,11 +19,12 @@ type Submit = (payload: MessagePayload) => Promise<void>;
 export function useSlpDraftComposer(input: {
   serverId: string;
   workspaceId: string | null;
+  draftId: string;
   launch: SlpDraftLaunch;
   createAgent: Submit;
   isCreating: boolean;
   createError: string | null;
-  onSent: () => void;
+  onSent: (group: SlpGroupSummary) => void;
 }): {
   slpControl: SlpModeControlValue | null;
   submit: Submit;
@@ -25,10 +32,36 @@ export function useSlpDraftComposer(input: {
   start: (payload: MessagePayload, override: SlpDraftStartOverride) => Promise<void>;
   isSending: boolean;
   errorMessage: string | null;
+  isSlp: boolean;
 } {
-  const { serverId, workspaceId, launch, createAgent, isCreating, createError, onSent } = input;
-  const slpControl = useSlpComposerMode({ serverId, workspaceId });
-  const chosenMode = slpControl && slpControl.lock === null ? slpControl.value : "single";
+  const { serverId, workspaceId, draftId, launch, createAgent, isCreating, createError, onSent } =
+    input;
+  const control = useSlpComposerMode({ serverId, workspaceId });
+  // A New workspace submission owns its launch until it succeeds or the user changes mode.
+  // Group/agent pushes during initialization must not turn its retry into ordinary creation.
+  const draftKey = slpDraftKey(serverId, workspaceId, draftId);
+  const retained = useSlpDraftLaunchStore((state) => state.byDraft[draftKey]);
+  const startedMode = retained?.mode;
+  const retryOverride = retained?.override;
+  const onSelect = useCallback(
+    (value: SlpComposerMode) => {
+      useSlpDraftLaunchStore.getState().clear(draftKey);
+      control?.onSelect(value);
+    },
+    [control, draftKey],
+  );
+  const slpControl = useMemo(
+    () =>
+      control
+        ? {
+            ...control,
+            value: startedMode ?? control.value,
+            onSelect,
+          }
+        : null,
+    [control, startedMode, onSelect],
+  );
+  const chosenMode = startedMode ?? (control?.lock === null ? control.value : "single");
   const {
     submit: startGroup,
     start,
@@ -36,13 +69,20 @@ export function useSlpDraftComposer(input: {
   } = useSlpDraftSubmit({
     serverId,
     workspaceId,
+    draftId,
     mode: chosenMode === "single" ? null : chosenMode,
     launch,
     onSent,
   });
   const submit = useCallback<Submit>(
-    (payload) => (startGroup ? startGroup(payload) : createAgent(payload)),
-    [createAgent, startGroup],
+    (payload) => {
+      if (retryOverride) return start(payload, retryOverride);
+      if (startGroup) {
+        return startGroup(payload);
+      }
+      return createAgent(payload);
+    },
+    [createAgent, retryOverride, start, startGroup],
   );
   return useMemo(
     () => ({
@@ -50,8 +90,9 @@ export function useSlpDraftComposer(input: {
       submit,
       start,
       isSending: isCreating || state.pending,
-      errorMessage: createError ?? state.error,
+      errorMessage: chosenMode === "single" ? createError : state.error,
+      isSlp: chosenMode !== "single",
     }),
-    [createError, isCreating, slpControl, start, state.error, state.pending, submit],
+    [chosenMode, createError, isCreating, slpControl, start, state.error, state.pending, submit],
   );
 }

@@ -242,6 +242,8 @@ export const zhCN: TranslationResources = {
       },
       errors: {
         emptyMessage: "请写下发给群组的第一条消息。",
+        toolsRequired:
+          "SLP 需要 Paseo 工具。请在设置 → 主机 → 此主机 → 编排中启用 Paseo 工具，然后重试。你的消息已保留。",
       },
       failed: "主机拒绝启动该群组。",
     },

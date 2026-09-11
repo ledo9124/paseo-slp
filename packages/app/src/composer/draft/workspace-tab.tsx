@@ -35,7 +35,7 @@ import {
   validateDraftSubmission,
 } from "@/composer/draft/workspace-tab-core";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
-import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import type { AgentSnapshotPayload, SlpGroupSummary } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ComposerAttachment, WorkspaceComposerAttachment } from "@/attachments/types";
 import {
@@ -59,6 +59,8 @@ import { useSettings } from "@/hooks/use-settings";
 import { useSlpDraftComposer } from "@/slp/draft-composer";
 import type { SlpDraftStartOverride } from "@/slp/draft-submit";
 import type { MessagePayload } from "@/composer/types";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const EMPTY_ONLINE_SERVER_IDS: string[] = [];
@@ -351,6 +353,7 @@ function runPendingAutoSubmit(input: {
       provider: submission.provider,
       model: submission.model ?? null,
       modeId: submission.modeId ?? null,
+      messageId: submission.clientMessageId,
     });
   }
   if (preparedAttempt) {
@@ -618,13 +621,45 @@ export function WorkspaceDraftAgentTab({
       composerState.selectedProvider,
     ],
   );
-  const handleSlpSent = useCallback(() => {
-    clearDraftInput("sent");
-    clearWorkspaceAttachments({ scopeKey: draftAttachmentScopeKey });
-  }, [clearDraftInput, clearWorkspaceAttachments, draftAttachmentScopeKey]);
+  const handleSlpSent = useCallback(
+    (group: SlpGroupSummary) => {
+      const contactAgentId = group.contactAgentId;
+      if (!contactAgentId) return;
+      clearDraftInput("sent");
+      clearWorkspaceAttachments({ scopeKey: draftAttachmentScopeKey });
+      const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
+      if (workspaceKey) {
+        const layout = useWorkspaceLayoutStore.getState();
+        layout.convertDraftToAgent(workspaceKey, tabId, contactAgentId);
+        for (const slot of group.slots) {
+          if ((slot.role === "lead" || slot.role === "supervisor") && slot.activeAgentId) {
+            layout.openTab({
+              workspaceKey,
+              target: { kind: "agent", agentId: slot.activeAgentId },
+              intent: "background",
+            });
+          }
+        }
+      }
+      navigateToWorkspace({
+        serverId,
+        workspaceId,
+        target: { kind: "agent", agentId: contactAgentId },
+      });
+    },
+    [
+      clearDraftInput,
+      clearWorkspaceAttachments,
+      draftAttachmentScopeKey,
+      serverId,
+      tabId,
+      workspaceId,
+    ],
+  );
   const slp = useSlpDraftComposer({
     serverId,
     workspaceId,
+    draftId,
     launch: slpLaunch,
     createAgent: handleCreateFromInput,
     isCreating: isSubmitting,
@@ -652,8 +687,12 @@ export function WorkspaceDraftAgentTab({
       return;
     }
     autoSubmitKeyRef.current = submitKey;
-    replaceDraftText("");
-    setDraftAttachments([]);
+    replaceDraftText(submission.slpMode ? submission.text : "");
+    setDraftAttachments(
+      submission.slpMode
+        ? composerWorkspaceAttachment.userAttachmentsOnly(submission.attachments)
+        : [],
+    );
     const preparedAttempt =
       initialCreateAttempt?.clientMessageId === submission.clientMessageId
         ? initialCreateAttempt
@@ -752,6 +791,7 @@ export function WorkspaceDraftAgentTab({
           externalKeyboardShift
           isPaneFocused={isPaneFocused}
           onSubmitMessage={slp.submit}
+          submitBehavior={slp.isSlp ? "preserve-and-lock" : "clear"}
           isSubmitLoading={slp.isSending}
           blurOnSubmit={true}
           value={draftInput.text}
