@@ -1221,7 +1221,7 @@ export const ja: TranslationResources = {
       discord: "Discord",
       github: "GitHub Issueを作成",
       whatsNew: "新着情報",
-      appName: "Paseo",
+      appName: "Paseo SLP",
     },
     sections: {
       sessions: "履歴",
@@ -1410,7 +1410,7 @@ export const ja: TranslationResources = {
       fullStatus: {
         title: "詳細ステータス",
         modalTitle: "デーモンのステータス",
-        hint: "`paseo daemon status`を実行して出力を表示します",
+        hint: "`paseo-slp daemon status`を実行して出力を表示します",
         view: "ステータスを表示",
         copied: "ステータスをクリップボードにコピーしました。",
         fetchFailed: "デーモンのステータスの取得に失敗しました: {{message}}",
@@ -2193,6 +2193,8 @@ export const ja: TranslationResources = {
         beta: "ベータ",
       },
       updates: {
+        manualSlp:
+          "Paseo SLP は手動で更新します。新しい Paseo SLP ビルドをインストールしてください。",
         label: "アプリの更新",
         readyToInstall: "インストール準備完了: {{version}}",
         installTitle: "デスクトップの更新をインストール",

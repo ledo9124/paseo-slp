@@ -96,7 +96,7 @@ const nativeReleaseVersion = getNativeReleaseVersion(pkg.version);
 
 export default {
   expo: {
-    name: variant.name,
+    name: process.env.PASEO_WEB_PLATFORM === "electron" ? "Paseo SLP" : variant.name,
     slug: "voice-mobile",
     version: nativeReleaseVersion.appVersion,
     orientation: "portrait",

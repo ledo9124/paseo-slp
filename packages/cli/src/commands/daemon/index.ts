@@ -26,18 +26,18 @@ export function createDaemonCommand(): Command {
   ).action(withOutput(runDaemonReloadCommand));
 
   addJsonOption(daemon.command("status").description("Show local daemon status"))
-    .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
+    .option("--home <path>", "Paseo SLP home directory (default: ~/.paseo-slp)")
     .action(withOutput(runStatusCommand));
 
   addJsonOption(daemon.command("stop").description("Stop the local daemon"))
-    .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
+    .option("--home <path>", "Paseo SLP home directory (default: ~/.paseo-slp)")
     .option("--timeout <seconds>", "Wait timeout before failing (default: 15)")
     .option("--force", "Send SIGKILL if graceful stop times out")
     .option("--kill-timeout <seconds>", "Wait after SIGKILL before failing (default: 3)")
     .action(withOutput(runStopCommand));
 
   addJsonOption(daemon.command("restart").description("Restart the local daemon"))
-    .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
+    .option("--home <path>", "Paseo SLP home directory (default: ~/.paseo-slp)")
     .option("--timeout <seconds>", "Wait timeout before force step (default: 15)")
     .option("--force", "Send SIGKILL if graceful stop times out")
     .option(
@@ -74,7 +74,7 @@ export function createDaemonCommand(): Command {
       .command("set-password")
       .description("Prompt for and save a hashed daemon password to config.json"),
   )
-    .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
+    .option("--home <path>", "Paseo SLP home directory (default: ~/.paseo-slp)")
     .action(withOutput(runSetPasswordCommand));
 
   return daemon;

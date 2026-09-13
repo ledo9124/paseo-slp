@@ -1,3 +1,11 @@
+# Paseo SLP
+
+An independent desktop fork of Paseo with Supervisor–Lead–Peer orchestration.
+Build and install **Paseo SLP** using the [desktop setup guide](docs/development.md#paseo-slp-desktop).
+It uses a separate app, daemon, profile and CLI, and receives no upstream auto-updates.
+
+The upstream project introduction follows below.
+
 <p align="center">
   <img src="packages/website/public/logo.svg" width="64" height="64" alt="Paseo logo">
 </p>

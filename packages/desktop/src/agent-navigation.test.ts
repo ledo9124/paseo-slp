@@ -7,7 +7,7 @@ describe("desktop agent navigation", () => {
       parseAgentDeepLinkFromArgv([
         "/Applications/Paseo.app/Contents/MacOS/Paseo",
         "--no-sandbox",
-        "paseo://h/server-1/agent/agent-2",
+        "paseo-slp://h/server-1/agent/agent-2",
       ]),
     ).toEqual({ serverId: "server-1", agentId: "agent-2" });
   });

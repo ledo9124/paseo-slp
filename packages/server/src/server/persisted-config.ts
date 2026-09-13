@@ -1,3 +1,4 @@
+import { DEFAULT_DAEMON_PORT } from "@getpaseo/protocol/product-identity";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
@@ -374,7 +375,7 @@ const CONFIG_FILENAME = "config.json";
 const DEFAULT_PERSISTED_CONFIG = PersistedConfigSchema.parse({
   version: 1,
   daemon: {
-    listen: "127.0.0.1:6767",
+    listen: `127.0.0.1:${DEFAULT_DAEMON_PORT}`,
     cors: {
       allowedOrigins: ["https://app.paseo.sh"],
     },

@@ -2,8 +2,8 @@
   "name": "@getpaseo/desktop",
   "version": "0.7.2",
   "private": true,
-  "description": "Paseo desktop app (Electron wrapper)",
-  "homepage": "https://paseo.sh",
+  "description": "Paseo SLP desktop app",
+  "homepage": "https://github.com/ledo9124/paseo-slp",
   "license": "Apache-2.0",
   "author": {
     "name": "Mohamed Boudra",
@@ -11,11 +11,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/getpaseo/paseo.git"
+    "url": "https://github.com/ledo9124/paseo-slp.git"
   },
   "main": "dist/main.js",
   "scripts": {
-    "build": "npm --prefix ../.. run build:server:clean && npm run build:main && electron-builder --config electron-builder.yml",
+    "build": "npm --prefix ../.. run build:server:clean && npm run build:main && electron-builder --config electron-builder.yml --publish never",
     "build:main": "tsc -p tsconfig.json",
     "capture-harness": "./capture-harness/run.sh",
     "dev": "./scripts/dev.sh",

@@ -5,10 +5,12 @@ import { spawnProcess } from "@getpaseo/server";
 import { buildAgentDeepLink, type AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
 
 function findDesktopApp(): string | null {
+  const bundledApp = process.env.PASEO_SLP_DESKTOP_APP?.trim();
+  if (bundledApp) return existsSync(bundledApp) ? bundledApp : null;
   if (process.platform === "darwin") {
     const candidates = [
-      "/Applications/Paseo.app",
-      path.join(homedir(), "Applications", "Paseo.app"),
+      "/Applications/Paseo SLP.app",
+      path.join(homedir(), "Applications", "Paseo SLP.app"),
     ];
 
     for (const candidate of candidates) {
@@ -22,9 +24,10 @@ function findDesktopApp(): string | null {
 
   if (process.platform === "linux") {
     const candidates = [
-      "/usr/bin/Paseo",
-      "/opt/Paseo/Paseo",
-      path.join(homedir(), "Applications", "Paseo.AppImage"),
+      "/usr/bin/Paseo SLP",
+      "/usr/bin/paseo-slp",
+      "/opt/Paseo SLP/Paseo SLP",
+      path.join(homedir(), "Applications", `Paseo-SLP-${process.arch}.AppImage`),
     ];
 
     for (const candidate of candidates) {
@@ -42,7 +45,7 @@ function findDesktopApp(): string | null {
       return null;
     }
 
-    const candidate = path.join(localAppData, "Programs", "Paseo", "Paseo.exe");
+    const candidate = path.join(localAppData, "Programs", "Paseo SLP", "Paseo SLP.exe");
     return existsSync(candidate) ? candidate : null;
   }
 
@@ -70,13 +73,13 @@ function spawnDetached(command: string, args: string[]): void {
 
 function launchDesktop(args: string[]): void {
   if (process.env.PASEO_DESKTOP_CLI === "1") {
-    throw new Error("Cannot open Paseo Desktop while running in desktop CLI passthrough mode.");
+    throw new Error("Cannot open Paseo SLP Desktop while running in desktop CLI passthrough mode.");
   }
 
   const desktopApp = findDesktopApp();
   if (!desktopApp) {
     throw new Error(
-      "Paseo desktop app not found. Install it from https://github.com/getpaseo/paseo/releases",
+      "Paseo SLP desktop app not found. Install it from https://github.com/ledo9124/paseo-slp/releases",
     );
   }
 

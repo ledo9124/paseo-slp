@@ -28,7 +28,7 @@ function extractWorktreeName(path: string): string {
 }
 
 export function resolvePaseoHomePath(): string {
-  return process.env.PASEO_HOME ?? join(homedir(), ".paseo");
+  return process.env.PASEO_HOME ?? join(homedir(), ".paseo-slp");
 }
 
 export function resolvePaseoWorktreesDir(): string {

@@ -25,9 +25,65 @@ desktop launches always force the daemon to production mode.
 
 The web and desktop dev launchers pass the current Git branch to Metro as
 `EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL`. The expanded desktop sidebar shows it in
-the titlebar row. Production builds leave the variable unset and show no label.
+the titlebar row. Production builds leave the variable unset and show the Paseo SLP product name.
 
-`npm run dev` is only a shorthand for `npm run dev:server`. Keep `127.0.0.1:6767` for the packaged app and production-style `~/.paseo` state.
+`npm run dev` is only a shorthand for `npm run dev:server`. Keep `127.0.0.1:6777` for the packaged app and production-style `~/.paseo-slp` state.
+
+## Paseo SLP desktop
+
+This fork installs as **Paseo SLP** alongside upstream Paseo. Build the complete
+renderer, daemon and desktop wrapper from the repository root:
+
+```bash
+npm ci
+npm run build:desktop
+```
+
+Use the artifacts under `packages/desktop/release/`. On Windows, install
+`Paseo-SLP-Setup-<version>-<arch>.exe` and open the **Paseo SLP** shortcut. A ZIP
+build is portable: extract the whole archive and launch `Paseo SLP.exe` inside it.
+On macOS, copy `Paseo SLP.app` into Applications. On Linux, install the SLP deb/rpm
+or launch `Paseo-SLP-<arch>.AppImage` from a permanent location.
+
+| Resource            | Paseo SLP                    | Upstream Paseo   |
+| ------------------- | ---------------------------- | ---------------- |
+| App / shortcut      | Paseo SLP                    | Paseo            |
+| Application ID      | io.github.ledo9124.paseo-slp | sh.paseo.desktop |
+| Daemon state        | `~/.paseo-slp`               | `~/.paseo`       |
+| Default daemon port | `6777`                       | `6767`           |
+| Installed CLI       | `paseo-slp`                  | `paseo`          |
+| Agent links         | `paseo-slp://`               | `paseo://`       |
+
+Electron stores SLP settings, browser sessions and its single-instance lock in
+its own `Paseo SLP` profile under the OS application-data directory. The embedded
+renderer still uses `paseo://app` internally; this is not an OS protocol registration.
+
+Updates are manual. Install a new SLP build over the previous **SLP** installation.
+Automatic checks, downloads and install-on-quit are disabled, including manual
+updater IPC calls. The build metadata points only to this fork's release repository.
+Building never publishes a release.
+
+The earlier unseparated fork used upstream's installation identity and data.
+Installing this version does not move or delete that data. A new SLP profile starts
+with a fresh host and workspace list. Keep the old data until any desired migration
+is planned separately. Remove obsolete pinned shortcuts manually and pin **Paseo SLP**.
+If the old fork was replaced by an upstream update, install SLP from a newly rebuilt
+artifact; relaunching the old executable cannot restore the fork.
+
+Packaged GUI and bundled CLI launches ignore inherited upstream `PASEO_HOME`,
+`PASEO_HOST` and `PASEO_LISTEN`. For an explicit SLP profile or alternate port, set
+`PASEO_SLP_HOME` and `PASEO_SLP_LISTEN` when launching. Repo development commands
+continue using their checkout-local dev home and ports. Standalone server/CLI
+commands retain explicit `PASEO_HOME` and `--host` overrides.
+
+Install the separate `paseo-slp` command from Settings → Integrations. Check the
+bundled daemon with `paseo-slp daemon status --json`. The existing `paseo` command
+is not replaced. Provider executables and their sign-ins remain user-managed.
+
+After installing on your target OS, verify both apps can stay open, SLP survives
+quit/reopen and reboot, both shortcuts launch their own app, and closing SLP leaves
+upstream's daemon running. A Linux build cannot certify Windows installer or macOS
+registration behavior.
 
 ## Nix desktop package
 
@@ -37,8 +93,8 @@ The flake exposes `packages.<system>.desktop` on Linux and macOS:
 nix build .#desktop
 ```
 
-Linux produces the `paseo-desktop` launcher and desktop entry. macOS produces
-`Applications/Paseo.app` plus the `paseo-desktop` launcher. Both use the nixpkgs
+Linux produces the `paseo-slp-desktop` launcher and desktop entry. macOS produces
+`Applications/Paseo SLP.app` plus the `paseo-slp-desktop` launcher. Both use the nixpkgs
 Electron runtime and the checkout's built daemon, client, and renderer rather
 than downloading a published desktop release.
 
@@ -46,7 +102,7 @@ than downloading a published desktop release.
 
 `PASEO_HOME` is the directory that holds runtime state (agents, worktrees, workspace config, sockets, daemon log). Resolution rules:
 
-- The **server itself** (e.g. when launched by the desktop app or `npm run start`) defaults to `~/.paseo` (see `packages/server/src/server/paseo-home.ts`).
+- The **server itself** (e.g. when launched by the desktop app or `npm run start`) defaults to `~/.paseo-slp` (see `packages/server/src/server/paseo-home.ts`).
 - **Repo dev scripts** default to `$ROOT/.dev/paseo-home`, where `$ROOT` is the current checkout or worktree root. This keeps all dev state scoped to the checkout instead of the packaged desktop app.
 - **`npm run cli -- ...`** runs through the same dev-home wrapper as the dev scripts, so the in-repo CLI automatically targets the current checkout's `.dev/paseo-home` and configured dev daemon endpoint.
 - **Paseo-created worktrees** seed `$PASEO_WORKTREE_PATH/.dev/paseo-home` from `$PASEO_SOURCE_CHECKOUT_PATH/.dev/paseo-home` by copying durable JSON metadata. Runtime files like pid files, sockets, and logs are not copied.
@@ -62,7 +118,7 @@ PASEO_DEV_RESET_HOME=1 npm run dev            # clear and reseed the derived wor
 
 ### Daemon endpoints
 
-- Stable daemon launched by the desktop app: `localhost:6767`.
+- Stable daemon launched by the desktop app: `localhost:6777`.
 - Root checkout dev daemon: `localhost:6768`.
 - Root checkout Expo: `http://localhost:8081`.
 - Root checkout desktop dev Expo: first free port from `8082` through `8089`.
@@ -106,7 +162,7 @@ npm run ios        # → expo run:ios (packages/app): builds and launches the ap
 
 `expo run:ios` starts its own Metro and gives you the normal Simulator.app window (full speed, native touch, no stream).
 
-**Pointing the app at a daemon.** The client resolves its local daemon from `EXPO_PUBLIC_LOCAL_DAEMON` (`packages/app/src/runtime/host-runtime.ts`); when unset it falls back to `localhost:6767`, the production `~/.paseo` daemon. To target a worktree's dev daemon instead, set it on the build command:
+**Pointing the app at a daemon.** The client resolves its local daemon from `EXPO_PUBLIC_LOCAL_DAEMON` (`packages/app/src/runtime/host-runtime.ts`); when unset it falls back to `localhost:6767`, the production `~/.paseo-slp` daemon. To target a worktree's dev daemon instead, set it on the build command:
 
 ```bash
 EXPO_PUBLIC_LOCAL_DAEMON=localhost:${PASEO_SERVICE_DAEMON_PORT} npm run ios   # worktree daemon running as a Paseo service

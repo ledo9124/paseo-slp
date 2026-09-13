@@ -1225,7 +1225,7 @@ export const ru: TranslationResources = {
       discord: "Discord",
       github: "Создать issue на GitHub",
       whatsNew: "Что нового",
-      appName: "Paseo",
+      appName: "Paseo SLP",
     },
     sections: {
       sessions: "История",
@@ -1415,7 +1415,7 @@ export const ru: TranslationResources = {
       fullStatus: {
         title: "Полный статус",
         modalTitle: "Статус демона",
-        hint: "Выполняет команду `paseo daemon status` и показывает результат",
+        hint: "Выполняет команду `paseo-slp daemon status` и показывает результат",
         view: "Посмотреть статус",
         copied: "Статус скопирован в буфер обмена.",
         fetchFailed: "Не удалось получить статус демона: {{message}}",
@@ -2212,6 +2212,7 @@ export const ru: TranslationResources = {
         beta: "Бета",
       },
       updates: {
+        manualSlp: "Paseo SLP обновляется вручную. Установите новую сборку Paseo SLP.",
         label: "Обновления приложения",
         readyToInstall: "Версия {{version}} готова к установке",
         installTitle: "Установить обновление настольного приложения",

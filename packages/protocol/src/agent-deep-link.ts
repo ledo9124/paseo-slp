@@ -1,3 +1,5 @@
+import { AGENT_LINK_SCHEME } from "./product-identity.js";
+
 export interface AgentDeepLinkTarget {
   serverId: string;
   agentId: string;
@@ -24,7 +26,7 @@ export function buildAgentDeepLinkRoute(
 }
 
 export function buildAgentDeepLink(target: AgentDeepLinkTarget): string {
-  return `paseo:/${buildAgentDeepLinkRoute(target)}`;
+  return `${AGENT_LINK_SCHEME}:/${buildAgentDeepLinkRoute(target)}`;
 }
 
 export function parseAgentDeepLink(input: string): AgentDeepLinkTarget | null {
@@ -36,7 +38,7 @@ export function parseAgentDeepLink(input: string): AgentDeepLinkTarget | null {
   }
 
   if (
-    url.protocol !== "paseo:" ||
+    url.protocol !== `${AGENT_LINK_SCHEME}:` ||
     url.hostname !== "h" ||
     url.username ||
     url.password ||

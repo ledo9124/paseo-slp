@@ -13,12 +13,12 @@
   buildVersion,
   # Reuse the daemon's prebuilt npm-deps FOD. Same lockfile, same content —
   # without this, the desktop drv produces a separately-named store path
-  # (`paseo-desktop-<v>-npm-deps`) and refetches the entire registry. Override
+  # (`paseo-slp-desktop-<v>-npm-deps`) and refetches the entire registry. Override
   # the upstream hash via `paseo.override { npmDepsHash = "..."; }`.
   paseo,
 }:
 buildNpmPackage {
-  pname = "paseo-desktop";
+  pname = "paseo-slp-desktop";
   version = (builtins.fromJSON (builtins.readFile ../package.json)).version;
 
   src = lib.cleanSourceWith {
@@ -146,7 +146,7 @@ buildNpmPackage {
     mkdir -p $out/bin
 
     ${lib.optionalString stdenv.hostPlatform.isLinux ''
-      mkdir -p $out/share/paseo-desktop
+      mkdir -p $out/share/paseo-slp-desktop
 
       # Materialize only the desktop and daemon runtime graphs. Copying the
       # complete monorepo used to ship every build-time dependency (including
@@ -156,64 +156,64 @@ buildNpmPackage {
 
       while IFS= read -r path; do
         [ -z "$path" ] && continue
-        mkdir -p "$out/share/paseo-desktop/$(dirname "$path")"
-        cp -a "$path" "$out/share/paseo-desktop/$path"
+        mkdir -p "$out/share/paseo-slp-desktop/$(dirname "$path")"
+        cp -a "$path" "$out/share/paseo-slp-desktop/$path"
       done < desktop-files.txt
 
       # Keep the same unpackaged monorepo layout expected by main.js.
-      cp package.json $out/share/paseo-desktop/
-      mkdir -p $out/share/paseo-desktop/packages/app
-      cp -a packages/app/dist $out/share/paseo-desktop/packages/app/
+      cp package.json $out/share/paseo-slp-desktop/
+      mkdir -p $out/share/paseo-slp-desktop/packages/app
+      cp -a packages/app/dist $out/share/paseo-slp-desktop/packages/app/
 
       for runtime_path in \
         packages/desktop/dist/main.js \
         packages/desktop/dist/preload.js \
         packages/desktop/dist/features/browser-keyboard/guest-preload.js \
         packages/desktop/package.json; do
-        if [ ! -e "$out/share/paseo-desktop/$runtime_path" ]; then
+        if [ ! -e "$out/share/paseo-slp-desktop/$runtime_path" ]; then
           echo "desktop runtime trace omitted $runtime_path" >&2
           exit 1
         fi
       done
 
-      if [ -e $out/share/paseo-desktop/node_modules/electron ]; then
+      if [ -e $out/share/paseo-slp-desktop/node_modules/electron ]; then
         echo "desktop runtime trace included npm Electron" >&2
         exit 1
       fi
 
       # Hicolor icon for desktop environments
       install -Dm644 packages/desktop/assets/icon.png \
-        $out/share/icons/hicolor/512x512/apps/paseo-desktop.png
+        $out/share/icons/hicolor/512x512/apps/paseo-slp-desktop.png
 
       # Electron derives Wayland's toplevel app_id from the package name in the
-      # app root it launches. Point it at a one-file app named "paseo-desktop"
+      # app root it launches. Point it at a one-file app named "paseo-slp-desktop"
       # so shells can match the window to the desktop entry and hicolor icon.
-      mkdir -p $out/share/paseo-desktop/electron-app
-      printf '%s\n' "{ \"name\": \"paseo-desktop\", \"version\": \"$version\", \"main\": \"index.js\" }" \
-        > $out/share/paseo-desktop/electron-app/package.json
+      mkdir -p $out/share/paseo-slp-desktop/electron-app
+      printf '%s\n' "{ \"name\": \"paseo-slp-desktop\", \"version\": \"$version\", \"main\": \"index.js\" }" \
+        > $out/share/paseo-slp-desktop/electron-app/package.json
       printf '%s\n' 'require("../packages/desktop/dist/main.js");' \
-        > $out/share/paseo-desktop/electron-app/index.js
+        > $out/share/paseo-slp-desktop/electron-app/index.js
 
       # Chromium's setuid sandbox cannot live in the immutable Nix store.
-      makeWrapper ${electron}/bin/electron $out/bin/paseo-desktop \
-        --add-flags "$out/share/paseo-desktop/electron-app" \
+      makeWrapper ${electron}/bin/electron $out/bin/paseo-slp-desktop \
+        --add-flags "$out/share/paseo-slp-desktop/electron-app" \
         --add-flags "--no-sandbox" \
-        --add-flags "--class=paseo-desktop" \
+        --add-flags "--class=paseo-slp-desktop" \
         --set EXPO_DEV_URL "paseo://app/" \
-        --set CHROME_DESKTOP "paseo-desktop.desktop"
+        --set CHROME_DESKTOP "paseo-slp-desktop.desktop"
 
       copyDesktopItems
     ''}
 
     ${lib.optionalString stdenv.hostPlatform.isDarwin ''
-      app="$(find packages/desktop/release -maxdepth 3 -type d -name Paseo.app -print -quit)"
+      app="$(find packages/desktop/release -maxdepth 3 -type d -name "Paseo SLP.app" -print -quit)"
       if [ -z "$app" ]; then
-        echo "electron-builder did not produce Paseo.app" >&2
+        echo "electron-builder did not produce Paseo SLP.app" >&2
         exit 1
       fi
       mkdir -p "$out/Applications"
-      cp -R "$app" "$out/Applications/Paseo.app"
-      ln -s ../Applications/Paseo.app/Contents/MacOS/Paseo "$out/bin/paseo-desktop"
+      cp -R "$app" "$out/Applications/Paseo SLP.app"
+      ln -s "../Applications/Paseo SLP.app/Contents/MacOS/Paseo SLP" "$out/bin/paseo-slp-desktop"
     ''}
 
     runHook postInstall
@@ -221,38 +221,38 @@ buildNpmPackage {
 
   desktopItems = lib.optionals stdenv.hostPlatform.isLinux [
     (makeDesktopItem {
-      name = "paseo-desktop";
-      desktopName = "Paseo";
+      name = "paseo-slp-desktop";
+      desktopName = "Paseo SLP";
       genericName = "AI Coding Agents";
       comment = "Self-hosted daemon for AI coding agents";
-      exec = "paseo-desktop";
-      icon = "paseo-desktop";
+      exec = "paseo-slp-desktop";
+      icon = "paseo-slp-desktop";
       categories = ["Development"];
-      startupWMClass = "paseo-desktop";
+      startupWMClass = "paseo-slp-desktop";
     })
     # Hidden alias entry. Which of the two names Electron ends up publishing as
     # the Wayland app_id depends on the Electron version: 41 uses the app-root
-    # package.json `name` ("paseo-desktop"), 38 uses the runtime app name that
-    # main.ts sets ("Paseo"). Ship a NoDisplay entry for the second spelling so
+    # package.json `name` ("paseo-slp-desktop"), 38 uses the runtime app name that
+    # main.ts sets ("Paseo SLP"). Ship a NoDisplay entry for the second spelling so
     # the icon resolves either way without a duplicate launcher item.
     (makeDesktopItem {
-      name = "Paseo";
-      desktopName = "Paseo";
+      name = "Paseo SLP";
+      desktopName = "Paseo SLP";
       genericName = "AI Coding Agents";
       comment = "Self-hosted daemon for AI coding agents";
-      exec = "paseo-desktop";
-      icon = "paseo-desktop";
+      exec = "paseo-slp-desktop";
+      icon = "paseo-slp-desktop";
       categories = [ "Development" ];
-      startupWMClass = "Paseo";
+      startupWMClass = "Paseo SLP";
       noDisplay = true;
     })
   ];
 
   meta = {
-    description = "Paseo desktop app (Electron wrapper)";
-    homepage = "https://github.com/getpaseo/paseo";
+    description = "Paseo SLP desktop app (Electron wrapper)";
+    homepage = "https://github.com/ledo9124/paseo-slp";
     license = lib.licenses.agpl3Plus;
-    mainProgram = "paseo-desktop";
+    mainProgram = "paseo-slp-desktop";
     platforms = lib.platforms.linux ++ lib.platforms.darwin;
   };
 }

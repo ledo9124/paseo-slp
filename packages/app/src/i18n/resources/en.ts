@@ -1216,7 +1216,7 @@ export const en = {
       discord: "Discord",
       github: "Create GitHub issue",
       whatsNew: "What's new",
-      appName: "Paseo",
+      appName: "Paseo SLP",
     },
     sections: {
       sessions: "History",
@@ -1405,7 +1405,7 @@ export const en = {
       fullStatus: {
         title: "Full status",
         modalTitle: "Daemon status",
-        hint: "Runs `paseo daemon status` and shows the output",
+        hint: "Runs `paseo-slp daemon status` and shows the output",
         view: "View status",
         copied: "Status copied to clipboard.",
         fetchFailed: "Failed to fetch daemon status: {{message}}",
@@ -2279,6 +2279,8 @@ export const en = {
         beta: "Beta",
       },
       updates: {
+        manualSlp:
+          "Paseo SLP uses manual updates. Install a new Paseo SLP build to update this app.",
         label: "App updates",
         readyToInstall: "Ready to install: {{version}}",
         installTitle: "Install desktop update",

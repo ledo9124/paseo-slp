@@ -12,9 +12,6 @@ import {
   openDesktopAboutSettings,
   openDesktopSettings,
   expectUpdateBanner,
-  clickCheckForUpdates,
-  expectPendingUpdateCheckResult,
-  expectReadyUpdateCheckResult,
   clickInstallUpdate,
   expectInstallInProgress,
   interceptDaemonManagementConfirmDialog,
@@ -73,33 +70,18 @@ test.describe("Desktop updates", () => {
     await expectInstallInProgress(page);
   });
 
-  test("manual check reports a found update while it downloads", async ({ page }) => {
-    await installDesktopRuntime(page, {
-      serverId: getServerId(),
-      updateAvailable: true,
-      latestVersion: "1.2.3",
-      updateReadyToInstall: false,
-    });
+  test("Paseo SLP explains manual updates without upstream update controls", async ({ page }) => {
+    await installDesktopRuntime(page, { serverId: getServerId(), updateAvailable: false });
     await gotoAppShell(page);
+    await expect(page.getByTestId("desktop-product-label")).toHaveText("Paseo SLP");
     await openDesktopAboutSettings(page);
-
-    await clickCheckForUpdates(page);
-
-    await expectPendingUpdateCheckResult(page, "1.2.3");
-  });
-
-  test("manual update remains available after the automatic rollout recheck", async ({ page }) => {
-    await installDesktopRuntime(page, {
-      serverId: getServerId(),
-      latestVersion: "1.2.3",
-      manualUpdateBypassesRollout: true,
-    });
-    await gotoAppShell(page);
-    await openDesktopAboutSettings(page);
-
-    await clickCheckForUpdates(page);
-    await expectPendingUpdateCheckResult(page, "1.2.3");
-    await expectReadyUpdateCheckResult(page, "1.2.3");
+    await expect(
+      page.getByText(
+        "Paseo SLP uses manual updates. Install a new Paseo SLP build to update this app.",
+      ),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Check", exact: true })).toHaveCount(0);
+    await expect(page.getByText("Release channel", { exact: true })).toHaveCount(0);
   });
 });
 

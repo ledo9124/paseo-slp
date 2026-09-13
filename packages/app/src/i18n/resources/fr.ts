@@ -1246,7 +1246,7 @@ export const fr: TranslationResources = {
       discord: "Discord",
       github: "Créer un ticket GitHub",
       whatsNew: "Nouveautés",
-      appName: "Paseo",
+      appName: "Paseo SLP",
     },
     sections: {
       sessions: "Historique",
@@ -1435,7 +1435,7 @@ export const fr: TranslationResources = {
       fullStatus: {
         title: "Statut complet",
         modalTitle: "StatutDaemon",
-        hint: "Exécute`paseo daemon status`et affiche la sortie",
+        hint: "Exécute`paseo-slp daemon status`et affiche la sortie",
         view: "Afficher l'état",
         copied: "Statut copié dans le presse-papiers.",
         fetchFailed: "Échec de la récupération de l'état du démon:{{message}}",
@@ -2233,6 +2233,8 @@ export const fr: TranslationResources = {
         beta: "Beta",
       },
       updates: {
+        manualSlp:
+          "Paseo SLP se met à jour manuellement. Installez une nouvelle version de Paseo SLP.",
         label: "Mises à jour de l'application",
         readyToInstall: "Prêt à installer:{{version}}",
         installTitle: "Installer la mise à jour du bureau",

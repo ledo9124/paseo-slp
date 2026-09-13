@@ -1,3 +1,4 @@
+import { DESKTOP_AUTO_UPDATES_ENABLED } from "@getpaseo/protocol/product-identity";
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -251,6 +252,17 @@ export async function checkForAppUpdate({
   releaseChannel: AppReleaseChannel;
   intent: AppUpdateCheckIntent;
 }): Promise<AppUpdateCheckResult> {
+  if (!DESKTOP_AUTO_UPDATES_ENABLED) {
+    return {
+      currentVersion,
+      latestVersion: currentVersion,
+      hasUpdate: false,
+      readyToInstall: false,
+      body: null,
+      date: null,
+      errorMessage: null,
+    };
+  }
   updateLifecycleLog.checkStarted({ currentVersion, releaseChannel, intent });
   const result = await appUpdateService.checkForAppUpdate({
     currentVersion,
@@ -279,6 +291,13 @@ export async function downloadAndInstallUpdate(
   },
   onBeforeQuit?: () => Promise<void>,
 ): Promise<AppUpdateInstallResult> {
+  if (!DESKTOP_AUTO_UPDATES_ENABLED) {
+    return {
+      installed: false,
+      version: currentVersion,
+      message: "Paseo SLP uses manual updates. Install a new Paseo SLP build.",
+    };
+  }
   return appUpdateService.downloadAndInstallUpdate(
     { currentVersion, releaseChannel },
     onBeforeQuit,
@@ -294,6 +313,8 @@ export async function installAppUpdateOnQuit({
   releaseChannel: AppReleaseChannel;
   signal: AbortSignal;
 }): Promise<boolean> {
+  if (!DESKTOP_AUTO_UPDATES_ENABLED) return false;
+
   if (
     !shouldInstallAppUpdateOnQuit({
       platform: process.platform,
