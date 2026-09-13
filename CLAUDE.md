@@ -114,7 +114,7 @@ npm run format                       # Auto-format with Biome
 npm run format:check                 # Check formatting without writing
 ```
 
-Repo dev commands use checkout-local state by default. In this checkout, `PASEO_HOME` resolves to `.dev/paseo-home`, and `npm run cli -- ...` targets that same dev home automatically. The packaged desktop app and production-style daemon keep using `~/.paseo` on port `6767`.
+Repo dev commands use checkout-local state by default. In this checkout, `PASEO_HOME` resolves to `.dev/paseo-home`, and `npm run cli -- ...` targets that same dev home automatically. The packaged Paseo SLP app and production-style fork daemon use `~/.paseo-slp` on port `6777`. See [Paseo SLP desktop](docs/development.md#paseo-slp-desktop) for installation isolation and packaged environment overrides.
 
 See [docs/development.md](docs/development.md) for full setup, build sync requirements, and debugging.
 

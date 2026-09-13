@@ -1,13 +1,15 @@
 npmRebuild: false
-appId: sh.paseo.desktop
-productName: Paseo
-executableName: Paseo
+appId: io.github.ledo9124.paseo-slp
+productName: Paseo SLP
+executableName: Paseo SLP
 protocols:
-  - name: Paseo agent link
+  - name: Paseo SLP agent link
     schemes:
-      - paseo
+      - paseo-slp
 afterPack: ./scripts/after-pack.js
 afterSign: ./scripts/after-sign.js
+extraMetadata:
+  name: paseo-slp-desktop
 directories:
   output: release
 files:
@@ -33,10 +35,10 @@ extraResources:
     to: editor-target-icons
 publish:
   provider: github
-  owner: getpaseo
-  repo: paseo
+  owner: ledo9124
+  repo: paseo-slp
 mac:
-  artifactName: "Paseo-${version}-${arch}.${ext}"
+  artifactName: "Paseo-SLP-${version}-${arch}.${ext}"
   minimumSystemVersion: "13.0.0"
   category: public.app-category.developer-tools
   icon: assets/icon.icns
@@ -45,8 +47,8 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
   extraResources:
-    - from: bin/paseo
-      to: bin/paseo
+    - from: bin/paseo-slp
+      to: bin/paseo-slp
     - from: assets/icon.png
       to: icon.png
   target:
@@ -55,30 +57,33 @@ mac:
 linux:
   category: Development
   icon: assets
-  artifactName: "Paseo-${version}-${arch}.${ext}"
+  artifactName: "Paseo-SLP-${version}-${arch}.${ext}"
   maintainer: "Mohamed Boudra <hello@moboudra.com>"
-  vendor: "Paseo"
+  vendor: "Paseo SLP"
   extraResources:
-    - from: bin/paseo
-      to: bin/paseo
+    - from: bin/paseo-slp
+      to: bin/paseo-slp
   target:
     - AppImage
     - deb
     - rpm
     - tar.gz
+deb:
+  packageName: paseo-slp
+rpm:
+  packageName: paseo-slp
 appImage:
   # Keep the AppImage filename stable across versions (no ${version}) so
-  # electron-updater overwrites the file in place instead of renaming it to a new
-  # versioned path. A rename orphans the old binary, breaks desktop shortcuts, and
-  # dangles the ~/.local/bin/paseo CLI symlink, which points at $APPIMAGE. The
+  # manually replacing the build preserves desktop shortcuts and the
+  # ~/.local/bin/paseo-slp CLI symlink, which points at $APPIMAGE. The
   # version stays discoverable via the release tag and the in-app version.
-  artifactName: "Paseo-${arch}.${ext}"
+  artifactName: "Paseo-SLP-${arch}.${ext}"
 win:
-  artifactName: "Paseo-Setup-${version}-${arch}.${ext}"
+  artifactName: "Paseo-SLP-Setup-${version}-${arch}.${ext}"
   icon: assets/icon.ico
   extraResources:
-    - from: bin/paseo.cmd
-      to: bin/paseo.cmd
+    - from: bin/paseo-slp.cmd
+      to: bin/paseo-slp.cmd
   target:
     - target: nsis
       arch:

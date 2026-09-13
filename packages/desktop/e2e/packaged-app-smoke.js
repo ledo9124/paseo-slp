@@ -6,7 +6,7 @@ const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const { chromium } = require("playwright");
 
-const EXECUTABLE_NAME = "Paseo";
+const EXECUTABLE_NAME = "Paseo SLP";
 const SMOKE_TIMEOUT_MS = 60_000;
 const EXIT_TIMEOUT_MS = 10_000;
 const TERMINAL_CAPTURE_ATTEMPTS = 20;
@@ -53,14 +53,14 @@ function getExecutablePath(appPath) {
 
 function getCliShimPath(appPath) {
   if (process.platform === "darwin") {
-    return path.join(appPath, "Contents", "Resources", "bin", "paseo");
+    return path.join(appPath, "Contents", "Resources", "bin", "paseo-slp");
   }
 
   if (process.platform === "win32") {
-    return path.join(appPath, "resources", "bin", "paseo.cmd");
+    return path.join(appPath, "resources", "bin", "paseo-slp.cmd");
   }
 
-  return path.join(appPath, "resources", "bin", "paseo");
+  return path.join(appPath, "resources", "bin", "paseo-slp");
 }
 
 function getMacMainExecutablePath(appPath) {
@@ -163,6 +163,9 @@ function createDefaultDaemonEnv(extraEnv) {
   };
 
   delete env.PASEO_HOME;
+  delete env.PASEO_SLP_HOME;
+  delete env.PASEO_SLP_LISTEN;
+  delete env.PASEO_HOST;
   delete env.PASEO_LISTEN;
   return env;
 }
@@ -170,7 +173,9 @@ function createDefaultDaemonEnv(extraEnv) {
 function createIsolatedDesktopEnv({ home, listen, userData, cdpPort }) {
   return {
     ...process.env,
+    PASEO_SLP_HOME: home,
     PASEO_HOME: home,
+    PASEO_SLP_LISTEN: listen,
     PASEO_LISTEN: listen,
     PASEO_ELECTRON_USER_DATA_DIR: userData,
     PASEO_ELECTRON_FLAGS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort}`,
@@ -923,7 +928,7 @@ if (require.main === module) {
   const appIndex = process.argv.indexOf("--app");
   const appPath = appIndex >= 0 ? process.argv[appIndex + 1] : null;
   if (!appPath) {
-    process.stderr.write("Usage: node smoke-packaged-desktop-app.js --app <Paseo.app>\n");
+    process.stderr.write("Usage: node smoke-packaged-desktop-app.js --app <app-bundle-path>\n");
     process.exit(2);
   }
 

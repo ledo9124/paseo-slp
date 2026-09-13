@@ -1213,7 +1213,7 @@ export const ko: TranslationResources = {
       discord: "Discord",
       github: "GitHub 이슈 만들기",
       whatsNew: "새로운 소식",
-      appName: "Paseo",
+      appName: "Paseo SLP",
     },
     sections: {
       sessions: "기록",
@@ -1401,7 +1401,7 @@ export const ko: TranslationResources = {
       fullStatus: {
         title: "전체 상태",
         modalTitle: "데몬 상태",
-        hint: "`paseo daemon status`를 실행하고 출력을 표시합니다",
+        hint: "`paseo-slp daemon status`를 실행하고 출력을 표시합니다",
         view: "상태 보기",
         copied: "상태가 클립보드에 복사되었습니다.",
         fetchFailed: "데몬 상태를 가져오지 못했습니다: {{message}}",
@@ -2184,6 +2184,7 @@ export const ko: TranslationResources = {
         beta: "베타",
       },
       updates: {
+        manualSlp: "Paseo SLP는 수동으로 업데이트합니다. 새 Paseo SLP 빌드를 설치하세요.",
         label: "앱 업데이트",
         readyToInstall: "설치 준비됨: {{version}}",
         installTitle: "데스크톱 업데이트 설치",

@@ -1190,7 +1190,7 @@ export const zhCN: TranslationResources = {
       discord: "Discord",
       github: "创建 GitHub Issue",
       whatsNew: "新功能",
-      appName: "Paseo",
+      appName: "Paseo SLP",
     },
     sections: {
       sessions: "历史",
@@ -1375,7 +1375,7 @@ export const zhCN: TranslationResources = {
       fullStatus: {
         title: "完整状态",
         modalTitle: "Daemon 状态",
-        hint: "运行 `paseo daemon status` 并显示输出",
+        hint: "运行 `paseo-slp daemon status` 并显示输出",
         view: "查看状态",
         copied: "状态已复制到剪贴板。",
         fetchFailed: "获取 daemon 状态失败：{{message}}",
@@ -2141,6 +2141,7 @@ export const zhCN: TranslationResources = {
         beta: "Beta",
       },
       updates: {
+        manualSlp: "Paseo SLP 需要手动更新。请安装新的 Paseo SLP 构建版本。",
         label: "应用更新",
         readyToInstall: "可安装：{{version}}",
         installTitle: "安装桌面版更新",

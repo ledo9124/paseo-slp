@@ -27,8 +27,8 @@ import { resolveAppVersion } from "@/utils/app-version";
 import { openExternalUrl } from "@/utils/open-external-url";
 
 const DISCORD_URL = "https://discord.gg/jz8T2uahpH";
-const GITHUB_ISSUE_URL = "https://github.com/getpaseo/paseo/issues/new";
-const CHANGELOG_URL = "https://paseo.sh/changelog";
+const GITHUB_ISSUE_URL = "https://github.com/ledo9124/paseo-slp/issues/new";
+const CHANGELOG_URL = "https://github.com/ledo9124/paseo-slp/releases";
 const ThemedActivity = withUnistyles(Activity);
 const ThemedCircleHelp = withUnistyles(CircleHelp);
 const ThemedGift = withUnistyles(Gift);

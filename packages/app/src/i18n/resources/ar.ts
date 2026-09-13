@@ -1203,7 +1203,7 @@ export const ar: TranslationResources = {
       discord: "Discord",
       github: "إنشاء مشكلة على GitHub",
       whatsNew: "ما الجديد",
-      appName: "Paseo",
+      appName: "Paseo SLP",
     },
     sections: {
       sessions: "السجل",
@@ -1392,7 +1392,7 @@ export const ar: TranslationResources = {
       fullStatus: {
         title: "الوضع الكامل",
         modalTitle: "حالة Daemon",
-        hint: "يقوم بتشغيل`paseo daemon status`ويظهر الإخراج",
+        hint: "يقوم بتشغيل`paseo-slp daemon status`ويظهر الإخراج",
         view: "عرض الحالة",
         copied: "تم نسخ الحالة إلى الحافظة.",
         fetchFailed: "فشل جلب حالة البرنامج الخفي:{{message}}",
@@ -2170,6 +2170,7 @@ export const ar: TranslationResources = {
         beta: "Beta",
       },
       updates: {
+        manualSlp: "يتم تحديث Paseo SLP يدويًا. ثبّت إصدارًا جديدًا من Paseo SLP لتحديث التطبيق.",
         label: "تحديثات التطبيق",
         readyToInstall: "جاهز للتثبيت:{{version}}",
         installTitle: "تثبيت تحديث سطح المكتب",

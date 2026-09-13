@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from "@getpaseo/protocol/product-identity";
 import { router } from "expo-router";
 import { FolderPlus, GitBranch, Import, Server, Settings, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
@@ -731,26 +732,24 @@ function DesktopSidebar({
     >
       <View style={desktopSidebarBorderStyle}>
         <View style={styles.sidebarDragArea}>
-          {ownsTopLeft || DEV_BUILD_LABEL ? (
-            <View style={styles.desktopChromeRow}>
-              <TitlebarDragRegion />
-              {DEV_BUILD_LABEL ? (
-                <View
-                  pointerEvents="none"
-                  style={styles.devBuildBadge}
-                  testID="dev-build-label"
-                  accessibilityLabel={`Development build: ${DEV_BUILD_LABEL}`}
-                >
-                  <GitBranch size={12} color={theme.colors.accentForeground} />
-                  <Text numberOfLines={1} ellipsizeMode="tail" style={styles.devBuildBadgeText}>
-                    {DEV_BUILD_LABEL}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
-          ) : (
+          <View style={styles.desktopChromeRow}>
             <TitlebarDragRegion />
-          )}
+            <View
+              pointerEvents="none"
+              style={styles.devBuildBadge}
+              testID={DEV_BUILD_LABEL ? "dev-build-label" : "desktop-product-label"}
+              accessibilityLabel={
+                DEV_BUILD_LABEL ? `Development build: ${DEV_BUILD_LABEL}` : PRODUCT_NAME
+              }
+            >
+              {DEV_BUILD_LABEL ? (
+                <GitBranch size={12} color={theme.colors.accentForeground} />
+              ) : null}
+              <Text numberOfLines={1} ellipsizeMode="tail" style={styles.devBuildBadgeText}>
+                {DEV_BUILD_LABEL ?? PRODUCT_NAME}
+              </Text>
+            </View>
+          </View>
           <SidebarNavRows style={sidebarHeaderGroupStyle} />
         </View>
 

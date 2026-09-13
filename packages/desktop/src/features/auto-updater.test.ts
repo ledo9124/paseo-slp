@@ -39,6 +39,8 @@ vi.mock("electron-updater", () => ({
 import {
   bucketFromStagingUserId,
   checkForAppUpdate,
+  downloadAndInstallUpdate,
+  installAppUpdateOnQuit,
   createAppUpdateLifecycleLogger,
   resolveStagingUserId,
   rolloutManifestSchema,
@@ -47,54 +49,37 @@ import {
 } from "./auto-updater";
 
 describe("checkForAppUpdate", () => {
-  it("treats an unpublished channel manifest as an unavailable update", async () => {
-    const error = Object.assign(new Error("Cannot find latest-mac.yml"), {
-      code: "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND",
-    });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    autoUpdaterMock.checkForUpdates.mockImplementationOnce(async () => {
-      autoUpdaterMock.logger.error(error);
-      autoUpdaterMock.handlers.get("error")?.(error);
-      throw error;
-    });
-
-    const result = await checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "manual",
-    });
-
-    expect(result).toEqual({
-      hasUpdate: false,
-      readyToInstall: false,
-      currentVersion: "1.2.3",
-      latestVersion: "1.2.3",
-      body: null,
-      date: null,
-      errorMessage: null,
-    });
-    expect(consoleError).not.toHaveBeenCalled();
-    consoleError.mockRestore();
-  });
-
-  it("keeps genuine updater failures visible", async () => {
-    const error = new Error("network down");
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    autoUpdaterMock.checkForUpdates.mockImplementationOnce(async () => {
-      autoUpdaterMock.logger.error(error);
-      autoUpdaterMock.handlers.get("error")?.(error);
-      throw error;
-    });
-
-    const result = await checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "manual",
-    });
-
-    expect(result.errorMessage).toBe("network down");
-    expect(consoleError).toHaveBeenCalled();
-    consoleError.mockRestore();
+  it("never checks, downloads or installs upstream releases in Paseo SLP", async () => {
+    for (const intent of ["automatic", "manual"] as const) {
+      const result = await checkForAppUpdate({
+        currentVersion: "0.7.2",
+        releaseChannel: "stable",
+        intent,
+      });
+      expect(result.hasUpdate).toBe(false);
+    }
+    expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled();
+    const beforeQuit = vi.fn();
+    const install = await downloadAndInstallUpdate(
+      {
+        currentVersion: "0.7.2",
+        releaseChannel: "beta",
+      },
+      beforeQuit,
+    );
+    expect(install.installed).toBe(false);
+    expect(install.message).toContain("Paseo SLP");
+    expect(
+      await installAppUpdateOnQuit({
+        currentVersion: "0.7.2",
+        releaseChannel: "stable",
+        signal: new AbortController().signal,
+      }),
+    ).toBe(false);
+    expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled();
+    expect(autoUpdaterMock.downloadUpdate).not.toHaveBeenCalled();
+    expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
+    expect(beforeQuit).not.toHaveBeenCalled();
   });
 
   it("logs the update handoff with current and selected target versions", () => {

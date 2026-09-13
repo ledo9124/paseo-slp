@@ -11,7 +11,8 @@ import { settingsStyles } from "@/styles/settings";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 
-const CLI_DOCS_URL = "https://paseo.sh/docs/cli";
+const CLI_DOCS_URL =
+  "https://github.com/ledo9124/paseo-slp/blob/main/docs/development.md#paseo-slp-desktop";
 
 export function IntegrationsSection() {
   const { t } = useTranslation();
@@ -56,7 +57,7 @@ export function IntegrationsSection() {
             <View style={styles.rowTitleRow}>
               <Terminal size={theme.iconSize.md} color={theme.colors.foreground} />
               <Text style={settingsStyles.rowTitle}>
-                {t("settings.integrations.commandLine.title")}
+                {t("settings.integrations.commandLine.title")} · paseo-slp
               </Text>
             </View>
             <Text style={settingsStyles.rowHint}>

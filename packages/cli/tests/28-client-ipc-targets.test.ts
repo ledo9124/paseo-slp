@@ -91,7 +91,7 @@ console.log("=== CLI IPC Target Helpers ===\n");
     );
     assert.deepStrictEqual(resolveDefaultDaemonHosts({ PASEO_HOME: paseoHome }), [
       "unix:///tmp/paseo-from-pid.sock",
-      "localhost:6767",
+      "localhost:6777",
     ]);
     const previousHome = process.env.PASEO_HOME;
     const previousHost = process.env.PASEO_HOST;
@@ -117,7 +117,7 @@ console.log("=== CLI IPC Target Helpers ===\n");
         PASEO_HOME: paseoHome,
         PASEO_LISTEN: "127.0.0.1:7777",
       }),
-      ["127.0.0.1:7777", "localhost:6767"],
+      ["127.0.0.1:7777", "localhost:6777"],
     );
   } finally {
     rmSync(paseoHome, { recursive: true, force: true });
@@ -145,7 +145,7 @@ console.log("=== CLI IPC Target Helpers ===\n");
         PASEO_HOME: paseoHome,
         PASEO_LISTEN: "127.0.0.1:7777",
       }),
-      ["unix:///tmp/paseo-priority.sock", "127.0.0.1:7777", "localhost:6767"],
+      ["unix:///tmp/paseo-priority.sock", "127.0.0.1:7777", "localhost:6777"],
     );
   } finally {
     rmSync(paseoHome, { recursive: true, force: true });
@@ -181,11 +181,11 @@ console.log("=== CLI IPC Target Helpers ===\n");
       "env-secret",
       "Bare host should pick up env var password",
     );
-    assert.strictEqual(resolveDaemonPassword("localhost:6767"), "env-secret");
+    assert.strictEqual(resolveDaemonPassword("localhost:6777"), "env-secret");
 
     process.env.PASEO_PASSWORD = "";
     assert.strictEqual(
-      resolveDaemonPassword("localhost:6767"),
+      resolveDaemonPassword("localhost:6777"),
       undefined,
       "Empty env var should be treated as unset",
     );

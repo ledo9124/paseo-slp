@@ -2,11 +2,12 @@ process.emitWarning = (() => {}) as typeof process.emitWarning;
 
 import log from "electron-log/main";
 log.transports.console.level = "info";
-log.initialize({ spyRendererConsole: true });
 
 import { inheritLoginShellEnv } from "./login-shell-env.js";
 
 import path from "node:path";
+import { PRODUCT_NAME, DESKTOP_APP_ID } from "@getpaseo/protocol/product-identity";
+import { applyPackagedSlpEnvironment } from "./daemon/slp-environment.js";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -111,7 +112,7 @@ const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
-const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
+const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || PRODUCT_NAME;
 const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({
   platform: process.platform,
   override: process.env.PASEO_DESKTOP_WINDOW_CONTROLS,
@@ -131,6 +132,8 @@ const bootstrapComplete = new Promise<void>((resolve) => {
 let bootstrapIsComplete = false;
 
 app.setName(APP_NAME);
+app.setAppUserModelId(DESKTOP_APP_ID);
+app.setPath("userData", path.join(app.getPath("appData"), APP_NAME));
 log.info("[desktop] app startup", {
   version: app.getVersion(),
   platform: process.platform,
@@ -320,7 +323,10 @@ if (forcedUserDataDir) {
     );
     const isWorktree = path.resolve(topLevel, ".git") !== commonDir;
     if (isWorktree) {
-      app.setPath("userData", path.join(app.getPath("appData"), `Paseo-${devWorktreeName}`));
+      app.setPath(
+        "userData",
+        path.join(app.getPath("appData"), `${PRODUCT_NAME}-${devWorktreeName}`),
+      );
       log.info("[worktree] isolated userData for worktree:", devWorktreeName);
     } else {
       devWorktreeName = null;
@@ -329,6 +335,8 @@ if (forcedUserDataDir) {
     devWorktreeName = null;
   }
 }
+
+log.initialize({ spyRendererConsole: true });
 
 // AppImage runtimes mount the app from /tmp under the user's UID, so the SUID
 // chrome-sandbox helper we ship in .deb/.rpm cannot work there. Disable the
@@ -904,6 +912,7 @@ async function runCliPassthroughIfRequested(): Promise<boolean> {
   }
 
   try {
+    if (app.isPackaged) applyPackagedSlpEnvironment(process.env, app.getPath("home"));
     const exitCode = await runPassthroughCli(cliArgs);
     app.exit(exitCode);
   } catch (error) {
@@ -916,6 +925,7 @@ async function runCliPassthroughIfRequested(): Promise<boolean> {
 }
 
 async function bootstrap(): Promise<void> {
+  if (app.isPackaged) applyPackagedSlpEnvironment(process.env, app.getPath("home"));
   if (!setupSingleInstanceLock()) {
     return;
   }

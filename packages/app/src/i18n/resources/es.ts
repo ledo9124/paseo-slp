@@ -1245,7 +1245,7 @@ export const es: TranslationResources = {
       discord: "Discord",
       github: "Crear incidencia en GitHub",
       whatsNew: "Novedades",
-      appName: "Paseo",
+      appName: "Paseo SLP",
     },
     sections: {
       sessions: "Historial",
@@ -1434,7 +1434,7 @@ export const es: TranslationResources = {
       fullStatus: {
         title: "Estado completo",
         modalTitle: "EstadoDaemon",
-        hint: "Ejecuta`paseo daemon status`y muestra la salida.",
+        hint: "Ejecuta`paseo-slp daemon status`y muestra la salida.",
         view: "Ver estado",
         copied: "Estado copiado al portapapeles.",
         fetchFailed: "No se pudo recuperar el estado del demonio:{{message}}",
@@ -2228,6 +2228,7 @@ export const es: TranslationResources = {
         beta: "Beta",
       },
       updates: {
+        manualSlp: "Paseo SLP se actualiza manualmente. Instala una nueva versión de Paseo SLP.",
         label: "Actualizaciones de aplicaciones",
         readyToInstall: "Listo para instalar:{{version}}",
         installTitle: "Instalar actualización de escritorio",

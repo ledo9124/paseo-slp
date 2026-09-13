@@ -196,6 +196,9 @@ jobs:
       - name: Build server stack
         run: npm run build:server
 
+      - name: Check standalone desktop packaging
+        run: node --test scripts/slp-desktop-package.test.mjs
+
       - name: Run desktop tests
         run: npm run test --workspace=@getpaseo/desktop
 

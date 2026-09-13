@@ -52,7 +52,7 @@ export function createCli(): Command {
   const program = new Command();
 
   program
-    .name("paseo")
+    .name("paseo-slp")
     .description("Paseo CLI - control your AI coding agents from the command line")
     .version(VERSION, "-v, --version", "output the version number")
     // Global output options
@@ -130,7 +130,7 @@ export function createCli(): Command {
       .command("status")
       .description('Show local daemon status (alias for "paseo daemon status")'),
   )
-    .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
+    .option("--home <path>", "Paseo SLP home directory (default: ~/.paseo-slp)")
     .action(withOutput(runDaemonStatusCommand));
 
   addJsonAndDaemonHostOptions(
@@ -142,7 +142,7 @@ export function createCli(): Command {
       .command("restart")
       .description('Restart local daemon (alias for "paseo daemon restart")'),
   )
-    .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
+    .option("--home <path>", "Paseo SLP home directory (default: ~/.paseo-slp)")
     .option("--timeout <seconds>", "Wait timeout before force step (default: 15)")
     .option("--force", "Send SIGKILL if graceful stop times out")
     .option(

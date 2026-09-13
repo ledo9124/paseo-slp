@@ -7,7 +7,7 @@ case "$SCRIPT_PATH" in
   *) SCRIPT_PATH="$(pwd)/$SCRIPT_PATH" ;;
 esac
 
-# Follow symlinks so `/usr/local/bin/paseo` resolves back into the app bundle.
+# Follow symlinks so `/usr/local/bin/paseo-slp` resolves back into the app bundle.
 while [ -L "$SCRIPT_PATH" ]; do
   SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
   LINK_TARGET=$(readlink "$SCRIPT_PATH")
@@ -21,24 +21,34 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
 RESOURCES_DIR=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
 
 MACOS_DIR="${RESOURCES_DIR}/../MacOS"
-MACOS_HELPER_EXECUTABLE="${RESOURCES_DIR}/../Frameworks/Paseo Helper.app/Contents/MacOS/Paseo Helper"
+MACOS_HELPER_EXECUTABLE="${RESOURCES_DIR}/../Frameworks/Paseo SLP Helper.app/Contents/MacOS/Paseo SLP Helper"
 
 # macOS CLI invocations must enter Electron through the agent Helper. Launching
 # the main APPL executable here makes later daemon supervision inherit app UI
 # lifecycle behavior.
 if [ -d "${MACOS_DIR}" ]; then
   if [ ! -x "${MACOS_HELPER_EXECUTABLE}" ]; then
-    echo "Bundled Paseo Helper executable not found at ${MACOS_HELPER_EXECUTABLE}" >&2
+    echo "Bundled Paseo SLP Helper executable not found at ${MACOS_HELPER_EXECUTABLE}" >&2
     exit 1
   fi
   APP_EXECUTABLE="${MACOS_HELPER_EXECUTABLE}"
-elif [ -x "${RESOURCES_DIR}/../Paseo.bin" ]; then
-  APP_EXECUTABLE="${RESOURCES_DIR}/../Paseo.bin"
-elif [ -x "${RESOURCES_DIR}/../Paseo" ]; then
-  APP_EXECUTABLE="${RESOURCES_DIR}/../Paseo"
+elif [ -x "${RESOURCES_DIR}/../Paseo SLP.bin" ]; then
+  APP_EXECUTABLE="${RESOURCES_DIR}/../Paseo SLP.bin"
+elif [ -x "${RESOURCES_DIR}/../Paseo SLP" ]; then
+  APP_EXECUTABLE="${RESOURCES_DIR}/../Paseo SLP"
 else
-  echo "Bundled Paseo executable not found relative to ${RESOURCES_DIR}" >&2
+  echo "Bundled Paseo SLP executable not found relative to ${RESOURCES_DIR}" >&2
   exit 1
+fi
+
+export PASEO_HOME="${PASEO_SLP_HOME:-$HOME/.paseo-slp}"
+export PASEO_LISTEN="${PASEO_SLP_LISTEN:-127.0.0.1:6777}"
+export PASEO_HOST="$PASEO_LISTEN"
+
+if [ -d "${MACOS_DIR}" ]; then
+  export PASEO_SLP_DESKTOP_APP="${RESOURCES_DIR}/../.."
+else
+  export PASEO_SLP_DESKTOP_APP="${APPIMAGE:-${APP_EXECUTABLE}}"
 fi
 
 RUNNER_PATH="${RESOURCES_DIR}/app.asar.unpacked/dist/daemon/node-entrypoint-runner.js"

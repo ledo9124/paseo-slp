@@ -1,3 +1,4 @@
+import { DEFAULT_HOME_DIRECTORY } from "@getpaseo/protocol/product-identity";
 import os from "node:os";
 import path from "node:path";
 import { ensurePrivateDirectory } from "./private-files.js";
@@ -13,7 +14,7 @@ function expandHomeDir(input: string): string {
 }
 
 export function resolvePaseoHome(env: NodeJS.ProcessEnv = process.env): string {
-  const raw = env.PASEO_HOME ?? "~/.paseo";
+  const raw = env.PASEO_HOME ?? `~/${DEFAULT_HOME_DIRECTORY}`;
   const resolved = path.resolve(expandHomeDir(raw));
   ensurePrivateDirectory(resolved);
   return resolved;
