@@ -124,8 +124,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          app="result-desktop/Applications/Paseo.app"
-          test -x "$app/Contents/MacOS/Paseo"
-          test -L result-desktop/bin/paseo-desktop
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = "sh.paseo.desktop"
+          app="result-desktop/Applications/Paseo SLP.app"
+          test -x "$app/Contents/MacOS/Paseo SLP"
+          test -L result-desktop/bin/paseo-slp-desktop
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = "io.github.ledo9124.paseo-slp"
           find "$app" -name Info.plist -print0 | xargs -0 -n 1 plutil -lint
