@@ -31,6 +31,7 @@ const ThemedChevronRight = withUnistyles(ChevronRight);
 const chevronColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 export interface SlpRoleEditModalProps {
+  launchOnly?: boolean;
   serverId: string;
   role: SlpRole;
   current: SlpRoleConfig | undefined;
@@ -60,6 +61,7 @@ function toSelectOptions(options: AgentProfileFormOption[]): SelectFieldOption<s
  */
 export function SlpRoleEditModal({
   serverId,
+  launchOnly = false,
   role,
   current,
   onClose,
@@ -231,37 +233,41 @@ export function SlpRoleEditModal({
           ) : null}
         </View>
 
-        <Text style={styles.sectionTitle}>{t("slp.settings.instructionsSection")}</Text>
-        <BundledInstructions
-          title={t("slp.settings.bundledRoleLabel", { role: roleLabel })}
-          text={bundled.data?.roles[role]}
-          status={bundled.status}
-          testID="slp-role-bundled-role"
-        />
-        <BundledInstructions
-          title={t("slp.settings.bundledSharedLabel")}
-          text={bundled.data?.common}
-          status={bundled.status}
-          testID="slp-role-bundled-shared"
-        />
-        <Field
-          label={t("slp.settings.instructionsLabel")}
-          hint={t("slp.settings.instructionsHint")}
-          testID="slp-role-instructions-field"
-        >
-          <FormTextInput
-            initialValue={initial?.instructions ?? ""}
-            onChangeText={model.setNotes}
-            placeholder={t("slp.settings.instructionsPlaceholder")}
-            multiline
-            numberOfLines={5}
-            style={styles.instructionsInput}
-            editable={!state.isSubmitting}
-            size={controlSize}
-            accessibilityLabel={t("slp.settings.instructionsLabel")}
-            testID="slp-role-instructions-input"
-          />
-        </Field>
+        {launchOnly ? null : (
+          <>
+            <Text style={styles.sectionTitle}>{t("slp.settings.instructionsSection")}</Text>
+            <BundledInstructions
+              title={t("slp.settings.bundledRoleLabel", { role: roleLabel })}
+              text={bundled.data?.roles[role]}
+              status={bundled.status}
+              testID="slp-role-bundled-role"
+            />
+            <BundledInstructions
+              title={t("slp.settings.bundledSharedLabel")}
+              text={bundled.data?.common}
+              status={bundled.status}
+              testID="slp-role-bundled-shared"
+            />
+            <Field
+              label={t("slp.settings.instructionsLabel")}
+              hint={t("slp.settings.instructionsHint")}
+              testID="slp-role-instructions-field"
+            >
+              <FormTextInput
+                initialValue={initial?.instructions ?? ""}
+                onChangeText={model.setNotes}
+                placeholder={t("slp.settings.instructionsPlaceholder")}
+                multiline
+                numberOfLines={5}
+                style={styles.instructionsInput}
+                editable={!state.isSubmitting}
+                size={controlSize}
+                accessibilityLabel={t("slp.settings.instructionsLabel")}
+                testID="slp-role-instructions-input"
+              />
+            </Field>
+          </>
+        )}
         {state.submitError ? (
           <Text style={styles.submitError} testID="slp-role-submit-error">
             {state.submitError}

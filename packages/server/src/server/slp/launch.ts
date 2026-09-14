@@ -13,6 +13,11 @@ export function withSlpProviderOptions(
   base: ProviderOptions | null | undefined,
 ): ProviderOptions | null {
   const providerId = provider.split("/")[0] ?? provider;
+  if (providerId === "claude") {
+    // Agent (formerly Task) bypasses SLP Peer ownership, mail and handoff.
+    const denied = Array.isArray(base?.disallowedTools) ? base.disallowedTools : [];
+    return { ...base, disallowedTools: [...new Set([...denied, "Agent", "Task"])] };
+  }
   if (providerId !== "codex") return base ?? null;
   const agents = base?.agents;
   const agentsTable = agents && typeof agents === "object" && !Array.isArray(agents) ? agents : {};

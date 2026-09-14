@@ -1,6 +1,10 @@
 import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { SlpGroupSummary, SlpGroupInitializeResponse } from "@getpaseo/protocol/messages";
+import type {
+  SlpGroupSummary,
+  SlpGroupInitializeResponse,
+  SlpRootLaunches,
+} from "@getpaseo/protocol/messages";
 import type { MessagePayload } from "@/composer/types";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { generateMessageId } from "@/types/stream";
@@ -10,6 +14,7 @@ import { SlpGroupRefusedError } from "./errors";
 import { slpDraftKey, useSlpDraftLaunchStore } from "./draft-state";
 
 export interface SlpDraftLaunch {
+  roles?: SlpRootLaunches;
   selectedProvider: string | null;
   selectedMode: string;
   effectiveModelId: string | null;
@@ -18,6 +23,7 @@ export interface SlpDraftLaunch {
 
 /** What the first message launches with when it did not come from this composer. */
 export interface SlpDraftStartOverride {
+  roles?: SlpRootLaunches;
   mode: SlpGroupMode;
   provider: string;
   model: string | null;
@@ -102,6 +108,7 @@ export function useSlpDraftSubmit(input: {
           setState({ pending: true, error: null });
           if (!override) await launch.persistFormPreferences();
           const request = {
+            roles: override?.roles ?? launch.roles,
             workspaceId,
             mode: groupMode,
             cwd: payload.cwd,
@@ -112,7 +119,18 @@ export function useSlpDraftSubmit(input: {
           };
           const key = JSON.stringify(request);
           const attempt = resolveAttempt(previous?.attempt, key, override?.messageId);
-          store.set(draftKey, { mode: groupMode, override, attempt });
+          store.set(draftKey, {
+            mode: groupMode,
+            override: {
+              mode: groupMode,
+              provider: request.provider,
+              model: request.model,
+              modeId: request.providerModeId,
+              roles: request.roles,
+              messageId: attempt.messageId,
+            },
+            attempt,
+          });
           const result = await client.slpGroupInitialize({
             ...request,
             messageId: attempt.messageId,

@@ -1,11 +1,7 @@
 import { useCallback, useMemo } from "react";
 import type { SlpGroupSummary } from "@getpaseo/protocol/messages";
 import type { MessagePayload } from "@/composer/types";
-import {
-  useSlpComposerMode,
-  type SlpModeControlValue,
-  type SlpComposerMode,
-} from "./composer-mode";
+import { type SlpModeControlValue, type SlpComposerMode } from "./composer-mode";
 import { useSlpDraftSubmit, type SlpDraftLaunch, type SlpDraftStartOverride } from "./draft-submit";
 import { slpDraftKey, useSlpDraftLaunchStore } from "./draft-state";
 
@@ -17,6 +13,7 @@ type Submit = (payload: MessagePayload) => Promise<void>;
  * Supervised is chosen. Everything else about the draft stays the tab's.
  */
 export function useSlpDraftComposer(input: {
+  control: SlpModeControlValue | null;
   serverId: string;
   workspaceId: string | null;
   draftId: string;
@@ -36,7 +33,7 @@ export function useSlpDraftComposer(input: {
 } {
   const { serverId, workspaceId, draftId, launch, createAgent, isCreating, createError, onSent } =
     input;
-  const control = useSlpComposerMode({ serverId, workspaceId });
+  const { control } = input;
   // A New workspace submission owns its launch until it succeeds or the user changes mode.
   // Group/agent pushes during initialization must not turn its retry into ordinary creation.
   const draftKey = slpDraftKey(serverId, workspaceId, draftId);
@@ -76,13 +73,17 @@ export function useSlpDraftComposer(input: {
   });
   const submit = useCallback<Submit>(
     (payload) => {
-      if (retryOverride) return start(payload, retryOverride);
+      if (retryOverride)
+        return start(payload, {
+          ...retryOverride,
+          roles: launch.roles ?? retryOverride.roles,
+        });
       if (startGroup) {
         return startGroup(payload);
       }
       return createAgent(payload);
     },
-    [createAgent, retryOverride, start, startGroup],
+    [createAgent, retryOverride, launch.roles, start, startGroup],
   );
   return useMemo(
     () => ({

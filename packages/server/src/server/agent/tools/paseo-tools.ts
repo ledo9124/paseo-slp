@@ -1896,31 +1896,20 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     const slp = options.slp;
     const slpCallerId = callerAgentId;
     registerTool(
-      "slp_checkpoint",
-      {
-        title: "SLP checkpoint",
-        description:
-          "Rewrite your slot's current checkpoint: objective, constraints, decisions and reasons, work done and remaining, evidence and artifact references, unknowns, next action. Update it at material decisions and before long work; a same-role handoff starts from it.",
-        inputSchema: SlpCheckpointContentSchema.shape,
-        outputSchema: { checkpointId: z.string(), revision: z.number() },
-      },
-      async (input: SlpCheckpointContent) => ({
-        content: [],
-        structuredContent: ensureValidJson(await slp.recordCheckpoint(slpCallerId, input)),
-      }),
-    );
-    registerTool(
       "slp_request_handoff",
       {
         title: "SLP request handoff",
         description:
-          "Hand your slot to a fresh same-role generation. Write your final checkpoint first; then call this and end your turn without further product work. Your successor is prepared from the checkpoint and activated after you stop.",
-        inputSchema: { reason: z.string().describe("Why the handoff is needed now.") },
+          "Hand your slot to a fresh same-role session with the context it needs. Supply the handoff context in this call, then end your turn without further work. The runtime saves it and activates your successor after you stop.",
+        inputSchema: {
+          reason: z.string().min(1).describe("Why the handoff is needed now."),
+          context: SlpCheckpointContentSchema,
+        },
         outputSchema: { transferId: z.string() },
       },
-      async ({ reason }: { reason: string }) => ({
+      async ({ reason, context }: { reason: string; context: SlpCheckpointContent }) => ({
         content: [],
-        structuredContent: ensureValidJson(await slp.requestHandoff(slpCallerId, reason)),
+        structuredContent: ensureValidJson(await slp.requestHandoff(slpCallerId, reason, context)),
       }),
     );
     registerTool(

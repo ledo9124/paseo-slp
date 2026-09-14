@@ -35,7 +35,6 @@ import {
 const WORKSPACE = "wks_slp_transfer";
 const HANDBACK_TEXT = "Peer result: cache miss on session lookup.";
 const TransferReceiptSchema = z.object({ transferId: z.string() });
-const CheckpointReceiptSchema = z.object({ checkpointId: z.string(), revision: z.number() });
 
 describe("SLP same-role handoff", () => {
   let paseoHome: string;
@@ -179,14 +178,14 @@ describe("SLP same-role handoff", () => {
   ): Promise<string> {
     const tools = catalogFor(daemon, agentId);
     if (daemon.manager.getAgent(agentId)?.lifecycle !== "running") await holdTurn(daemon, agentId);
-    const checkpoint = await tools.executeTool("slp_checkpoint", {
-      objective,
-      nextAction: "Continue from the evidence gathered so far",
-      workDone: "Reproduced the slow path",
-    });
-    CheckpointReceiptSchema.parse(checkpoint.structuredContent);
+    expect(tools.getTool("slp_checkpoint")).toBeUndefined();
     const requested = await tools.executeTool("slp_request_handoff", {
       reason: "context nearly exhausted",
+      context: {
+        objective,
+        nextAction: "Continue from the evidence gathered so far",
+        workDone: "Reproduced the slow path",
+      },
     });
     return TransferReceiptSchema.parse(requested.structuredContent).transferId;
   }
@@ -233,6 +232,14 @@ describe("SLP same-role handoff", () => {
       slotId: group.leadSlotId,
       transferId,
     });
+    const retry = await daemon.service.requestHandoff(leadId, "retry", {
+      objective: "must not overwrite",
+      nextAction: "none",
+    });
+    expect(retry).toEqual({ transferId });
+    expect(
+      (await readSlpFile(SlpCheckpointSchema, "checkpoints", group.leadSlotId)).content.objective,
+    ).toBe("Make login fast");
     // The hold is slot-scoped: the Peer's slot still drains while the Lead's is held.
     peerSession.release();
     await daemon.manager.waitForAgentEvent(peerId, { waitForActive: true });
@@ -405,25 +412,42 @@ describe("SLP same-role handoff", () => {
     expect(lead.startPrompts.at(-1)).toContain(`(${successorId})`);
   });
 
-  test("handoff needs a checkpoint, refuses an archived source, and holds archive once requested", async () => {
+  test("a supervised Lead handoff notifies Supervisor after activation", async () => {
+    const daemon = await startDaemon();
+    const group = await daemon.service.initializeGroup({ ...input(), mode: "supervised" });
+    const supervisorSlot = group.supervisorSlotId!;
+    const supervisorId = activeAgentId(daemon, group.id, supervisorSlot);
+    sessionOf(daemon, supervisorId).release();
+    await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+    const leadId = leadAgentId(group);
+    const transferId = await requestHandoffFromTurn(daemon, leadId, "Next task");
+    sessionOf(daemon, leadId).release();
+    const candidateId = await candidateStarted(daemon, transferId);
+    expect(sessionOf(daemon, supervisorId).startPrompts.join("\n")).not.toContain(
+      "Lead handoff completed",
+    );
+    await acknowledge(daemon, candidateId);
+    await untilSettled(() => phaseOf(daemon, transferId) === "completed", "transfer completed");
+    await untilSettled(
+      () =>
+        sessionOf(daemon, supervisorId).startPrompts.join("\n").includes("Lead handoff completed"),
+      "Supervisor notified",
+    );
+    expect(sessionOf(daemon, supervisorId).startPrompts.at(-1)).toContain(candidateId);
+    expect(activeAgentId(daemon, group.id, group.leadSlotId)).toBe(candidateId);
+  });
+
+  test("handoff refuses an archived source and holds archive once requested", async () => {
     const daemon = await startDaemon();
     const group = await readyGroup(daemon);
     const leadId = leadAgentId(group);
     const created = await daemon.createAgent(peerCreation(leadId));
     const peerId = created.snapshot.id;
 
-    await expect(daemon.service.requestHandoff(leadId, "no checkpoint yet")).rejects.toThrow(
-      SlpTransferRefusedError,
-    );
-    // Archive-first: the Peer checkpointed, then was archived before asking for its handoff.
-    await catalogFor(daemon, peerId).executeTool("slp_checkpoint", {
-      objective: "x",
-      nextAction: "y",
-    });
     await daemon.manager.archiveAgent(peerId);
-    await expect(daemon.service.requestHandoff(peerId, "too late")).rejects.toThrow(
-      SlpTransferRefusedError,
-    );
+    await expect(
+      daemon.service.requestHandoff(peerId, "too late", { objective: "x", nextAction: "y" }),
+    ).rejects.toThrow(SlpTransferRefusedError);
     // The archive reached the Lead as a closed-Peer handback; let that turn end.
     await untilSettled(() => handbackMail(daemon)[0]?.state === "accepted", "closed handback");
     sessionOf(daemon, leadId).release();
@@ -470,9 +494,6 @@ describe("SLP same-role handoff", () => {
       agentStorage: second.storage,
       logger: createTestLogger(),
     });
-    await expect(second.service.requestHandoff(leadId, "stale checkpoint")).rejects.toThrow(
-      /write a new checkpoint/,
-    );
     const again = await requestHandoffFromTurn(second, leadId, "Second attempt");
     sessionOf(second, leadId).release();
     const successorId = await candidateStarted(second, again);

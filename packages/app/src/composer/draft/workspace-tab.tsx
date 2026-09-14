@@ -1,3 +1,4 @@
+import { useSlpDraftLaunchSelection, isSlpLaunchPending } from "@/slp/use-launch-selection";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -349,6 +350,7 @@ function runPendingAutoSubmit(input: {
   };
   if (submission.slpMode) {
     return input.startSlpGroup(payload, {
+      roles: submission.slpRoles,
       mode: submission.slpMode,
       provider: submission.provider,
       model: submission.model ?? null,
@@ -656,11 +658,14 @@ export function WorkspaceDraftAgentTab({
       workspaceId,
     ],
   );
+  const selection = useSlpDraftLaunchSelection(serverId, workspaceId, draftId, slpLaunch);
+  const slpRoleLaunch = selection.controls;
   const slp = useSlpDraftComposer({
+    control: selection.control,
     serverId,
     workspaceId,
     draftId,
-    launch: slpLaunch,
+    launch: selection.launch,
     createAgent: handleCreateFromInput,
     isCreating: isSubmitting,
     createError: formErrorMessage,
@@ -744,8 +749,15 @@ export function WorkspaceDraftAgentTab({
       onDropdownClose: handleDropdownCloseFocus,
       disabled: slp.isSending,
       slpControl: slp.slpControl,
+      slpLaunch: slpRoleLaunch,
     }),
-    [composerState.agentControls, handleDropdownCloseFocus, slp.isSending, slp.slpControl],
+    [
+      composerState.agentControls,
+      handleDropdownCloseFocus,
+      slp.isSending,
+      slp.slpControl,
+      slpRoleLaunch,
+    ],
   );
   return (
     <FileDropZone style={styles.container}>
@@ -793,6 +805,7 @@ export function WorkspaceDraftAgentTab({
           onSubmitMessage={slp.submit}
           submitBehavior={slp.isSlp ? "preserve-and-lock" : "clear"}
           isSubmitLoading={slp.isSending}
+          isSubmitDisabled={isSlpLaunchPending(slpRoleLaunch)}
           blurOnSubmit={true}
           value={draftInput.text}
           onChangeText={draftInput.editText}

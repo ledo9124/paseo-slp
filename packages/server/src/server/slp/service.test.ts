@@ -99,11 +99,8 @@ describe("SlpService", () => {
     expect(tools.getTool("create_agent")).toBeDefined();
     // The service refuses even a call that bypasses the catalog.
     await expect(
-      daemon.service.recordCheckpoint(leadId, { objective: "x", nextAction: "y" }),
+      daemon.service.requestHandoff(leadId, "context", { objective: "x", nextAction: "y" }),
     ).rejects.toThrow(SlpHandoffDisabledError);
-    await expect(daemon.service.requestHandoff(leadId, "context")).rejects.toThrow(
-      SlpHandoffDisabledError,
-    );
   });
 
   test("role files with CRLF line endings still lose their Handoff section", async () => {
@@ -377,7 +374,7 @@ describe("SlpService", () => {
           model: "claude-opus-5",
           modeId: null,
           thinkingOptionId: null,
-          providerOptions: null,
+          providerOptions: { disallowedTools: ["Agent", "Task"] },
         },
       ],
       [
@@ -393,6 +390,42 @@ describe("SlpService", () => {
         },
       ],
     ]);
+  });
+
+  test("a root override wins over host defaults without changing the other role", async () => {
+    const daemon = await startDaemon({
+      roleSettings: () => ({
+        supervisor: { provider: "claude", model: "default-sup", instructions: "Answer briefly." },
+        lead: { provider: "codex", model: "default-lead" },
+      }),
+    });
+    const group = await daemon.service.initializeGroup(
+      input({
+        mode: "supervised",
+        roles: {
+          supervisor: {
+            provider: "codex",
+            model: "selected-sup",
+            modeId: null,
+            thinkingOptionId: null,
+          },
+        },
+      }),
+    );
+    const sup = await daemon.storage.get(activeAgentId(group, group.supervisorSlotId));
+    expect(sup?.provider).toBe("codex");
+    expect(sup?.config.model).toBe("selected-sup");
+    expect(sup?.config.systemPrompt).toContain("Answer briefly.");
+    expect((await daemon.storage.get(leadAgentId(group)))?.config.model).toBe("default-lead");
+    expect((await readGroupFile(group.id)).initialization.roles).toEqual({
+      supervisor: {
+        provider: "codex",
+        model: "selected-sup",
+        modeId: null,
+        thinkingOptionId: null,
+      },
+      lead: { provider: "codex", model: "default-lead", modeId: null, thinkingOptionId: null },
+    });
   });
 
   test("ending a group archives its members and frees the workspace, before and after restart", async () => {

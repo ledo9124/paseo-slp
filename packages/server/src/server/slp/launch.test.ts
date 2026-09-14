@@ -19,9 +19,18 @@ describe("withSlpProviderOptions", () => {
     ).toEqual({ approval_policy: "never", agents: { enabled: false } });
   });
 
+  test("blocks Claude native delegation while preserving existing restrictions", () => {
+    expect(withSlpProviderOptions("claude", { disallowedTools: ["Bash", "Agent"] })).toEqual({
+      disallowedTools: ["Bash", "Agent", "Task"],
+    });
+    expect(withSlpProviderOptions("claude/sonnet", null)).toEqual({
+      disallowedTools: ["Agent", "Task"],
+    });
+  });
+
   test("leaves other providers' options untouched", () => {
-    expect(withSlpProviderOptions("claude", null)).toBeNull();
-    expect(withSlpProviderOptions("claude", { permissionMode: "plan" })).toEqual({
+    expect(withSlpProviderOptions("pi", null)).toBeNull();
+    expect(withSlpProviderOptions("pi", { permissionMode: "plan" })).toEqual({
       permissionMode: "plan",
     });
   });

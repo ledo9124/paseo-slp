@@ -47,13 +47,12 @@ export interface SlpToolAuthority {
     targetAgentId: string;
     prompt: string;
   }): Promise<{ mailId: string } | null>;
-  /** Rewrites the caller slot's current checkpoint. */
-  recordCheckpoint(
+  /** Saves the supplied context and starts a same-role handoff. */
+  requestHandoff(
     callerAgentId: string,
-    content: SlpCheckpointContent,
-  ): Promise<{ checkpointId: string; revision: number }>;
-  /** Starts a same-role handoff of the caller's own slot. */
-  requestHandoff(callerAgentId: string, reason: string): Promise<{ transferId: string }>;
+    reason: string,
+    context: SlpCheckpointContent,
+  ): Promise<{ transferId: string }>;
   /** The candidate has read its handoff context and is ready to be activated. */
   acknowledgeReadiness(callerAgentId: string): Promise<{ transferId: string }>;
 }

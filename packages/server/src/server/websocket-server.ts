@@ -1645,7 +1645,7 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         ...(this.workspaceLabelService ? { workspaceLabels: true } : {}),
         // COMPAT(slpGroups): added in v0.7.3; remove gate after 2027-03-07.
-        ...(this.slp ? { slpGroups: true } : {}),
+        ...(this.slp ? { slpGroups: true, slpRoleOverrides: true } : {}),
         // COMPAT(workspaceSetupRun): added in v0.7.3, remove gate after 2027-09-02.
         workspaceSetupRun: true,
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.

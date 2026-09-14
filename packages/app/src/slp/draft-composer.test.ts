@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/runtime/host-runtime", () => ({
   useHostRuntimeClient: () => ({ slpGroupInitialize: mocks.initialize }),
 }));
-vi.mock("./composer-mode", () => ({ useSlpComposerMode: () => mocks.control }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
 import { useSlpDraftLaunchStore } from "./draft-state";
@@ -46,6 +45,7 @@ it("retains a New workspace SLP launch after refusal and retries it instead of c
   const onSent = vi.fn();
   const useTestComposer = () =>
     useSlpDraftComposer({
+      control: mocks.control,
       serverId: "host",
       workspaceId: "workspace",
       draftId: "draft",
@@ -86,6 +86,7 @@ it("allows an explicit switch back to Single after a refused launch", async () =
   const createAgent = vi.fn().mockResolvedValue(undefined);
   const { result } = renderHook(() =>
     useSlpDraftComposer({
+      control: mocks.control,
       serverId: "host",
       workspaceId: "workspace",
       draftId: "draft",

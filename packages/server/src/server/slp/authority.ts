@@ -30,11 +30,7 @@ const LEAD_ONLY_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 /** The SLP control channel: members only, never in an ordinary agent's catalog. */
-export const SLP_CONTROL_TOOLS: ReadonlySet<string> = new Set([
-  "slp_checkpoint",
-  "slp_request_handoff",
-  "slp_ready",
-]);
+export const SLP_CONTROL_TOOLS: ReadonlySet<string> = new Set(["slp_request_handoff", "slp_ready"]);
 
 /** All a candidate may execute during receive-only preparation. */
 export const SLP_PREPARATION_TOOLS: ReadonlySet<string> = new Set(["slp_ready"]);

@@ -50,7 +50,7 @@ export class SlpDelegationUnavailableError extends Error {
   }
 }
 
-/** The checkpoint and handoff tools are off for this daemon (`features.slp.handoff`). */
+/** The handoff tools are off for this daemon (`features.slp.handoff`). */
 export class SlpHandoffDisabledError extends Error {
   constructor(public readonly tool: string) {
     super(

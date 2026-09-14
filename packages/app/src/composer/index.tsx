@@ -929,6 +929,7 @@ interface ComposerProps {
   submitIcon?: "arrow" | "return";
   /** Externally controlled loading state. When true, disables the submit button. */
   isSubmitLoading?: boolean;
+  isSubmitDisabled?: boolean;
   /** When true, waits for pasted forge links to resolve before enabling submit. */
   waitForForgeAutoAttachOnSubmit?: boolean;
   submitBehavior?: "clear" | "preserve-and-lock";
@@ -1153,6 +1154,7 @@ function ComposerContentImpl({
   submitButtonTestID,
   submitIcon = "arrow",
   isSubmitLoading = false,
+  isSubmitDisabled: submitDisabled = false,
   waitForForgeAutoAttachOnSubmit = false,
   submitBehavior = "clear",
   blurOnSubmit = false,
@@ -2260,7 +2262,9 @@ function ComposerContentImpl({
   const isSubmitLoadingVisible =
     isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
   const isSubmitDisabled =
-    isSubmitLoadingVisible || (waitForForgeAutoAttachOnSubmit && forgeAutoAttach.isResolving);
+    submitDisabled ||
+    isSubmitLoadingVisible ||
+    (waitForForgeAutoAttachOnSubmit && forgeAutoAttach.isResolving);
 
   // Disable drops while submitting/uploading: the submit path clears and restores attachments,
   // so a drop in that window would be lost or land on a locked draft. `disabled` hides the

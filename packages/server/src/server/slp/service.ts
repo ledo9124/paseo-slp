@@ -1,3 +1,4 @@
+import { SlpRootLaunchesSchema } from "@getpaseo/protocol/messages";
 import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 
@@ -66,11 +67,17 @@ import {
 } from "./store.js";
 import { SlpTransfers, type SlpMemberCreationInput, type SlpTransferHost } from "./transfer.js";
 
-import type { SlpGroupSummary, SlpRoleConfig, SlpRolesConfig } from "../messages.js";
+import type {
+  SlpGroupSummary,
+  SlpRoleConfig,
+  SlpRolesConfig,
+  SlpRootLaunches,
+} from "../messages.js";
 
 export { SLP_GROUP_LABEL } from "./store.js";
 
 export interface SlpInitializeGroupInput {
+  roles?: SlpRootLaunches;
   workspaceId: string;
   mode: SlpWorkspaceMode;
   initialMessage: { messageId: string; text: string };
@@ -95,7 +102,7 @@ export interface SlpServiceOptions {
   /** Where the role instruction files live; defaults to the bundled copy of docs/slp/roles. */
   instructionsDir?: string;
   /**
-   * `features.slp.handoff`: whether members get the checkpoint and handoff
+   * `features.slp.handoff`: whether members get the handoff
    * tools and the role text that uses them. In-flight transfers still finish
    * and recover with it off.
    */
@@ -489,75 +496,58 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     }
   }
 
-  /** The agent supplies the content; the daemon attaches identity and the mail watermark. */
-  async recordCheckpoint(
-    callerAgentId: string,
-    content: SlpCheckpointContent,
-  ): Promise<{ checkpointId: string; revision: number }> {
-    if (!this.isHandoffEnabled()) throw new SlpHandoffDisabledError("slp_checkpoint");
-    const group = this.requireGroupForAgent(callerAgentId);
-    const { slot, generation } = membershipOf(group, callerAgentId);
-    if (slot.activeGenerationId !== generation.id) {
-      throw new SlpRoleAuthorityError(
-        callerAgentId,
-        slot.role,
-        "write a checkpoint while inactive",
-      );
-    }
-    const record = await this.checkpoints.writeCurrent({
-      groupId: group.id,
-      slotId: slot.id,
-      generationId: generation.id,
-      agentId: callerAgentId,
-      content,
-      coveredMailIds: this.mailbox
-        .list()
-        .filter((mail) => mail.slotId === slot.id && mail.state === "accepted")
-        .map((mail) => mail.id),
-      timelineCursor: this.timelineCursorOf(callerAgentId),
-    });
-    return { checkpointId: record.id, revision: record.revision };
-  }
-
   private timelineCursorOf(agentId: string): SlpTimelineCursor {
     const tail = this.agentManager.fetchTimeline(agentId, { direction: "tail", limit: 1 });
     return { epoch: tail.epoch, seq: tail.window.maxSeq };
   }
 
-  /**
-   * Explicit same-role handoff of the caller's own slot. The caller must
-   * hold the slot and have written a checkpoint as this generation; the
-   * transfer starts from that checkpoint, never from a prompt for one.
-   */
-  async requestHandoff(callerAgentId: string, reason: string): Promise<{ transferId: string }> {
+  /** Save context and reserve the transfer together, serialized against other group changes. */
+  async requestHandoff(
+    callerAgentId: string,
+    reason: string,
+    context: SlpCheckpointContent,
+  ): Promise<{ transferId: string }> {
     if (!this.isHandoffEnabled()) throw new SlpHandoffDisabledError("slp_request_handoff");
     const group = this.requireGroupForAgent(callerAgentId);
-    const { slot, generation } = membershipOf(group, callerAgentId);
-    if (slot.activeGenerationId !== generation.id) {
-      throw new SlpRoleAuthorityError(callerAgentId, slot.role, "hand off a slot it does not hold");
-    }
-    const checkpoint = this.checkpoints.current(slot.id);
-    if (checkpoint?.generationId !== generation.id) {
-      throw new SlpTransferRefusedError(slot.id, "write a checkpoint before requesting a handoff");
-    }
-    // An archived source is refused by the transfer; only a loaded one has a timeline to compare.
-    if (
-      this.agentManager.getAgent(callerAgentId) &&
-      checkpoint.timelineCursor.epoch !== this.timelineCursorOf(callerAgentId).epoch
-    ) {
-      throw new SlpTransferRefusedError(
-        slot.id,
-        "the checkpoint predates a rebuild of the agent's history; write a new checkpoint",
-      );
-    }
-    const transfer = await this.transfers.request({
-      group,
-      slot,
-      source: generation,
-      checkpoint,
-      reason,
+    return this.serializeByWorkspace(group.workspaceId, async () => {
+      const { slot, generation } = membershipOf(group, callerAgentId);
+      // A retried call from the retiring source returns its existing transfer.
+      const previous = this.transfers
+        .list()
+        .find((entry) => entry.sourceAgentId === callerAgentId && entry.phase !== "aborted");
+      if (previous) return { transferId: previous.id };
+      if (slot.activeGenerationId !== generation.id) {
+        throw new SlpRoleAuthorityError(
+          callerAgentId,
+          slot.role,
+          "hand off a slot it does not hold",
+        );
+      }
+      this.assertSlotNotHeld(group, slot.id);
+      const stored = await this.agentStorage.get(callerAgentId);
+      if (stored?.archivedAt)
+        throw new SlpTransferRefusedError(slot.id, "the source agent is archived");
+      const checkpoint = await this.checkpoints.writeCurrent({
+        groupId: group.id,
+        slotId: slot.id,
+        generationId: generation.id,
+        agentId: callerAgentId,
+        content: context,
+        coveredMailIds: this.mailbox
+          .list()
+          .filter((mail) => mail.slotId === slot.id && mail.state === "accepted")
+          .map((mail) => mail.id),
+        timelineCursor: this.timelineCursorOf(callerAgentId),
+      });
+      const transfer = await this.transfers.request({
+        group,
+        slot,
+        source: generation,
+        checkpoint,
+        reason,
+      });
+      return { transferId: transfer.id };
     });
-    return { transferId: transfer.id };
   }
 
   async acknowledgeReadiness(callerAgentId: string): Promise<{ transferId: string }> {
@@ -739,6 +729,20 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
           messageId: input.initialMessage.messageId,
           text: input.initialMessage.text,
           lead: input.lead,
+          roles: SlpRootLaunchesSchema.parse({
+            lead:
+              input.roles?.lead ??
+              applyRoleLaunch(
+                { ...input.lead, thinkingOptionId: null, providerOptions: null },
+                this.roleSettings().lead,
+              ),
+            supervisor:
+              input.roles?.supervisor ??
+              applyRoleLaunch(
+                { ...input.lead, thinkingOptionId: null, providerOptions: null },
+                this.roleSettings().supervisor,
+              ),
+          }),
           // Planned before either root exists: each root's prompt names the
           // other by agent id, and a crash between the two creations must
           // resume with the same ids.
@@ -866,10 +870,16 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
           groupId: record.id,
           workspaceId: record.workspaceId,
           title: role === "lead" ? "Lead" : "Supervisor",
-          source: applyRoleLaunch(
-            { ...record.initialization.lead, thinkingOptionId: null, providerOptions: null },
-            this.roleSettings()[role],
-          ),
+          source: {
+            cwd: record.initialization.lead.cwd,
+            providerOptions: null,
+            // COMPAT(slpLaunchSnapshot): added in v0.7.3; remove after 2027-03-13 once old initializing groups are gone.
+            ...(record.initialization.roles?.[role] ??
+              applyRoleLaunch(
+                { ...record.initialization.lead, thinkingOptionId: null, providerOptions: null },
+                this.roleSettings()[role],
+              )),
+          },
           systemPrompt,
           labels: { [SLP_GROUP_LABEL]: record.id },
         }),
