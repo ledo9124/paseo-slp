@@ -3122,8 +3122,23 @@ export const SlpGroupSummarySchema = z.object({
 });
 export type SlpGroupSummary = z.infer<typeof SlpGroupSummarySchema>;
 
+/** A complete per-role launch selection; null explicitly selects the provider default. */
+export const SlpRoleLaunchSchema = z.object({
+  provider: z.string().min(1),
+  model: z.string().nullable(),
+  modeId: z.string().nullable(),
+  thinkingOptionId: z.string().nullable(),
+});
+export type SlpRoleLaunch = z.infer<typeof SlpRoleLaunchSchema>;
+export const SlpRootLaunchesSchema = z.object({
+  supervisor: SlpRoleLaunchSchema.optional(),
+  lead: SlpRoleLaunchSchema.optional(),
+});
+export type SlpRootLaunches = z.infer<typeof SlpRootLaunchesSchema>;
+
 export const SlpGroupInitializeRequestSchema = z.object({
   type: z.literal("slp.group.initialize.request"),
+  roles: SlpRootLaunchesSchema.optional(),
   workspaceId: z.string(),
   mode: z.enum(["direct", "supervised"]),
   cwd: z.string(),
@@ -3526,6 +3541,7 @@ export const ServerInfoStatusPayloadSchema = z
         agentRequestReceipts: z.boolean().optional(),
         // COMPAT(slpGroups): added in v0.7.3; remove gate after 2027-03-07.
         slpGroups: z.boolean().optional(),
+        slpRoleOverrides: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.7.3; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),

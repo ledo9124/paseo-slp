@@ -1,3 +1,4 @@
+import type { SlpRootLaunches } from "@getpaseo/protocol/messages";
 import { create } from "zustand";
 import type { ComposerAttachment } from "@/attachments/types";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
@@ -20,6 +21,7 @@ export interface PendingWorkspaceDraftSubmission {
   allowEmptyText?: boolean;
   /** Start an SLP group in this mode with the message instead of one agent. */
   slpMode?: "direct" | "supervised";
+  slpRoles?: SlpRootLaunches;
 }
 
 export interface PendingWorkspaceDraftSetup {

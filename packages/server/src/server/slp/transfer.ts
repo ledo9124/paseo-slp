@@ -480,6 +480,18 @@ export class SlpTransfers {
       kind: "activation",
       prompt: this.describeActivation(record, slot, successor.number),
     });
+    if (slot.role === "lead" && group.supervisorSlotId) {
+      await this.host.mailbox.enqueue({
+        id: `handoff_completed_${record.id}`,
+        groupId: group.id,
+        slotId: group.supervisorSlotId,
+        fromSlotId: null,
+        kind: "report",
+        prompt: formatSystemNotificationPrompt(
+          `Lead handoff completed. Lead agent ${successorId} now owns the role. The handoff context and existing Peer relationships were transferred. Report this to Human if they requested the handoff; do not resend the previous task.`,
+        ),
+      });
+    }
     group.hold = null;
     await this.host.persistGroup(group);
     await this.persist({
@@ -506,6 +518,20 @@ export class SlpTransfers {
       stop: stopOf(record),
       blockedReason: reason,
     });
+    const group = this.host.getGroup(record.groupId);
+    if (group.slots[record.slotId]?.role === "lead" && group.supervisorSlotId) {
+      await this.host.mailbox.enqueue({
+        id: `handoff_blocked_${record.id}`,
+        groupId: group.id,
+        slotId: group.supervisorSlotId,
+        fromSlotId: null,
+        kind: "report",
+        prompt: formatSystemNotificationPrompt(
+          `Lead handoff is blocked: ${reason}. Do not claim the successor is active. The group shows the blocked transfer; daemon restart reconciles it from the saved ownership state.`,
+        ),
+      });
+      this.host.mailbox.pump(group.id, group.supervisorSlotId);
+    }
     this.host.logger.error({ transferId: id, reason }, "SLP transfer blocked");
   }
 

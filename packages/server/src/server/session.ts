@@ -2689,6 +2689,7 @@ export class Session {
     }
     try {
       const group = await this.slp.initializeGroup({
+        roles: request.roles,
         workspaceId: request.workspaceId,
         mode: request.mode,
         initialMessage: { messageId: request.messageId, text: request.text },

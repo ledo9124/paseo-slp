@@ -1,3 +1,5 @@
+import { useSlpLaunchSelection, isSlpLaunchPending } from "@/slp/use-launch-selection";
+import type { SlpRootLaunches } from "@getpaseo/protocol/messages";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactElement, RefObject } from "react";
@@ -761,6 +763,7 @@ interface SubmitDraftInput {
   composerState: NewWorkspaceComposerState;
   supportsForgeSearch: boolean;
   slpMode: SlpGroupMode | null;
+  slpRoles?: SlpRootLaunches;
 }
 
 type NewWorkspaceComposerState = NonNullable<
@@ -866,6 +869,7 @@ interface CreateChatAgentInput {
   draftId?: string;
   supportsForgeSearch: boolean;
   slpMode: SlpGroupMode | null;
+  slpRoles?: SlpRootLaunches;
   labels: {
     composerStateRequired: string;
     selectModel: string;
@@ -968,6 +972,7 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
     composerState,
     supportsForgeSearch: input.supportsForgeSearch,
     slpMode: input.slpMode,
+    slpRoles: input.slpRoles,
   });
 }
 
@@ -1089,7 +1094,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     ...(submission.model ? { model: submission.model } : {}),
     ...(submission.thinkingOptionId ? { thinkingOptionId: submission.thinkingOptionId } : {}),
     ...(submission.featureValues ? { featureValues: submission.featureValues } : {}),
-    ...(slpMode ? { slpMode } : {}),
+    ...(slpMode ? { slpMode, slpRoles: input.slpRoles } : {}),
     allowEmptyText: true,
   });
   clearDraft("sent");
@@ -1697,6 +1702,7 @@ export function NewWorkspaceScreen({
     }),
   });
   const composerState = chatDraft.composerState;
+  const slpLaunch = useSlpLaunchSelection(selectedServerId, composerState, slpMode);
   const [pickerSelection, dispatchPickerSelection] = useReducer(
     reducePickerSelection,
     initialPickerSelectionState,
@@ -2083,6 +2089,7 @@ export function NewWorkspaceScreen({
           draftId,
           supportsForgeSearch,
           slpMode,
+          slpRoles: slpLaunch?.roles,
           labels: {
             composerStateRequired: t("newWorkspace.errors.composerStateRequired"),
             selectModel: t("newWorkspace.errors.selectModel"),
@@ -2104,6 +2111,7 @@ export function NewWorkspaceScreen({
       launchTarget,
       selectedServerId,
       slpMode,
+      slpLaunch,
       supportsForgeSearch,
       t,
       toast,
@@ -2219,9 +2227,10 @@ export function NewWorkspaceScreen({
             ...composerState.agentControls,
             disabled: isPending,
             slpControl,
+            slpLaunch,
           }
         : undefined,
-    [composerState, isPending, slpControl],
+    [composerState, isPending, slpControl, slpLaunch],
   );
 
   const pickerEmptyText =
@@ -2344,6 +2353,7 @@ export function NewWorkspaceScreen({
               submitButtonTestID="workspace-create-submit"
               submitIcon="return"
               isSubmitLoading={isPending}
+              isSubmitDisabled={isSlpLaunchPending(slpLaunch)}
               waitForForgeAutoAttachOnSubmit
               submitBehavior="preserve-and-lock"
               blurOnSubmit={true}

@@ -1,3 +1,4 @@
+import { SlpLaunchControls, type SlpLaunchControlsProps } from "@/slp/launch-controls";
 import {
   memo,
   useCallback,
@@ -136,6 +137,7 @@ interface ControlledAgentControlsProps {
 }
 
 export interface DraftAgentControlsProps {
+  slpLaunch?: SlpLaunchControlsProps;
   providerDefinitions: AgentProviderDefinition[];
   selectedProvider: AgentProvider | null;
   modeOptions: AgentMode[];
@@ -1829,6 +1831,7 @@ export const AgentControls = memo(function AgentControls({
 });
 
 export function DraftAgentControls({
+  slpLaunch,
   providerDefinitions,
   selectedProvider,
   modeOptions,
@@ -1913,6 +1916,19 @@ export function DraftAgentControls({
         : null,
     [selectedProvider, providerDefinitions, modeOptions, selectedMode, onSelectMode, disabled],
   );
+
+  if (slpLaunch)
+    return (
+      <>
+        <SlpLaunchControls {...slpLaunch} disabled={disabled} />
+        <ControlledAgentControls
+          provider=""
+          slpControl={slpControl}
+          disabled={disabled}
+          isCompactLayout={false}
+        />
+      </>
+    );
 
   return (
     <>

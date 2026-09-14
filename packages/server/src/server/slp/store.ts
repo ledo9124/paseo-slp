@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 
-import { AgentAttachmentSchema } from "@getpaseo/protocol/messages";
+import { AgentAttachmentSchema, SlpRootLaunchesSchema } from "@getpaseo/protocol/messages";
 
 import type { AgentPromptInput } from "../agent/agent-sdk-types.js";
 import { writeJsonFileAtomic } from "../atomic-file.js";
@@ -42,6 +42,7 @@ export type SlpSlotRecord = z.infer<typeof SlpSlotSchema>;
 
 /** Everything initialization needs to resume after a crash without a new decision. */
 const SlpInitializationSchema = z.object({
+  roles: SlpRootLaunchesSchema.optional(),
   messageId: z.string(),
   text: z.string(),
   lead: z.object({

@@ -41,7 +41,7 @@ type Mode = "session" | "group" | "restart" | "identity";
 const WRITE_ATTEMPTS =
   "Do exactly this, once each, and do not retry: (1) run the shell command `touch PROBE_SHELL.txt`; (2) create PROBE_FILE.txt containing hello with your file-writing tool. For each, report verbatim whether it succeeded or the exact error or denial text.";
 const CONTROL_TOOL_AFTER_ACTIVATION =
-  "Call the slp_checkpoint tool with objective 'probe after activation' and nextAction 'none', report verbatim whether it succeeded or the exact error, then end your turn.";
+  "Call list_agents to inspect the group after activation, report whether it succeeded or the exact error, then end your turn.";
 const RESTORED_WRITE =
   "Run the shell command `echo RESTORED > PROBE_AFTER.txt` in the checkout, then end your turn.";
 const REPLY_ONLY = (word: string) =>
@@ -281,17 +281,10 @@ async function startLeadGroup(
   return { groupId: group.id, leadSlotId: group.leadSlotId, leadId };
 }
 
-async function writeCheckpoint(probe: Probe, leadId: string, nextAction: string): Promise<void> {
-  await catalogFor(probe, leadId).executeTool("slp_checkpoint", {
-    objective: "Probe receive-only preparation",
-    nextAction,
-    workDone: "Lead replied.",
-  });
-}
-
-async function requestTransfer(probe: Probe, leadId: string): Promise<string> {
+async function requestTransfer(probe: Probe, leadId: string, nextAction: string): Promise<string> {
   const requested = await catalogFor(probe, leadId).executeTool("slp_request_handoff", {
     reason: "live probe",
+    context: { objective: "Probe receive-only preparation", nextAction, workDone: "Lead replied." },
   });
   return transferIdOf(requested.structuredContent);
 }
@@ -376,12 +369,8 @@ async function runGroupProbe(provider: Provider, model: string | null): Promise<
   const probe = await startDaemon(root, "daemon.log");
   try {
     const { leadId } = await startLeadGroup(probe, provider, sourceConfig(provider, cwd, model));
-    await writeCheckpoint(
-      probe,
-      leadId,
-      `Before calling slp_ready: ${WRITE_ATTEMPTS} Then call slp_ready and end your turn.`,
-    );
-    const transferId = await requestTransfer(probe, leadId);
+    const nextAction = `Before calling slp_ready: ${WRITE_ATTEMPTS} Then call slp_ready and end your turn.`;
+    const transferId = await requestTransfer(probe, leadId, nextAction);
     const candidateId = await awaitCandidate(probe, transferId);
     const acknowledgedByModel = await awaitCompletion(probe, transferId, candidateId);
     say(
@@ -431,8 +420,7 @@ async function interruptTransfer(
   const probe = await startDaemon(root, "daemon-1.log");
   try {
     const lead = await startLeadGroup(probe, provider, sourceConfig(provider, cwd, model));
-    await writeCheckpoint(probe, lead.leadId, REPLY_ONLY("PREPARING"));
-    const transferId = await requestTransfer(probe, lead.leadId);
+    const transferId = await requestTransfer(probe, lead.leadId, REPLY_ONLY("PREPARING"));
     const candidateId = await awaitPreparing(probe, transferId);
     // Stop once the candidate has a record to archive, before its turn can switch.
     await until(
@@ -495,8 +483,8 @@ async function runRestartProbe(provider: Provider, model: string | null): Promis
     await runTurn(probe, leadId, REPLY_ONLY("RESUMED"));
     say("lead replied after restart:", await agentManager.getLastAssistantMessage(leadId));
 
-    await writeCheckpoint(probe, leadId, "Call slp_ready and end your turn.");
-    const again = await requestTransfer(probe, leadId);
+    const nextAction = "Call slp_ready and end your turn.";
+    const again = await requestTransfer(probe, leadId, nextAction);
     const successorId = await awaitCandidate(probe, again);
     const acknowledgedByModel = await awaitCompletion(probe, again, successorId);
     say(

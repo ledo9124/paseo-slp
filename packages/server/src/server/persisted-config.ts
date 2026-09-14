@@ -177,7 +177,7 @@ const SlpRoleConfigSchema = z
 const FeatureSlpSchema = z
   .object({
     enabled: z.boolean().optional(),
-    /** Same-role handoff: the checkpoint and handoff tools and their role instructions. Off by default. */
+    /** Explicit same-role handoff and its role instructions. Enabled by default. */
     handoff: z.boolean().optional(),
     roles: z
       .object({

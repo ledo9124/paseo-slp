@@ -534,7 +534,7 @@ function resolveSlpSettings(
 ): Pick<PaseoDaemonConfig, "slpEnabled" | "slpHandoff" | "slpRoles"> {
   return {
     slpEnabled: resolveSlpEnabled(env, persisted),
-    slpHandoff: parseBooleanEnv(env.PASEO_SLP_HANDOFF) ?? persisted.features?.slp?.handoff ?? false,
+    slpHandoff: parseBooleanEnv(env.PASEO_SLP_HANDOFF) ?? persisted.features?.slp?.handoff ?? true,
     slpRoles: persisted.features?.slp?.roles,
   };
 }

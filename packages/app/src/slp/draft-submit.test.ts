@@ -9,10 +9,14 @@ vi.mock("@/runtime/host-runtime", () => ({
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
-import { useSlpDraftLaunchStore } from "./draft-state";
+import { slpDraftKey, useSlpDraftLaunchStore } from "./draft-state";
 
 const payload = { text: "Investigate the startup failure", cwd: "/repo", attachments: [] };
+const roles = {
+  supervisor: { provider: "claude", model: "chosen-model", modeId: null, thinkingOptionId: null },
+};
 const launch = {
+  roles,
   selectedProvider: "codex",
   selectedMode: "default",
   effectiveModelId: "gpt-test",
@@ -49,6 +53,11 @@ describe("SLP draft submission", () => {
     expect(result.current.state.pending).toBe(false);
     expect(result.current.state.error).not.toBeNull();
     expect(onSent).not.toHaveBeenCalled();
+    expect(initialize.mock.calls[0]![0].roles).toEqual(roles);
+    expect(
+      useSlpDraftLaunchStore.getState().byDraft[slpDraftKey("host", "workspace", "draft")]?.override
+        ?.roles,
+    ).toEqual(roles);
   });
 
   it("reuses the first message id after a lost response", async () => {
