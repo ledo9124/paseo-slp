@@ -1,4 +1,3 @@
-import { DEFAULT_DAEMON_PORT } from "@getpaseo/protocol/product-identity";
 import { waitForDaemonReady, resolvePaseoHome, type DaemonInstance } from "@getpaseo/server";
 import { describeDaemonTarget, type DaemonTarget } from "./daemon-target.js";
 export type { DaemonTarget } from "./daemon-target.js";
