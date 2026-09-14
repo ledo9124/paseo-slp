@@ -197,6 +197,16 @@ function buildRunOutput(params: {
 
 type ScheduleAgentManager = AgentLoaderManager &
   Pick<
+  AgentRunController,
+  | "getAgent"
+  | "reloadAgentSession"
+  | "tryRunOutOfBand"
+  | "hasInFlightRun"
+  | "replaceAgentRun"
+  | "steerOrReplaceActiveTurn"
+  | "streamAgent"
+> &
+  Pick<
     AgentManager,
     "admitForegroundTurn" | "runAgent" | "waitForAgentEvent" | "waitForAgentRunStart"
   >;

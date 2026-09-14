@@ -13,7 +13,7 @@ interface CodexClientLike {
 }
 
 type CodexTestSession = AgentSession & {
-  connected: boolean;
+  connectionState: "connected" | "disconnected" | "connecting";
   currentThreadId: string | null;
   activeForegroundTurnId: string | null;
   client: CodexClientLike | null;
@@ -61,7 +61,7 @@ function createSession(
       resolveExecutionPolicy,
     ),
   );
-  session.connected = true;
+  session.connectionState = "connected";
   session.activeForegroundTurnId = null;
   return session;
 }
@@ -181,7 +181,7 @@ describe("Codex preparation policy", () => {
         },
       ),
     );
-    session.connected = true;
+    session.connectionState = "connected";
     session.activeForegroundTurnId = null;
     session.currentThreadId = "thread-1";
     const { client, find } = recordingClient();
