@@ -12,6 +12,7 @@ export const ptBR: TranslationResources = {
       copy: "Copiar",
       copyLine: "Copiar linha",
       dismiss: "Dispensar",
+      reload: "Recarregar",
       retry: "Tentar novamente",
       search: "Buscar",
       select: "Selecionar",
@@ -153,7 +154,7 @@ export const ptBR: TranslationResources = {
       initialPromptRequired: "O prompt inicial é obrigatório",
       alreadyLoading: "Já está carregando",
       uploadFailed: "Falha ao enviar arquivo",
-      noClipboardImage: "Não há imagem na área de transferência",
+      noClipboardImage: "Não há imagem na área de transferência atual. Tente colar pelo teclado.",
       pasteImageFailed: "Falha ao colar a imagem",
       fileTooLarge: "{{fileName}} é grande demais (máximo {{size}})",
     },
@@ -208,6 +209,10 @@ export const ptBR: TranslationResources = {
     historyLoadFailed: "Não foi possível carregar o histórico do agente",
     messageCapped: "Esta mensagem foi truncada ({{bytes}} bytes).",
     permission: {
+      rejectedPlan: "Plano rejeitado",
+      approvedPlan: "Plano aprovado",
+      canceledPlan: "Plano cancelado",
+
       plan: "Plano",
       required: "Permissão necessária",
       deny: "Negar",
@@ -1016,11 +1021,8 @@ export const ptBR: TranslationResources = {
         refresh: "Atualizar",
         refreshState: "Atualizar estado do git e do {{brand}}",
         failedRefresh: "Falha ao atualizar estado do git.",
-        emptyHiddenWhitespace: "Nenhuma alteração visível após ocultar espaços em branco",
-        emptyUncommitted: "Nenhuma alteração sem commit",
         seeUncommittedChanges: "Ver alterações sem commit",
         seeCommittedChanges: "Ver alterações com commit",
-        emptyAgainstBase: "Nenhuma alteração vs {{baseRef}}",
         checkingRepository: "Verificando repositório...",
         notRepository: "Não é um repositório git",
         diffMode: "Modo de diff",
@@ -1161,6 +1163,16 @@ export const ptBR: TranslationResources = {
       deleteMessage_other: "Isso remove a etiqueta de {{count}} workspaces neste host.",
       offline: "Este host está offline.",
       updateHost: "Atualize este host para gerenciar etiquetas.",
+    },
+  },
+  changelog: {
+    title: "Novidades",
+    installed: "Instalada",
+    showMore: "Mostrar mais",
+    openWebsite: "Changelog completo",
+    error: {
+      title: "Não foi possível carregar o changelog",
+      description: "Verifique sua conexão e tente novamente.",
     },
   },
   sidebar: {
@@ -1384,6 +1396,7 @@ export const ptBR: TranslationResources = {
       detail: "Parando o daemon local.",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "Daemon",
       status: {
         title: "Status",
@@ -2198,6 +2211,7 @@ export const ptBR: TranslationResources = {
     about: {
       title: "Sobre",
       appVersion: "Versão do app",
+      whatsNewHint: "Notas de versão de cada release",
       thisDevice: "Este dispositivo",
       connectedHosts: "Hosts conectados",
       offline: "Offline",

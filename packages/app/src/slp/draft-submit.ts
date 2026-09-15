@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import type {
   SlpGroupSummary,
   SlpGroupInitializeResponse,
@@ -12,6 +13,7 @@ import { toErrorMessage } from "@/utils/error-messages";
 import type { SlpGroupMode } from "./composer-mode";
 import { SlpGroupRefusedError } from "./errors";
 import { slpDraftKey, useSlpDraftLaunchStore } from "./draft-state";
+import { slpGroupQueryKey } from "@/data/slp-group";
 
 export interface SlpDraftLaunch {
   roles?: SlpRootLaunches;
@@ -86,6 +88,7 @@ export function useSlpDraftSubmit(input: {
   const { serverId, workspaceId, draftId, mode, launch, onSent } = input;
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
+  const queryClient = useQueryClient();
   const [state, setState] = useState<SlpDraftSubmitState>({ pending: false, error: null });
   const draftKey = slpDraftKey(serverId, workspaceId, draftId);
   const inFlight = useRef<Promise<void> | null>(null);
@@ -135,7 +138,9 @@ export function useSlpDraftSubmit(input: {
             ...request,
             messageId: attempt.messageId,
           });
-          onSent(requireInitializedGroup(result, t("slp.composer.failed")));
+          const group = requireInitializedGroup(result, t("slp.composer.failed"));
+          queryClient.setQueryData(slpGroupQueryKey(serverId, workspaceId), group);
+          onSent(group);
           store.clear(draftKey);
           setState({ pending: false, error: null });
         } catch (error) {
@@ -151,7 +156,7 @@ export function useSlpDraftSubmit(input: {
       void operation.then(settled, settled);
       return operation;
     },
-    [client, draftKey, launch, mode, onSent, t, workspaceId],
+    [client, draftKey, launch, mode, onSent, queryClient, serverId, t, workspaceId],
   );
 
   return { submit: mode && workspaceId ? start : null, start, state };

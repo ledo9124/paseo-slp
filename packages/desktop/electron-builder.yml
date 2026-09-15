@@ -70,9 +70,13 @@ linux:
     - tar.gz
 deb:
   packageName: paseo-slp
+  afterInstall: scripts/linux-sandbox/after-install.tpl
 rpm:
   packageName: paseo-slp
+  afterInstall: scripts/linux-sandbox/after-install.tpl
 appImage:
+  # A nonempty argument list replaces builder's hardcoded --no-sandbox default.
+  executableArgs: ["--class=Paseo-SLP"]
   # Keep the AppImage filename stable across versions (no ${version}) so
   # manually replacing the build preserves desktop shortcuts and the
   # ~/.local/bin/paseo-slp CLI symlink, which points at $APPIMAGE. The

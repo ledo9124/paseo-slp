@@ -9,6 +9,7 @@ export const en = {
       copy: "Copy",
       copyLine: "Copy line",
       dismiss: "Dismiss",
+      reload: "Reload",
       retry: "Retry",
       search: "Search",
       select: "Select",
@@ -150,7 +151,7 @@ export const en = {
       initialPromptRequired: "Initial prompt is required",
       alreadyLoading: "Already loading",
       uploadFailed: "Failed to upload file",
-      noClipboardImage: "No image in clipboard",
+      noClipboardImage: "No image in the current clipboard. Try pasting from your keyboard.",
       pasteImageFailed: "Failed to paste image",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
@@ -205,6 +206,10 @@ export const en = {
     historyLoadFailed: "Couldn't load agent history",
     messageCapped: "This message was capped ({{bytes}} bytes).",
     permission: {
+      rejectedPlan: "Rejected plan",
+      approvedPlan: "Approved plan",
+      canceledPlan: "Canceled plan",
+
       plan: "Plan",
       required: "Permission Required",
       deny: "Deny",
@@ -1002,11 +1007,8 @@ export const en = {
         refresh: "Refresh",
         refreshState: "Refresh git and {{brand}} state",
         failedRefresh: "Failed to refresh git state.",
-        emptyHiddenWhitespace: "No visible changes after hiding whitespace",
-        emptyUncommitted: "No uncommitted changes",
         seeUncommittedChanges: "See uncommitted changes",
         seeCommittedChanges: "See committed changes",
-        emptyAgainstBase: "No changes vs {{baseRef}}",
         checkingRepository: "Checking repository...",
         notRepository: "Not a git repository",
         diffMode: "Diff mode",
@@ -1144,6 +1146,16 @@ export const en = {
       deleteMessage_other: "This removes the label from {{count}} workspaces on this host.",
       offline: "This host is offline.",
       updateHost: "Update this host to manage labels.",
+    },
+  },
+  changelog: {
+    title: "What's new",
+    installed: "Installed",
+    showMore: "Show more",
+    openWebsite: "Full changelog",
+    error: {
+      title: "Unable to load the changelog",
+      description: "Check your connection and try again.",
     },
   },
   sidebar: {
@@ -1368,6 +1380,23 @@ export const en = {
     },
     daemon: {
       title: "Daemon",
+      lifecycle: {
+        owned: "Launched by this Desktop session",
+        attached: "Attached to an existing daemon",
+        ownedMessage: "This daemon was launched by this Desktop session.",
+        attachedMessage: "This daemon was not launched by this Desktop session.",
+        stopTitle: "Stop local daemon?",
+        stopMessage:
+          "{{ownership}}\nHome: {{home}}\nSupervisor PID: {{pid}}\nRunning agent work will be interrupted.",
+        stop: "Stop daemon",
+        stopping: "Stopping…",
+        stopFailed: "Unable to stop daemon",
+        pauseAttached: "Pause automatic daemon management? The attached daemon will keep running.",
+        pause: "Pause management",
+        workerUpdated: "Worker updated to {{version}}",
+        supervisorRefresh:
+          "The running supervisor retains its original code. Its launcher must stop and start it to refresh the supervisor.",
+      },
       status: {
         title: "Status",
         builtInOnly: "Only the built-in desktop daemon is shown here",
@@ -2268,6 +2297,7 @@ export const en = {
     about: {
       title: "About",
       appVersion: "App version",
+      whatsNewHint: "Release notes for every version",
       thisDevice: "This device",
       connectedHosts: "Connected hosts",
       offline: "Offline",

@@ -32,7 +32,14 @@ test.describe("SLP group", () => {
       await expect(modePill).toContainText("Single agent");
       await modePill.click();
       await page.getByTestId("slp-mode-option-supervised").click();
-      await expect(modePill).toContainText("Supervised");
+      await expect(page.getByTestId("slp-launch-supervisor").filter({ visible: true })).toBeEnabled(
+        {
+          timeout: 30_000,
+        },
+      );
+      await expect(page.getByTestId("slp-launch-lead").filter({ visible: true })).toBeEnabled({
+        timeout: 30_000,
+      });
 
       await composer.fill("Investigate why login is slow.");
       await composer.press("Enter");
