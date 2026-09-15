@@ -38,9 +38,7 @@ test("a refused New workspace SLP launch keeps the message and retries into exac
     });
     await expect(page.getByText(/SLP needs Paseo tools/).filter({ visible: true })).toBeVisible();
     await expect(composer()).toHaveValue(message);
-    await expect(
-      page.getByTestId("slp-launch-supervisor").filter({ visible: true }),
-    ).toBeVisible();
+    await expect(page.getByTestId("slp-launch-supervisor").filter({ visible: true })).toBeVisible();
     await expect(page.getByTestId("slp-launch-lead").filter({ visible: true })).toBeVisible();
     expect((await project.client.slpGroupGet(workspace.workspaceId)).group).toBeNull();
 
