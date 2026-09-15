@@ -6,10 +6,14 @@ import { useSlpDraftComposer } from "./draft-composer";
 
 const mocks = vi.hoisted(() => ({
   initialize: vi.fn(),
+  setQueryData: vi.fn(),
   control: null as SlpModeControlValue | null,
 }));
 vi.mock("@/runtime/host-runtime", () => ({
   useHostRuntimeClient: () => ({ slpGroupInitialize: mocks.initialize }),
+}));
+vi.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => ({ setQueryData: mocks.setQueryData }),
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
