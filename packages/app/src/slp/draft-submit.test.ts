@@ -3,9 +3,15 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useSlpDraftSubmit } from "./draft-submit";
 
-const { initialize } = vi.hoisted(() => ({ initialize: vi.fn() }));
+const { initialize, setQueryData } = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  setQueryData: vi.fn(),
+}));
 vi.mock("@/runtime/host-runtime", () => ({
   useHostRuntimeClient: () => ({ slpGroupInitialize: initialize }),
+}));
+vi.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => ({ setQueryData }),
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
@@ -82,6 +88,7 @@ describe("SLP draft submission", () => {
     });
     expect(initialize).toHaveBeenCalledTimes(2);
     expect(initialize.mock.calls[1]![0]).toEqual(initialize.mock.calls[0]![0]);
+    expect(setQueryData).toHaveBeenCalledWith(["slpGroup", "host", "workspace"], group);
     expect(onSent).toHaveBeenCalledTimes(1);
   });
 

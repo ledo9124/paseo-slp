@@ -1,13 +1,13 @@
 #!/bin/bash
 
 if type update-alternatives >/dev/null 2>&1; then
-    # Remove previous link if it doesn't use update-alternatives
-    if [ -L '/usr/bin/${executable}' -a -e '/usr/bin/${executable}' -a "`readlink '/usr/bin/${executable}'`" != '/etc/alternatives/${executable}' ]; then
-        rm -f '/usr/bin/${executable}'
+    # update-alternatives names cannot contain spaces; keep the public command stable.
+    if [ -L '/usr/bin/paseo-slp' -a -e '/usr/bin/paseo-slp' -a "`readlink '/usr/bin/paseo-slp'`" != '/etc/alternatives/paseo-slp' ]; then
+        rm -f '/usr/bin/paseo-slp'
     fi
-    update-alternatives --install '/usr/bin/${executable}' '${executable}' '/opt/${sanitizedProductName}/${executable}' 100 || ln -sf '/opt/${sanitizedProductName}/${executable}' '/usr/bin/${executable}'
+    update-alternatives --install '/usr/bin/paseo-slp' 'paseo-slp' '/opt/${sanitizedProductName}/${executable}' 100 || ln -sf '/opt/${sanitizedProductName}/${executable}' '/usr/bin/paseo-slp'
 else
-    ln -sf '/opt/${sanitizedProductName}/${executable}' '/usr/bin/${executable}'
+    ln -sf '/opt/${sanitizedProductName}/${executable}' '/usr/bin/paseo-slp'
 fi
 
 # Package installation runs as root, whose namespace access says nothing about
@@ -35,7 +35,7 @@ fi
 # https://askubuntu.com/questions/1517272/writing-a-backwards-compatible-apparmor-profile
 if apparmor_status --enabled > /dev/null 2>&1; then
   APPARMOR_PROFILE_SOURCE='/opt/${sanitizedProductName}/resources/apparmor-profile'
-  APPARMOR_PROFILE_TARGET='/etc/apparmor.d/${executable}'
+  APPARMOR_PROFILE_TARGET='/etc/apparmor.d/paseo-slp'
   if apparmor_parser --skip-kernel-load --debug "$APPARMOR_PROFILE_SOURCE" > /dev/null 2>&1; then
     cp -f "$APPARMOR_PROFILE_SOURCE" "$APPARMOR_PROFILE_TARGET"
 

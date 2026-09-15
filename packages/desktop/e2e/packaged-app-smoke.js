@@ -8,6 +8,7 @@ const { chromium } = require("playwright");
 const { extractFile } = require("@electron/asar");
 
 const EXECUTABLE_NAME = "Paseo SLP";
+const LINUX_DESKTOP_NAME = "Paseo-SLP.desktop";
 const SMOKE_TIMEOUT_MS = 60_000;
 const EXIT_TIMEOUT_MS = 10_000;
 const TERMINAL_CAPTURE_ATTEMPTS = 20;
@@ -834,9 +835,9 @@ function assertLinuxDesktopIdentity(appPath) {
     const metadata = JSON.parse(
       extractFile(path.join(appPath, "resources", "app.asar"), "package.json").toString(),
     );
-    if (metadata.desktopName !== `${EXECUTABLE_NAME}.desktop`) {
+    if (metadata.desktopName !== LINUX_DESKTOP_NAME) {
       throw new Error(
-        `Packaged Linux desktop identity ${JSON.stringify(metadata.desktopName)} does not match ${EXECUTABLE_NAME}.desktop`,
+        `Packaged Linux desktop identity ${JSON.stringify(metadata.desktopName)} does not match ${LINUX_DESKTOP_NAME}`,
       );
     }
   }
