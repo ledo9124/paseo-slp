@@ -32,14 +32,12 @@ test.describe("SLP group", () => {
       await expect(modePill).toContainText("Single agent");
       await modePill.click();
       await page.getByTestId("slp-mode-option-supervised").click();
-      await expect(
-        page.getByTestId("slp-launch-supervisor").filter({ visible: true }),
-      ).toBeEnabled({
-        timeout: 30_000,
-      });
-      await expect(
-        page.getByTestId("slp-launch-lead").filter({ visible: true }),
-      ).toBeEnabled({
+      await expect(page.getByTestId("slp-launch-supervisor").filter({ visible: true })).toBeEnabled(
+        {
+          timeout: 30_000,
+        },
+      );
+      await expect(page.getByTestId("slp-launch-lead").filter({ visible: true })).toBeEnabled({
         timeout: 30_000,
       });
 
