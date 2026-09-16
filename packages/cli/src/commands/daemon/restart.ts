@@ -7,6 +7,7 @@ import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
 import { describeDaemonTarget } from "../../utils/daemon-target.js";
 import { parseTimeoutMs, rejectRemovedLaunchFlags } from "./local-daemon.js";
 
+const RESTART_CONFIRMATION_ATTEMPT_TIMEOUT_MS = 5_000;
 export function daemonRestartCommand(): Command {
   return rejectRemovedLaunchFlags(
     addJsonAndDaemonHostOptions(
@@ -64,12 +65,14 @@ export async function runRestartCommand(options: CommandOptions, _command: Comma
       const replacement = await connectToDaemon({
         target,
         instance: instance ?? undefined,
-        timeout: Math.min(1_000, remaining()),
+        timeout: Math.min(RESTART_CONFIRMATION_ATTEMPT_TIMEOUT_MS, remaining()),
       });
       try {
         if (replacement.getLastServerInfoMessage()?.serverId !== serverId)
           throw new Error("Connected peer identity changed");
-        const status = await replacement.getDaemonStatus({ timeout: Math.min(1_000, remaining()) });
+        const status = await replacement.getDaemonStatus({
+          timeout: Math.min(RESTART_CONFIRMATION_ATTEMPT_TIMEOUT_MS, remaining()),
+        });
         if (status.pid !== workerPid) {
           await checkSupervisor();
           return {
