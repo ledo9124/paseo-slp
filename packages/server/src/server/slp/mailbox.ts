@@ -52,8 +52,16 @@ export class SlpMailbox {
   private readonly now: () => Date;
   private readonly onChange: (groupId: string) => void;
   private readonly records = new Map<string, SlpMailRecord>();
-  /** One dispatch loop per slot; a second pump while one runs is a no-op. */
+  /** One dispatch loop per slot; `close` waits on these. */
   private readonly pumps = new Map<string, Promise<void>>();
+  /**
+   * Slots with a live loop. Set before the loop starts, unlike `pumps`, which
+   * is only assigned once `drain` yields; a pump re-entered from inside the
+   * loop would otherwise start a second one and orphan the first.
+   */
+  private readonly running = new Set<string>();
+  /** Wake-ups a live loop has not accounted for yet. Read as it exits. */
+  private readonly wakes = new Set<string>();
   private closing = false;
   /** Resolved by `close`, so a loop parked on a turn boundary stops waiting. */
   private readonly closed: Promise<void>;
@@ -149,17 +157,37 @@ export class SlpMailbox {
     }
   }
 
-  /** Re-check a slot whose destination changed (a hold lifted, a generation activated). */
+  /**
+   * Re-check a slot whose destination changed (a hold lifted, a generation
+   * activated). The wake-up is recorded before the live loop is consulted,
+   * and a loop reads that record after it releases the slot, so a wake-up
+   * landing in the window between the loop's last look at the queue and its
+   * exit restarts it instead of being dropped with no loop left to honour it.
+   */
   pump(groupId: string, slotId: string): void {
     if (this.closing) return;
     const key = `${groupId}/${slotId}`;
-    if (this.pumps.has(key)) return;
+    this.wakes.add(key);
+    if (this.running.has(key)) return;
+    this.start(groupId, slotId, key);
+  }
+
+  /**
+   * Restarting only on a recorded wake-up is what keeps a slot whose loop
+   * exited on a hold from spinning: that exit leaves its message queued, so a
+   * loop that re-checked the queue instead would re-enter itself forever.
+   */
+  private start(groupId: string, slotId: string, key: string): void {
+    this.wakes.delete(key);
+    this.running.add(key);
     const run = this.drain(groupId, slotId)
       .catch((error: unknown) => {
         this.logger.error({ groupId, slotId, err: error }, "SLP mail dispatch failed");
       })
       .finally(() => {
+        this.running.delete(key);
         this.pumps.delete(key);
+        if (this.wakes.delete(key) && !this.closing) this.start(groupId, slotId, key);
       });
     this.pumps.set(key, run);
   }
