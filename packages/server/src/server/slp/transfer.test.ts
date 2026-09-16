@@ -475,6 +475,27 @@ describe("SLP same-role handoff", () => {
     expect(transfer(daemon, transferId)).toMatchObject({ control: "automatic" });
   });
 
+  test("a Supervisor self-handoff stays automatic", async () => {
+    const daemon = await startDaemon();
+    const group = await daemon.service.initializeGroup({ ...input(), mode: "supervised" });
+    const supervisorId = activeAgentId(daemon, group.id, group.supervisorSlotId!);
+    sessionOf(daemon, supervisorId).release();
+    await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+
+    // The boundary exists so the Supervisor can decide when the Lead's context
+    // is replaced. It has no one to ask about its own.
+    const transferId = await requestHandoffFromTurn(daemon, supervisorId, "Fresh context");
+    sessionOf(daemon, supervisorId).release();
+    const candidateId = await candidateStarted(daemon, transferId);
+    await acknowledge(daemon, candidateId);
+    await untilSettled(
+      () => phaseOf(daemon, transferId) === "completed",
+      "supervisor transfer completed",
+    );
+    expect(transfer(daemon, transferId)).toMatchObject({ control: "automatic" });
+    expect(activeAgentId(daemon, group.id, group.supervisorSlotId!)).toBe(candidateId);
+  });
+
   test("a transfer record written without a control mode stays automatic", async () => {
     const first = await startDaemon();
     const group = await first.service.initializeGroup({ ...input(), mode: "supervised" });
