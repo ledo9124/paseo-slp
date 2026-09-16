@@ -305,6 +305,11 @@ export const en = {
         "Handing off: this agent stops after its checkpoint and retires once its successor is ready.",
       transferCandidate: "Preparing to take over: read-only until the host activates it.",
       transferBlocked: "Handoff blocked: {{reason}}. Restart the host to reconcile it.",
+      decisionWaiting:
+        "A Lead handoff is waiting for your decision. Answer it in this chat to continue or cancel the replacement.",
+      decisionSuspended:
+        "Waiting for the Supervisor before this context is replaced. This agent is stopped until it answers.",
+      decisionPending: "A Lead context replacement is pending the Supervisor's decision.",
       retired: "Retired generation. The slot's current agent continues the work.",
       openCurrent: "Open current {{role}}",
       mailUncertain: "Messages with uncertain delivery: {{count}}",

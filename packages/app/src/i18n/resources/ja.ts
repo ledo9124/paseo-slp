@@ -311,6 +311,11 @@ export const ja: TranslationResources = {
       transferCandidate: "引き継ぎ準備中: ホストが有効化するまで読み取り専用です。",
       transferBlocked:
         "引き継ぎがブロックされました: {{reason}}。ホストを再起動して整合させてください。",
+      decisionWaiting:
+        "Lead の引き継ぎがあなたの判断を待っています。このチャットで続行するかキャンセルするか答えてください。",
+      decisionSuspended:
+        "コンテキストを置き換える前に Supervisor の判断を待っています。応答があるまでこのエージェントは停止しています。",
+      decisionPending: "Lead のコンテキスト置き換えが Supervisor の判断待ちです。",
       retired: "退役した世代です。スロットの現在のエージェントが作業を続けます。",
       openCurrent: "現在の{{role}}を開く",
       mailUncertain: "配信が不確かなメッセージ: {{count}}",

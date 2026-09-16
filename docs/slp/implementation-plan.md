@@ -68,7 +68,7 @@ The contract is in [Supervisor-controlled handoff](supervisor-controlled-handoff
 | 3     | `control` discriminator, `awaiting_supervisor`, typed source suspension  | 1          | Done        |
 | 4     | `slp_decide_lead_handoff`, execution-time authority, continue and cancel | 3          | Done        |
 | 5     | Staged recovery and marked recovery notices                              | 1, 3, 4    | Done        |
-| 6     | Projection, banners and docs                                             | 3–5        | Not started |
+| 6     | Projection, banners and docs                                             | 3–5        | Done        |
 | 7     | Integration and CI                                                       | 1–6        | Not started |
 
 Slice 1 was the stated dependency for every durable Supervisor and source notice, on the finding that a mailbox wake-up could be lost at drain exit. That finding was correct and is fixed, but it was not the whole cause of the symptom it was diagnosed from. Measured on Windows, 10 runs per configuration, against the two focused assertions that were timing out:

@@ -309,6 +309,11 @@ export const ptBR: TranslationResources = {
         "Transferência em andamento: este agente para após o checkpoint e se aposenta quando o sucessor estiver pronto.",
       transferCandidate: "Preparando-se para assumir: somente leitura até o host ativá-lo.",
       transferBlocked: "Transferência bloqueada: {{reason}}. Reinicie o host para reconciliá-la.",
+      decisionWaiting:
+        "Uma transferência do Lead aguarda sua decisão. Responda neste chat para continuar ou cancelar a substituição.",
+      decisionSuspended:
+        "Aguardando o Supervisor antes de substituir este contexto. Este agente está parado até que ele responda.",
+      decisionPending: "Uma substituição de contexto do Lead aguarda a decisão do Supervisor.",
       retired: "Geração aposentada. O agente atual da vaga continua o trabalho.",
       openCurrent: "Abrir {{role}} atual",
       mailUncertain: "Mensagens com entrega incerta: {{count}}",

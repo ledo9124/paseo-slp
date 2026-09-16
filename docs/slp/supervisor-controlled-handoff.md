@@ -1,6 +1,6 @@
 # Supervisor-controlled Lead handoff
 
-Status: built, except for the client projection. A supervised Lead transfer stops at `awaiting_supervisor` with no candidate, its source is refused product turns, the Supervisor is told a decision is waiting, `slp_decide_lead_handoff` continues or cancels it, and a restart resumes or finishes whatever the journal had reached. What a pending decision looks like to Human is still target contract: nothing surfaces it in the app. [Handoff](handoff.md) owns the pipeline, which is still the whole story for Direct Lead, Peer and Supervisor self-handoff.
+Status: this is how a supervised Lead handoff works. It stops at `awaiting_supervisor` with no candidate, its source is refused product turns, the Supervisor is told a decision is waiting and answers with `slp_decide_lead_handoff`, a restart resumes or finishes whatever the journal reached, and every member's banner says where the group is waiting. [Handoff](handoff.md) owns the pipeline, which is still the whole story for Direct Lead, Peer and Supervisor self-handoff.
 
 ## Outcome
 
@@ -166,9 +166,11 @@ decision?: "continue" | "cancel" | null;
 decidedAt?: string | null;
 ```
 
-The app's `LIVE_TRANSFER_PHASES` needs the pending phases. Its membership selector attaches a transfer only when the current agent is the source or the candidate, and Supervisor is neither, so the Supervisor banner needs a group-level pending Lead lookup or a first-class pending-control projection.
+The membership selector attaches a transfer only when the current agent is its source or its candidate, and the Supervisor is neither, so a group-level lookup answers instead: `findPendingLeadHandoff` reads the group and every member carries the result. Without it the one agent that can answer would be the only member with nothing on screen.
 
-Banners: Supervisor sees that a Lead handoff is waiting for its decision; the suspended source sees that it is waiting for Supervisor before its context is replaced; a Human-facing status says a Lead context replacement is pending. There is no approve or cancel button in the first release.
+Banners follow from who can act. The Supervisor is asked to answer. The stopped source is told what it is waiting for, and deliberately not the ordinary handing-off notice, because nothing is being prepared and it is not on its way out. Everyone else is told the group is waiting. There is no approve or cancel button: the decision is the Supervisor's, through its tool.
+
+`control` absent means automatic, the same as it does in the journal, so a daemon that predates this contract produces no pending decision anywhere in the app.
 
 ## Downgrade
 

@@ -3128,6 +3128,17 @@ export const SlpGroupSummarySchema = z.object({
       sourceAgentId: z.string(),
       candidateAgentId: z.string().nullable(),
       reason: z.string().nullable(),
+      /**
+       * Who releases the replacement, and what they said. Strings, like
+       * `phase` and `role` above, so an older app keeps parsing when the
+       * daemon learns a value. Optional because a daemon that predates the
+       * supervised Lead contract sends neither; absent reads as automatic,
+       * which is what the daemon itself does with a record that has no
+       * control mode.
+       */
+      control: z.string().optional(),
+      decision: z.string().nullable().optional(),
+      decidedAt: z.string().nullable().optional(),
       updatedAt: z.string(),
     }),
   ),

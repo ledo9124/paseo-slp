@@ -313,6 +313,12 @@ export const es: TranslationResources = {
       transferCandidate:
         "Preparándose para tomar el relevo: solo lectura hasta que el host lo active.",
       transferBlocked: "Traspaso bloqueado: {{reason}}. Reinicia el host para reconciliarlo.",
+      decisionWaiting:
+        "Un traspaso del Lead espera tu decisión. Respóndelo en este chat para continuar o cancelar el reemplazo.",
+      decisionSuspended:
+        "Esperando al Supervisor antes de reemplazar este contexto. Este agente está detenido hasta que responda.",
+      decisionPending:
+        "Hay un reemplazo de contexto del Lead pendiente de la decisión del Supervisor.",
       retired: "Generación retirada. El agente actual del puesto continúa el trabajo.",
       openCurrent: "Abrir {{role}} actual",
       mailUncertain: "Mensajes con entrega incierta: {{count}}",
