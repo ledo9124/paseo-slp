@@ -23,6 +23,7 @@ import { withSlpProviderOptions } from "./launch.js";
 import {
   SlpDelegationUnavailableError,
   SlpGenerationRetiredError,
+  SlpNotDecidingSupervisorError,
   SlpSourceSuspendedError,
   SlpHandoffDisabledError,
   SlpGroupFrozenError,
@@ -489,8 +490,25 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     if (!group) return !SLP_CONTROL_TOOLS.has(tool);
     const { slot, generation } = membershipOf(group, callerAgentId);
     if (SLP_CONTROL_TOOLS.has(tool) && !this.isHandoffEnabled()) {
-      // A candidate of a transfer that started before the flag was turned off still reports ready.
-      return tool === "slp_ready" && generation.state === "preparing";
+      // A transfer that started before the flag was turned off still has to
+      // end. Its candidate still reports ready, and its Supervisor can still
+      // answer the question it was already asked.
+      if (tool === "slp_ready") return generation.state === "preparing";
+      if (tool === "slp_decide_lead_handoff") {
+        return (
+          slot.role === "supervisor" &&
+          this.transfers
+            .list()
+            .some(
+              (entry) =>
+                entry.groupId === group.id &&
+                !entry.decision &&
+                entry.control === "supervisor" &&
+                entry.phase === "awaiting_supervisor",
+            )
+        );
+      }
+      return false;
     }
     return isToolVisibleToRole(slot.role, tool);
   }
@@ -561,6 +579,54 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
         control: group.mode === "supervised" && slot.role === "lead" ? "supervisor" : "automatic",
       });
       return { transferId: transfer.id };
+    });
+  }
+
+  /**
+   * The Supervisor's decision on a prepared Lead replacement. Authority is
+   * checked here, at execution time, not only by the catalog: MCP caller
+   * identity is self-asserted, and a generation that was active when the
+   * session launched may not be active now.
+   */
+  async decideLeadHandoff(
+    callerAgentId: string,
+    transferId: string,
+    decision: "continue" | "cancel",
+    reason?: string,
+  ): Promise<{ transferId: string; outcome: "continue" | "cancel"; phase: string }> {
+    const group = this.requireGroupForAgent(callerAgentId);
+    return this.serializeByWorkspace(group.workspaceId, async () => {
+      const { slot, generation } = membershipOf(group, callerAgentId);
+      if (slot.role !== "supervisor" || slot.activeGenerationId !== generation.id) {
+        throw new SlpNotDecidingSupervisorError(
+          callerAgentId,
+          transferId,
+          "it is not the group's active Supervisor",
+        );
+      }
+      const record = this.transfers.list().find((entry) => entry.id === transferId);
+      if (!record || record.groupId !== group.id) {
+        throw new SlpNotDecidingSupervisorError(
+          callerAgentId,
+          transferId,
+          "the transfer belongs to another group",
+        );
+      }
+      if (record.control !== "supervisor" || group.slots[record.slotId]?.role !== "lead") {
+        throw new SlpNotDecidingSupervisorError(
+          callerAgentId,
+          transferId,
+          "it is not a Supervisor-controlled Lead handoff",
+        );
+      }
+      const decided = await this.transfers.decide({
+        transferId,
+        actorAgentId: callerAgentId,
+        actorGenerationId: generation.id,
+        outcome: decision,
+        reason,
+      });
+      return { transferId: decided.id, outcome: decision, phase: decided.phase };
     });
   }
 

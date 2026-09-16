@@ -19,6 +19,8 @@ import {
 import {
   SlpGenerationRetiredError,
   SlpGroupHeldError,
+  SlpDecisionConflictError,
+  SlpNotDecidingSupervisorError,
   SlpPreparationPolicyError,
   SlpSourceSuspendedError,
   SlpTransferRefusedError,
@@ -448,6 +450,179 @@ describe("SLP same-role handoff", () => {
     await expect(daemon.manager.admitForegroundTurn(leadId, "More work")).rejects.toThrow(
       SlpSourceSuspendedError,
     );
+  });
+
+  /** A supervised group whose Lead has asked for a handoff and stopped. */
+  async function awaitingDecision(daemon: Daemon): Promise<{
+    group: SlpGroupRecord;
+    supervisorId: string;
+    leadId: string;
+    transferId: string;
+  }> {
+    const group = await daemon.service.initializeGroup({ ...input(), mode: "supervised" });
+    const supervisorId = activeAgentId(daemon, group.id, group.supervisorSlotId!);
+    sessionOf(daemon, supervisorId).release();
+    await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+    const leadId = leadAgentId(group);
+    const transferId = await requestHandoffFromTurn(daemon, leadId, "Next task");
+    sessionOf(daemon, leadId).release();
+    await untilSettled(
+      () => phaseOf(daemon, transferId) === "awaiting_supervisor",
+      "the transfer waits for the Supervisor",
+    );
+    await untilSettled(
+      () => mailState(daemon, `handoff_waiting_${transferId}`) === "accepted",
+      "the Supervisor was told a decision is waiting",
+    );
+    sessionOf(daemon, supervisorId).release();
+    await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+    return { group, supervisorId, leadId, transferId };
+  }
+
+  function decide(daemon: Daemon, agentId: string, args: Record<string, unknown>) {
+    return catalogFor(daemon, agentId).executeTool("slp_decide_lead_handoff", args);
+  }
+
+  test("the Supervisor is told a decision is waiting, and only it can make one", async () => {
+    const daemon = await startDaemon();
+    const { group, supervisorId, leadId, transferId } = await awaitingDecision(daemon);
+
+    const notice = sessionOf(daemon, supervisorId).startPrompts.at(-1) ?? "";
+    expect(notice).toContain("SLP runtime control event");
+    expect(notice).toContain(transferId);
+    expect(notice).toContain("slp_decide_lead_handoff");
+    expect(notice).toContain("No successor exists yet");
+    expect(notice).toContain("not an engineering judgement");
+
+    // The catalog hides it from every role but the Supervisor, and the
+    // execution check refuses a caller that asserts an identity anyway.
+    expect(catalogFor(daemon, leadId).getTool("slp_decide_lead_handoff")).toBeUndefined();
+    expect(catalogFor(daemon, supervisorId).getTool("slp_decide_lead_handoff")).toBeDefined();
+    await expect(daemon.service.decideLeadHandoff(leadId, transferId, "continue")).rejects.toThrow(
+      SlpNotDecidingSupervisorError,
+    );
+    expect(phaseOf(daemon, transferId)).toBe("awaiting_supervisor");
+    expect(slotOf(daemon, group.id, group.leadSlotId).generations).toHaveLength(1);
+  });
+
+  test("continue builds exactly one candidate and completes the replacement", async () => {
+    const daemon = await startDaemon();
+    const { group, supervisorId, leadId, transferId } = await awaitingDecision(daemon);
+
+    await decide(daemon, supervisorId, { transferId, decision: "continue" });
+    const candidateId = await candidateStarted(daemon, transferId);
+    // Receive-only until it says it is ready and the pointer moves.
+    expect(daemon.service.executionPolicyFor(candidateId)).toMatchObject({ kind: "preparation" });
+    await acknowledge(daemon, candidateId);
+    await untilSettled(() => phaseOf(daemon, transferId) === "completed", "transfer completed");
+
+    expect(transfer(daemon, transferId)).toMatchObject({
+      control: "supervisor",
+      decision: { outcome: "continue", actorAgentId: supervisorId },
+    });
+    expect(slotOf(daemon, group.id, group.leadSlotId).generations).toHaveLength(2);
+    expect(activeAgentId(daemon, group.id, group.leadSlotId)).toBe(candidateId);
+    expect(daemon.service.executionPolicyFor(candidateId)).toEqual({ kind: "authorized" });
+    expect(daemon.service.getGroup(group.id)?.hold).toBeNull();
+    // The coverage the decision boundary displaced: completion still tells the
+    // Supervisor its Lead was replaced.
+    await untilSettled(
+      () => mailState(daemon, `handoff_completed_${transferId}`) === "accepted",
+      "Supervisor notified of the completed handoff",
+    );
+    expect(sessionOf(daemon, supervisorId).startPrompts.at(-1)).toContain(candidateId);
+    expect(daemon.manager.getAgent(leadId)).toBeNull();
+  });
+
+  test("cancel builds no candidate, wakes the source and gives it back its slot", async () => {
+    const daemon = await startDaemon();
+    const { group, supervisorId, leadId, transferId } = await awaitingDecision(daemon);
+    // Mail that queued while the slot was held. The source cannot read it
+    // sensibly until it knows it is still the Lead, so the cancellation notice
+    // has to reach it first even though this was queued earlier.
+    const queuedFirst = await daemon.service.deliverMail({
+      groupId: group.id,
+      slotId: group.leadSlotId,
+      fromSlotId: group.supervisorSlotId,
+      kind: "message",
+      prompt: "While you were stopped: Human asked for a status update.",
+    });
+
+    await decide(daemon, supervisorId, {
+      transferId,
+      decision: "cancel",
+      reason: "the current context is fine for the next task",
+    });
+
+    expect(phaseOf(daemon, transferId)).toBe("canceled");
+    expect(transfer(daemon, transferId)).toMatchObject({
+      decision: { outcome: "cancel", reason: "the current context is fine for the next task" },
+    });
+    expect(slotOf(daemon, group.id, group.leadSlotId).generations).toHaveLength(1);
+    expect(activeAgentId(daemon, group.id, group.leadSlotId)).toBe(leadId);
+    expect(daemon.service.getGroup(group.id)?.hold).toBeNull();
+
+    await untilSettled(
+      () => mailState(daemon, `handoff_canceled_${transferId}`) === "accepted",
+      "the source was told its handoff was canceled",
+    );
+    const woken = sessionOf(daemon, leadId).startPrompts.at(-1) ?? "";
+    expect(woken).toContain("canceled by the Supervisor");
+    expect(woken).toContain("the current context is fine for the next task");
+    expect(woken).toContain("still the active Lead");
+    expect(mailState(daemon, queuedFirst.id)).toBe("queued");
+
+    // Only then does what queued during the hold arrive, and the source works again.
+    sessionOf(daemon, leadId).release();
+    await untilSettled(
+      () => mailState(daemon, queuedFirst.id) === "accepted",
+      "the message that queued during the hold followed the notice",
+    );
+    expect(sessionOf(daemon, leadId).startPrompts.at(-1)).toContain("Human asked for a status");
+    sessionOf(daemon, leadId).release();
+    await daemon.manager.waitForAgentEvent(leadId, { waitForActive: true });
+    expect((await daemon.manager.admitForegroundTurn(leadId, "Back to work")).status).toBe(
+      "started",
+    );
+  });
+
+  test("a cancel needs no reason, and repeating a decision changes nothing", async () => {
+    const daemon = await startDaemon();
+    const { supervisorId, transferId } = await awaitingDecision(daemon);
+
+    const first = await decide(daemon, supervisorId, { transferId, decision: "cancel" });
+    const canceled = transfer(daemon, transferId);
+    const again = await decide(daemon, supervisorId, { transferId, decision: "cancel" });
+
+    expect(first.structuredContent).toEqual(again.structuredContent);
+    expect(transfer(daemon, transferId)).toEqual(canceled);
+    expect(daemon.service.listMail().filter((mail) => mail.kind === "control")).toHaveLength(1);
+
+    // The other answer, after the fact, is a conflict rather than a second outcome.
+    await expect(
+      daemon.service.decideLeadHandoff(supervisorId, transferId, "continue"),
+    ).rejects.toThrow(SlpDecisionConflictError);
+    expect(phaseOf(daemon, transferId)).toBe("canceled");
+  });
+
+  test("a pending decision survives the handoff feature being turned off", async () => {
+    let handoffEnabled = true;
+    const daemon = await startSlpTestDaemon({
+      paseoHome,
+      releaseText: "done",
+      isHandoffEnabled: () => handoffEnabled,
+    });
+    daemons.push(daemon);
+    const { supervisorId, leadId, transferId } = await awaitingDecision(daemon);
+
+    handoffEnabled = false;
+    // The Lead can no longer start one; the Supervisor can still end the one
+    // it was already asked about.
+    expect(daemon.service.isToolAllowed(leadId, "slp_request_handoff")).toBe(false);
+    expect(daemon.service.isToolAllowed(supervisorId, "slp_decide_lead_handoff")).toBe(true);
+    await decide(daemon, supervisorId, { transferId, decision: "cancel" });
+    expect(phaseOf(daemon, transferId)).toBe("canceled");
+    expect(daemon.service.isToolAllowed(supervisorId, "slp_decide_lead_handoff")).toBe(false);
   });
 
   test("a supervised Peer handoff stays automatic", async () => {

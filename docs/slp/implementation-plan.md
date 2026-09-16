@@ -66,7 +66,7 @@ The contract is in [Supervisor-controlled handoff](supervisor-controlled-handoff
 | 1     | Mailbox delivery reliability                                             | —          | Done        |
 | 2     | Report provenance: runtime control turns stop becoming Lead reports      | 1          | Done        |
 | 3     | `control` discriminator, `awaiting_supervisor`, typed source suspension  | 1          | Done        |
-| 4     | `slp_decide_lead_handoff`, execution-time authority, continue and cancel | 3          | Not started |
+| 4     | `slp_decide_lead_handoff`, execution-time authority, continue and cancel | 3          | Done        |
 | 5     | Staged recovery and marked recovery notices                              | 1, 3, 4    | Not started |
 | 6     | Projection, banners and docs                                             | 3–5        | Not started |
 | 7     | Integration and CI                                                       | 1–6        | Not started |
@@ -83,7 +83,7 @@ The dominant cause was a single-attempt `fs.rename` in `writeFileAtomic`, which 
 
 Slice 3 adds only the phase a decision can be made from. `continued`, `canceling` and `canceled` land with the tool that writes them, rather than as schema nothing can reach.
 
-Until Slice 4 lands, a supervised Lead that requests a handoff stops and stays stopped: no tool releases it, and nothing tells the Supervisor it is waiting. Do not release a build between the two. Slice 3 also defers the coverage that a completed supervised transfer notifies the Supervisor, because a supervised Lead transfer can no longer reach `completed`; Slice 4 restores it.
+Slice 4 closed the gap Slice 3 opened: the Supervisor is told a decision is waiting, `slp_decide_lead_handoff` resolves it, and the coverage that a completed supervised transfer notifies the Supervisor is back.
 
 Assert terminal state, not state the pipeline passes through. The dispatch loop moves between `queued` and `dispatching` on its way to a `busy` answer, and journal phases advance under a runner, so a test that pins an intermediate value fails under load and gets blamed on whatever change is in the tree. This cost a debugging session already; see the handback assertion in `transfer.test.ts`.
 

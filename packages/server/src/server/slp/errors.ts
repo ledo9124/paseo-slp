@@ -29,6 +29,32 @@ export class SlpInitializationConflictError extends Error {
   }
 }
 
+/** Two decisions were made for one transfer and they disagree. */
+export class SlpDecisionConflictError extends Error {
+  constructor(
+    public readonly transferId: string,
+    public readonly decided: "continue" | "cancel",
+    public readonly attempted: "continue" | "cancel",
+  ) {
+    super(
+      `SLP transfer ${transferId} was already decided as ${decided}; it cannot also be ${attempted}`,
+    );
+    this.name = "SlpDecisionConflictError";
+  }
+}
+
+/** The caller is not the active Supervisor of the transfer's own group. */
+export class SlpNotDecidingSupervisorError extends Error {
+  constructor(
+    public readonly agentId: string,
+    public readonly transferId: string,
+    public readonly detail: string,
+  ) {
+    super(`SLP agent ${agentId} cannot decide handoff ${transferId}: ${detail}`);
+    this.name = "SlpNotDecidingSupervisorError";
+  }
+}
+
 /**
  * The source of a Supervisor-controlled handoff tried to start product work
  * while its replacement waits for a decision. Named rather than reported as

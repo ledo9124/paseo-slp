@@ -1,6 +1,6 @@
 # Supervisor-controlled Lead handoff
 
-Status: the boundary exists. A supervised Lead transfer stops at `awaiting_supervisor` with no candidate, and its source is refused product turns; the decision that releases it is not built yet, so such a transfer stays pending until one is. Everything from the decision tool onward is target contract. [Handoff](handoff.md) owns the transfer that exists today, which is still the whole pipeline for Direct Lead, Peer and Supervisor self-handoff.
+Status: the boundary and the decision exist. A supervised Lead transfer stops at `awaiting_supervisor` with no candidate, its source is refused product turns, the Supervisor is told a decision is waiting, and `slp_decide_lead_handoff` continues or cancels it. Staged recovery, the marked recovery notice for an uncertain notification, and the client projection are target contract. [Handoff](handoff.md) owns the pipeline, which is still the whole story for Direct Lead, Peer and Supervisor self-handoff.
 
 ## Outcome
 
