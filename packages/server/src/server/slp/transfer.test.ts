@@ -167,6 +167,10 @@ describe("SLP same-role handoff", () => {
     return schema.parse(JSON.parse(await readFile(file, "utf8")));
   }
 
+  function transferFile(id: string): string {
+    return path.join(paseoHome, "slp", "transfers", `${id}.json`);
+  }
+
   async function writeSlpFile(kind: string, id: string, record: unknown): Promise<void> {
     await writeFile(path.join(paseoHome, "slp", kind, `${id}.json`), JSON.stringify(record));
   }
@@ -789,6 +793,45 @@ describe("SLP same-role handoff", () => {
     );
     expect(second.service.getGroup(group.id)?.status).toBe("ready");
     expect(activeAgentId(second, group.id, group.leadSlotId)).toBe(leadId);
+  });
+
+  test("a transfer phase this build cannot read freezes its group and is left alone", async () => {
+    const first = await startDaemon();
+    const { group, leadId, transferId } = await awaitingDecision(first);
+    const other = await first.service.initializeGroup({
+      ...input(),
+      workspaceId: "wks_slp_other",
+      mode: "direct",
+    });
+    latestSession(first).release();
+    await first.manager.waitForAgentEvent(leadAgentId(other), { waitForActive: true });
+    await first.stop();
+
+    // What a downgrade looks like from the journal's side: a phase the
+    // reader has no variant for. The schema is a closed union, so the record
+    // does not parse, and this is the same shape as an older build meeting
+    // the phases this one added (see store.test.ts for that half).
+    const stored = await readSlpFile(SlpTransferSchema, "transfers", transferId);
+    const unreadable = { ...stored, phase: "decided_by_human" };
+    await writeSlpFile("transfers", transferId, unreadable);
+
+    const second = await startDaemon();
+
+    // Fails closed: held, visibly broken, and nothing was invented.
+    const frozen = second.service.getGroup(group.id)!;
+    expect(frozen.status).toBe("frozen");
+    expect(frozen.freeze?.reason).toContain(transferId);
+    expect(frozen.hold).toMatchObject({ kind: "transfer", transferId });
+    expect(slotOf(second, group.id, group.leadSlotId).generations).toHaveLength(1);
+    expect(activeAgentId(second, group.id, group.leadSlotId)).toBe(leadId);
+    expect(second.service.listTransfers().find((entry) => entry.id === transferId)).toBeUndefined();
+
+    // The journal is not rewritten by a build that cannot read it: the
+    // runbook says restore the newer build, not repair the file by hand.
+    expect(JSON.parse(await readFile(transferFile(transferId), "utf8"))).toEqual(unreadable);
+
+    // Only that group. The other workspace is untouched.
+    expect(second.service.getGroup(other.id)?.status).toBe("ready");
   });
 
   test("a supervised Peer handoff stays automatic", async () => {
