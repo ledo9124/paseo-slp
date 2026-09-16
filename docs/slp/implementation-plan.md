@@ -61,15 +61,15 @@ Frozen until P5 reports: PR 6, removing the report relay, any new relay or class
 
 The contract is in [Supervisor-controlled handoff](supervisor-controlled-handoff.md). It is a separate track from the PR list above and ships only to workspaces created after it lands.
 
-| Slice | Deliverable                                                              | Depends on | State       |
-| ----- | ------------------------------------------------------------------------ | ---------- | ----------- |
-| 1     | Mailbox delivery reliability                                             | —          | Done        |
-| 2     | Report provenance: runtime control turns stop becoming Lead reports      | 1          | Done        |
-| 3     | `control` discriminator, `awaiting_supervisor`, typed source suspension  | 1          | Done        |
-| 4     | `slp_decide_lead_handoff`, execution-time authority, continue and cancel | 3          | Done        |
-| 5     | Staged recovery and marked recovery notices                              | 1, 3, 4    | Done        |
-| 6     | Projection, banners and docs                                             | 3–5        | Done        |
-| 7     | Integration and CI                                                       | 1–6        | Not started |
+| Slice | Deliverable                                                              | Depends on | State |
+| ----- | ------------------------------------------------------------------------ | ---------- | ----- |
+| 1     | Mailbox delivery reliability                                             | —          | Done  |
+| 2     | Report provenance: runtime control turns stop becoming Lead reports      | 1          | Done  |
+| 3     | `control` discriminator, `awaiting_supervisor`, typed source suspension  | 1          | Done  |
+| 4     | `slp_decide_lead_handoff`, execution-time authority, continue and cancel | 3          | Done  |
+| 5     | Staged recovery and marked recovery notices                              | 1, 3, 4    | Done  |
+| 6     | Projection, banners and docs                                             | 3–5        | Done  |
+| 7     | Integration and CI                                                       | 1–6        | Done  |
 
 Slice 1 was the stated dependency for every durable Supervisor and source notice, on the finding that a mailbox wake-up could be lost at drain exit. That finding was correct and is fixed, but it was not the whole cause of the symptom it was diagnosed from. Measured on Windows, 10 runs per configuration, against the two focused assertions that were timing out:
 
