@@ -131,11 +131,13 @@ export class SlpMailbox {
   }
 
   /**
-   * Boot: a message the daemon died while dispatching may have reached the
-   * provider, so it becomes `uncertain` and is retained, never replayed.
-   * Queued mail resumes dispatch.
+   * Boot, first half: a message the daemon died while dispatching may have
+   * reached the provider, so it becomes `uncertain` and is retained, never
+   * replayed. Nothing is dispatched here. Recovery reads these records to
+   * decide what it still owes, and a pump running alongside that could
+   * overwrite an `uncertain` record before anything had read it.
    */
-  async recover(): Promise<void> {
+  async recoverRecords(): Promise<void> {
     for (const { id, result } of await this.store.list()) {
       if (result instanceof Error) {
         this.logger.error({ mailId: id, err: result }, "SLP mail record unreadable");
@@ -154,6 +156,10 @@ export class SlpMailbox {
         this.logger.warn({ mailId: record.id }, "SLP mail acceptance is uncertain after restart");
       }
     }
+  }
+
+  /** Boot, second half: once recovery has decided, queued mail resumes. */
+  startPumps(): void {
     const pumped = new Set<string>();
     for (const record of this.list()) {
       const key = `${record.groupId}/${record.slotId}`;
@@ -251,7 +257,7 @@ export class SlpMailbox {
     }
   }
 
-  /** Sequence order, except that an activation notice goes before whatever queued during the transfer. */
+  /** Sequence order, except that the runtime's own notice about the slot goes first. */
   private nextQueued(groupId: string, slotId: string): SlpMailRecord | null {
     let candidate: SlpMailRecord | null = null;
     for (const record of this.records.values()) {
@@ -324,9 +330,17 @@ export class SlpMailbox {
   }
 }
 
+/**
+ * What the runtime says about the slot itself, which the recipient has to read
+ * before it can make sense of anything that queued while it was held: an
+ * activation telling a successor it now owns the slot, and a cancellation
+ * telling a source it still does.
+ */
+const RUNTIME_FIRST_KINDS: ReadonlySet<SlpMailRecord["kind"]> = new Set(["activation", "control"]);
+
 function precedes(a: SlpMailRecord, b: SlpMailRecord): boolean {
-  const aFirst = a.kind === "activation";
-  const bFirst = b.kind === "activation";
+  const aFirst = RUNTIME_FIRST_KINDS.has(a.kind);
+  const bFirst = RUNTIME_FIRST_KINDS.has(b.kind);
   if (aFirst !== bFirst) return aFirst;
   return a.sequence < b.sequence;
 }

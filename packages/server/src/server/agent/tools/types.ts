@@ -55,6 +55,13 @@ export interface SlpToolAuthority {
   ): Promise<{ transferId: string }>;
   /** The candidate has read its handoff context and is ready to be activated. */
   acknowledgeReadiness(callerAgentId: string): Promise<{ transferId: string }>;
+  /** The Supervisor releases or cancels a Lead handoff that is waiting on it. */
+  decideLeadHandoff(
+    callerAgentId: string,
+    transferId: string,
+    decision: "continue" | "cancel",
+    reason?: string,
+  ): Promise<{ transferId: string; outcome: "continue" | "cancel"; phase: string }>;
 }
 
 export interface PaseoToolCatalog {

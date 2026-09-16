@@ -23,6 +23,8 @@ import { withSlpProviderOptions } from "./launch.js";
 import {
   SlpDelegationUnavailableError,
   SlpGenerationRetiredError,
+  SlpNotDecidingSupervisorError,
+  SlpSourceSuspendedError,
   SlpHandoffDisabledError,
   SlpGroupFrozenError,
   SlpGroupHeldError,
@@ -66,7 +68,12 @@ import {
   type SlpTransferRecord,
   type SlpWorkspaceMode,
 } from "./store.js";
-import { SlpTransfers, type SlpMemberCreationInput, type SlpTransferHost } from "./transfer.js";
+import {
+  SlpTransfers,
+  TERMINAL_TRANSFER_PHASES,
+  type SlpMemberCreationInput,
+  type SlpTransferHost,
+} from "./transfer.js";
 
 import type {
   SlpGroupSummary,
@@ -278,8 +285,13 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     this.agentManager.setAdmissionGate({
       assertTurnAllowed: (agentId) => {
         const group = this.getGroupForAgent(agentId);
-        if (group && membershipOf(group, agentId).generation.state === "retired") {
+        if (!group) return;
+        if (membershipOf(group, agentId).generation.state === "retired") {
           throw new SlpGenerationRetiredError(agentId, group.id);
+        }
+        const suspending = this.transfers.suspending(agentId);
+        if (suspending) {
+          throw new SlpSourceSuspendedError(agentId, group.id, suspending.id, suspending.phase);
         }
       },
       executionPolicyFor: (agentId) => this.executionPolicyFor(agentId),
@@ -452,6 +464,9 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
           sourceAgentId: record.sourceAgentId,
           candidateAgentId: "candidate" in record ? (record.candidate?.agentId ?? null) : null,
           reason: transferReason(record),
+          control: record.control ?? "automatic",
+          decision: record.decision?.outcome ?? null,
+          decidedAt: record.decision?.decidedAt ?? null,
           updatedAt: record.updatedAt,
         })),
       mail,
@@ -483,8 +498,25 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     if (!group) return !SLP_CONTROL_TOOLS.has(tool);
     const { slot, generation } = membershipOf(group, callerAgentId);
     if (SLP_CONTROL_TOOLS.has(tool) && !this.isHandoffEnabled()) {
-      // A candidate of a transfer that started before the flag was turned off still reports ready.
-      return tool === "slp_ready" && generation.state === "preparing";
+      // A transfer that started before the flag was turned off still has to
+      // end. Its candidate still reports ready, and its Supervisor can still
+      // answer the question it was already asked.
+      if (tool === "slp_ready") return generation.state === "preparing";
+      if (tool === "slp_decide_lead_handoff") {
+        return (
+          slot.role === "supervisor" &&
+          this.transfers
+            .list()
+            .some(
+              (entry) =>
+                entry.groupId === group.id &&
+                !entry.decision &&
+                entry.control === "supervisor" &&
+                entry.phase === "awaiting_supervisor",
+            )
+        );
+      }
+      return false;
     }
     return isToolVisibleToRole(slot.role, tool);
   }
@@ -549,8 +581,60 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
         source: generation,
         checkpoint,
         reason,
+        // Only the Lead of a supervised group answers to the Supervisor. A
+        // Peer replacement is the Lead's own topology, and a Direct Lead has
+        // no Supervisor to ask.
+        control: group.mode === "supervised" && slot.role === "lead" ? "supervisor" : "automatic",
       });
       return { transferId: transfer.id };
+    });
+  }
+
+  /**
+   * The Supervisor's decision on a prepared Lead replacement. Authority is
+   * checked here, at execution time, not only by the catalog: MCP caller
+   * identity is self-asserted, and a generation that was active when the
+   * session launched may not be active now.
+   */
+  async decideLeadHandoff(
+    callerAgentId: string,
+    transferId: string,
+    decision: "continue" | "cancel",
+    reason?: string,
+  ): Promise<{ transferId: string; outcome: "continue" | "cancel"; phase: string }> {
+    const group = this.requireGroupForAgent(callerAgentId);
+    return this.serializeByWorkspace(group.workspaceId, async () => {
+      const { slot, generation } = membershipOf(group, callerAgentId);
+      if (slot.role !== "supervisor" || slot.activeGenerationId !== generation.id) {
+        throw new SlpNotDecidingSupervisorError(
+          callerAgentId,
+          transferId,
+          "it is not the group's active Supervisor",
+        );
+      }
+      const record = this.transfers.list().find((entry) => entry.id === transferId);
+      if (!record || record.groupId !== group.id) {
+        throw new SlpNotDecidingSupervisorError(
+          callerAgentId,
+          transferId,
+          "the transfer belongs to another group",
+        );
+      }
+      if (record.control !== "supervisor" || group.slots[record.slotId]?.role !== "lead") {
+        throw new SlpNotDecidingSupervisorError(
+          callerAgentId,
+          transferId,
+          "it is not a Supervisor-controlled Lead handoff",
+        );
+      }
+      const decided = await this.transfers.decide({
+        transferId,
+        actorAgentId: callerAgentId,
+        actorGenerationId: generation.id,
+        outcome: decision,
+        reason,
+      });
+      return { transferId: decided.id, outcome: decision, phase: decided.phase };
     });
   }
 
@@ -1003,7 +1087,18 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   async recover(): Promise<void> {
     await this.checkpoints.recover();
     await this.transfers.recover();
-    for (const stored of await this.store.list()) {
+    // Order matters here. Mail records load before anything reconciles, so a
+    // transfer deciding whether it still owes the Supervisor a notice can see
+    // that the last one is `uncertain`; and no pump runs until every decision
+    // is made, so nothing overwrites a record recovery has not read yet.
+    const groups = await this.store.list();
+    for (const entry of groups) {
+      if (entry.kind === "valid" && entry.record.status !== "ended") {
+        this.groups.set(entry.record.id, entry.record);
+      }
+    }
+    await this.mailbox.recoverRecords();
+    for (const stored of groups) {
       if (stored.kind === "unreadable") {
         this.unknownGroups.set(stored.groupId, {
           groupId: stored.groupId,
@@ -1049,7 +1144,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
         await this.freeze(record, `initialization recovery failed: ${describe(error)}`);
       }
     }
-    await this.mailbox.recover();
+    await this.reconcileUnheldTransfers();
     await this.handbacks.recover((handback) => {
       const group = this.groups.get(handback.groupId);
       const generation = group?.slots[handback.peerSlotId]?.generations.find(
@@ -1057,6 +1152,39 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       );
       return generation?.state === "active";
     });
+    this.mailbox.startPumps();
+  }
+
+  /**
+   * A transfer whose group holds no reference to it. `request` persists the
+   * record before the hold, so a crash between the two leaves one behind: its
+   * runner is gone, nothing will reconcile it through a hold, and the source
+   * would keep being handed its id by a repeat request. The group pointer
+   * decides its fate the same way it decides a held one's.
+   */
+  private async reconcileUnheldTransfers(): Promise<void> {
+    for (const record of this.transfers.list()) {
+      if (TERMINAL_TRANSFER_PHASES.has(record.phase)) continue;
+      const group = this.groups.get(record.groupId);
+      if (!group || group.status === "ended") continue;
+      if (group.hold) continue;
+      try {
+        // Every step of a transfer reads its own hold, so the reconciliation
+        // that ends this one needs the hold the crash lost. Re-establishing it
+        // is what the group already believed when it wrote the record; the
+        // rollback then clears it the ordinary way.
+        group.hold = {
+          kind: "transfer",
+          slotId: record.slotId,
+          transferId: record.id,
+          since: this.now().toISOString(),
+        };
+        await this.persist(group);
+        await this.transfers.reconcile(group, record.id);
+      } catch (error) {
+        await this.freeze(group, `transfer recovery failed: ${describe(error)}`);
+      }
+    }
   }
 
   /** A Peer the daemon died while creating either exists (activate) or does not (retire). */

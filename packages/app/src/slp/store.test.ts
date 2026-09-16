@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SlpGroupSummary } from "@getpaseo/protocol/messages";
-import { describeSlpMembership } from "./store";
+import { describeSlpMembership, findPendingLeadHandoff } from "./store";
 
 function summary(overrides: Partial<SlpGroupSummary> = {}): SlpGroupSummary {
   return {
@@ -88,5 +88,63 @@ describe("describeSlpMembership", () => {
       isCandidate: false,
     });
     expect(describeSlpMembership(group, "supervisor-1")?.transfer).toBeNull();
+  });
+});
+
+describe("a Lead handoff waiting on the Supervisor", () => {
+  const waiting = {
+    id: "tr_1",
+    slotId: "slot_l",
+    phase: "awaiting_supervisor",
+    sourceAgentId: "lead-2",
+    candidateAgentId: null,
+    reason: "context nearly exhausted",
+    control: "supervisor",
+    decision: null,
+    decidedAt: null,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  };
+
+  it("is found from the group, not from the agent the transfer names", () => {
+    const group = summary({ transfers: [waiting] });
+
+    expect(findPendingLeadHandoff(group)).toEqual({
+      transferId: "tr_1",
+      sourceAgentId: "lead-2",
+      reason: "context nearly exhausted",
+    });
+    // The Supervisor is neither source nor candidate, so its own transfer view
+    // stays empty; the pending decision is what it needs instead.
+    const supervisor = describeSlpMembership(group, "supervisor-1");
+    expect(supervisor?.transfer).toBeNull();
+    expect(supervisor?.pendingLeadHandoff).toEqual({
+      transferId: "tr_1",
+      sourceAgentId: "lead-2",
+      reason: "context nearly exhausted",
+    });
+  });
+
+  it("keeps the suspended source attached to its own transfer", () => {
+    const source = describeSlpMembership(summary({ transfers: [waiting] }), "lead-2");
+
+    expect(source?.transfer).toMatchObject({ phase: "awaiting_supervisor", isSource: true });
+    expect(source?.pendingLeadHandoff?.sourceAgentId).toBe("lead-2");
+  });
+
+  it("is absent from a daemon that predates the contract", () => {
+    // An older daemon sends no control mode; absent reads as automatic, the
+    // same way the daemon reads a record that has none.
+    const { control: _control, ...legacy } = waiting;
+    const group = summary({ transfers: [{ ...legacy, phase: "preparing" }] });
+
+    expect(findPendingLeadHandoff(group)).toBeNull();
+    expect(describeSlpMembership(group, "supervisor-1")?.pendingLeadHandoff).toBeNull();
+  });
+
+  it("ends when the decision moves the transfer on", () => {
+    for (const phase of ["continued", "preparing", "canceled"]) {
+      const group = summary({ transfers: [{ ...waiting, phase, decision: "continue" }] });
+      expect(findPendingLeadHandoff(group)).toBeNull();
+    }
   });
 });

@@ -1913,6 +1913,43 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }),
     );
     registerTool(
+      "slp_decide_lead_handoff",
+      {
+        title: "SLP decide Lead handoff",
+        description:
+          "Decide a Lead handoff that is waiting for you. `continue` lets the runtime build the successor and switch the slot; `cancel` leaves the current Lead in place with its context intact. This decides when the Lead's context is replaced, not whether its work is correct or finished.",
+        inputSchema: {
+          transferId: z.string().min(1).describe("The transfer named in the notice."),
+          decision: z
+            .enum(["continue", "cancel"])
+            .describe("continue: replace the context now. cancel: leave the Lead as it is."),
+          reason: z
+            .string()
+            .optional()
+            .describe("Short reason, shown to the Lead. Worth giving when you cancel."),
+        },
+        outputSchema: {
+          transferId: z.string(),
+          outcome: z.enum(["continue", "cancel"]),
+          phase: z.string(),
+        },
+      },
+      async ({
+        transferId,
+        decision,
+        reason,
+      }: {
+        transferId: string;
+        decision: "continue" | "cancel";
+        reason?: string;
+      }) => ({
+        content: [],
+        structuredContent: ensureValidJson(
+          await slp.decideLeadHandoff(slpCallerId, transferId, decision, reason),
+        ),
+      }),
+    );
+    registerTool(
       "slp_ready",
       {
         title: "SLP ready",
