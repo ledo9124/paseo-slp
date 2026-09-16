@@ -289,6 +289,13 @@ const SlpTransferBaseSchema = z.object({
   sourceGenerationId: z.string(),
   sourceAgentId: z.string(),
   reason: z.string(),
+  /**
+   * Who releases the replacement. Absent on records written before the
+   * supervised Lead contract, and read as `automatic`, so a restart never
+   * infers the pipeline from the group's current mode
+   * (docs/slp/supervisor-controlled-handoff.md#durable-state).
+   */
+  control: z.enum(["automatic", "supervisor"]).optional(),
   /** The current checkpoint's revision when the transfer was requested. */
   checkpointRevision: z.number().int().positive(),
   createdAt: z.string(),
@@ -313,6 +320,9 @@ export const SlpTransferSchema = z.discriminatedUnion("phase", [
   SlpTransferBaseSchema.extend({ phase: z.literal("requested") }),
   // The source's stop was acknowledged by the manager and its tail captured.
   SlpTransferStoppedSchema.extend({ phase: z.literal("stopped") }),
+  // Stopped, suspended and waiting: only a Supervisor decision moves it, and
+  // no candidate exists yet.
+  SlpTransferStoppedSchema.extend({ phase: z.literal("awaiting_supervisor") }),
   // A candidate generation exists in the group; its agent is being created or preparing.
   SlpTransferStoppedSchema.extend({
     phase: z.literal("preparing"),

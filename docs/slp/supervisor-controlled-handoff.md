@@ -1,6 +1,6 @@
 # Supervisor-controlled Lead handoff
 
-Status: target contract. No production code implements it. [Handoff](handoff.md) owns the transfer that exists today; this document owns the decision boundary a supervised Lead transfer must stop at, and changes nothing for Direct Lead, Peer or Supervisor self-handoff.
+Status: the boundary exists. A supervised Lead transfer stops at `awaiting_supervisor` with no candidate, and its source is refused product turns; the decision that releases it is not built yet, so such a transfer stays pending until one is. Everything from the decision tool onward is target contract. [Handoff](handoff.md) owns the transfer that exists today, which is still the whole pipeline for Direct Lead, Peer and Supervisor self-handoff.
 
 ## Outcome
 
@@ -110,6 +110,8 @@ When `awaiting_supervisor` is durable, the runtime enqueues a control notice to 
 
 A cancel enqueues a source-facing notice before the hold lifts: the handoff was cancelled, the source is still the active Lead, the reason if one was given, product admission is restored, and queued input needs reconciling before work resumes. It must not read as a Human instruction.
 
+Durable is not delivered. Enqueuing makes a notice durable; the dispatch loop retries a failing send a bounded number of times and then leaves it `queued` for the next wake-up ([admission](architecture.md#admission)). Nothing here may read "the notice is durable" as "the Supervisor has it" — the decision stays pending, and the projection, not the notice, is what makes it visible.
+
 Mailbox recovery turns `dispatching` into `uncertain` and never replays it, and retrying under the same stable ID returns the existing record rather than delivering anything. So an uncertain primary notice would leave a pending decision invisible forever. Two things prevent that: the pending decision is visible in the group projection, and recovery enqueues a separately identified notice that says it may duplicate the first. Duplicate wake-ups are harmless because the decision is idempotent.
 
 ```text
@@ -121,9 +123,11 @@ handoff_waiting_recovery_<transferId>_<attempt>
 
 A runtime control response is not a product report. The runtime must know a turn's origin; do not ask the prompt text not to be reported.
 
-Today `slp/reports.ts` watches `running -> idle`, takes the last assistant message and relays it. `AgentManagerEvent` carries an agent snapshot and no turn origin, and `admitForegroundTurn` returns no turn id to correlate against, so provenance needs a minimal correlation contract rather than a guess from the last message. The mailbox already passes the stable mail ID as `clientMessageId`, which is the correlation to carry through to turn completion.
+Provenance is claimed, not inferred, and it needs nothing from the agent manager. Admission takes the run slot synchronously and answers `started` only when it made the claim, so marking the agent before the call is enough to know the turn that answer describes: there is no turn id to correlate and no window for another writer to take the claim in between. Any other answer releases the mark. `busy` started nothing, and `steered` merged the message into a turn somebody else owns, whose final message is still theirs to report. `slp/control-turns.ts` holds the marks; settle them however the turn ends, or a failed control turn silences the next ordinary one.
 
-The initial scope is not a taxonomy. Relaying the Lead's final message stays the default, and only origins the runtime knows are suppressed: handoff activation, handoff cancel and resume control, and handoff recovery control. Product turns, Human turns, Supervisor requests and Peer handback processing still report. Suppression must not swallow the next ordinary report.
+An earlier reading of this problem concluded that `AgentManagerEvent` carrying no turn origin meant the implementation had to add a correlation contract to `AgentManager`. It does not, and adding one would have broken that suite's admission assertions for nothing.
+
+The scope is a set of mail kinds, not a taxonomy. Relaying the Lead's final message stays the default; only `activation` is control today, and cancel, resume and recovery notices join it by being added to that set. `interrupted` stays out: it reports a Peer's lost turn, and the Lead's answer to it is project work. Product turns, Human turns, Supervisor requests and Peer handback processing still report, and suppression must not swallow the next ordinary report.
 
 An earlier attempt suppressed a report when the Lead had already sent the Supervisor mail during the turn. That heuristic was removed deliberately in `76d13f62b`, because a Lead that reports progress still owes a final message. Origin correlation is a different basis and must not reintroduce it.
 

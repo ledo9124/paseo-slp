@@ -93,6 +93,17 @@ type TransferIn<P extends SlpTransferRecord["phase"]> = Extract<SlpTransferRecor
  * commit; this journal is the manifest boot recovery reconciles against it.
  * Design: docs/slp/handoff.md.
  */
+/**
+ * While the journal sits in one of these and the pointer has not moved, the
+ * source keeps the slot but may not start product work on it.
+ */
+const SUSPENDED_PHASES: ReadonlySet<string> = new Set([
+  "stopped",
+  "awaiting_supervisor",
+  "preparing",
+  "ready",
+]);
+
 export class SlpTransfers {
   private readonly store: SlpRecordStore<SlpTransferRecord>;
   private readonly host: SlpTransferHost;
@@ -112,6 +123,20 @@ export class SlpTransfers {
   forCandidate(agentId: string): SlpTransferRecord | null {
     for (const record of this.records.values()) {
       if (candidateOf(record)?.agentId === agentId) return record;
+    }
+    return null;
+  }
+
+  /**
+   * The Supervisor-controlled transfer that suspends this agent, if any. The
+   * answer comes from the journal, so it is the same after a restart with
+   * nothing extra persisted, and it ends the moment the pointer moves: from
+   * `switched` on, the source is retired and the retirement rule answers.
+   */
+  suspending(agentId: string): SlpTransferRecord | null {
+    for (const record of this.records.values()) {
+      if (record.sourceAgentId !== agentId || record.control !== "supervisor") continue;
+      if (SUSPENDED_PHASES.has(record.phase)) return record;
     }
     return null;
   }
@@ -136,6 +161,7 @@ export class SlpTransfers {
     source: SlpGenerationRecord;
     checkpoint: SlpCheckpointRecord;
     reason: string;
+    control: "automatic" | "supervisor";
   }): Promise<SlpTransferRecord> {
     const { group, slot, source } = input;
     if (group.status !== "ready" || group.hold) {
@@ -152,6 +178,7 @@ export class SlpTransfers {
       sourceGenerationId: source.id,
       sourceAgentId: source.agentId,
       reason: input.reason,
+      control: input.control,
       checkpointRevision: input.checkpoint.revision,
       phase: "requested",
       createdAt: at,
@@ -199,6 +226,13 @@ export class SlpTransfers {
       return;
     }
     if (slot.activeGenerationId === record.sourceGenerationId) {
+      if (record.control === "supervisor" && record.phase !== "requested") {
+        // Pending on a decision, not on a runner. The hold and the suspension
+        // stay exactly as they were; a restart is not an answer to the
+        // Supervisor's question, and it must not create a candidate.
+        if (record.phase === "stopped") void this.run(record.id);
+        return;
+      }
       await this.abort(record, "daemon restarted before the active-generation switch");
       return;
     }
@@ -226,7 +260,15 @@ export class SlpTransfers {
     try {
       let record = this.require(id);
       if (record.phase === "requested") record = await this.stop(record);
-      if (record.phase === "stopped") record = await this.prepare(record);
+      if (record.phase === "stopped") {
+        // The source is stopped and suspended. Only a Supervisor decision
+        // releases the replacement, and until then no candidate exists.
+        if (record.control === "supervisor") {
+          await this.persist({ ...record, phase: "awaiting_supervisor" });
+          return;
+        }
+        record = await this.prepare(record);
+      }
       if (record.phase === "preparing") record = await this.awaitReady(record);
       if (record.phase === "ready") record = await this.switch(record);
       if (record.phase === "switched") await this.complete(record);

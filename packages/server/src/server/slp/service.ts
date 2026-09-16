@@ -23,6 +23,7 @@ import { withSlpProviderOptions } from "./launch.js";
 import {
   SlpDelegationUnavailableError,
   SlpGenerationRetiredError,
+  SlpSourceSuspendedError,
   SlpHandoffDisabledError,
   SlpGroupFrozenError,
   SlpGroupHeldError,
@@ -278,8 +279,13 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     this.agentManager.setAdmissionGate({
       assertTurnAllowed: (agentId) => {
         const group = this.getGroupForAgent(agentId);
-        if (group && membershipOf(group, agentId).generation.state === "retired") {
+        if (!group) return;
+        if (membershipOf(group, agentId).generation.state === "retired") {
           throw new SlpGenerationRetiredError(agentId, group.id);
+        }
+        const suspending = this.transfers.suspending(agentId);
+        if (suspending) {
+          throw new SlpSourceSuspendedError(agentId, group.id, suspending.id, suspending.phase);
         }
       },
       executionPolicyFor: (agentId) => this.executionPolicyFor(agentId),
@@ -549,6 +555,10 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
         source: generation,
         checkpoint,
         reason,
+        // Only the Lead of a supervised group answers to the Supervisor. A
+        // Peer replacement is the Lead's own topology, and a Direct Lead has
+        // no Supervisor to ask.
+        control: group.mode === "supervised" && slot.role === "lead" ? "supervisor" : "automatic",
       });
       return { transferId: transfer.id };
     });

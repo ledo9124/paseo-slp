@@ -64,8 +64,8 @@ The contract is in [Supervisor-controlled handoff](supervisor-controlled-handoff
 | Slice | Deliverable                                                              | Depends on | State       |
 | ----- | ------------------------------------------------------------------------ | ---------- | ----------- |
 | 1     | Mailbox delivery reliability                                             | —          | Done        |
-| 2     | Report provenance: runtime control turns stop becoming Lead reports      | 1          | Not started |
-| 3     | `control` discriminator, v2 phases, typed source suspension              | 1          | Not started |
+| 2     | Report provenance: runtime control turns stop becoming Lead reports      | 1          | Done        |
+| 3     | `control` discriminator, `awaiting_supervisor`, typed source suspension  | 1          | Done        |
 | 4     | `slp_decide_lead_handoff`, execution-time authority, continue and cancel | 3          | Not started |
 | 5     | Staged recovery and marked recovery notices                              | 1, 3, 4    | Not started |
 | 6     | Projection, banners and docs                                             | 3–5        | Not started |
@@ -81,7 +81,11 @@ Slice 1 was the stated dependency for every durable Supervisor and source notice
 
 The dominant cause was a single-attempt `fs.rename` in `writeFileAtomic`, which Windows denies while any process still holds the destination. That failure rejected the dispatch loop, and the loop logged it and returned, leaving the message queued with nothing left to deliver it — so a durable write failure read as silently abandoned work. Both are fixed: the rename retries, and the loop retries a dispatch that fails before admission and defers rather than abandons. Do not read a flaky SLP delivery assertion as a mailbox logic fault without separating the two.
 
-Slice 2 must not reintroduce the removed suppression heuristic; see [report provenance](supervisor-controlled-handoff.md#report-provenance). Its test matrix needs the `steered` admission answer, which the mailbox treats as accepted, so a control message merged into a running product turn does not suppress that turn's real report.
+Slice 3 adds only the phase a decision can be made from. `continued`, `canceling` and `canceled` land with the tool that writes them, rather than as schema nothing can reach.
+
+Until Slice 4 lands, a supervised Lead that requests a handoff stops and stays stopped: no tool releases it, and nothing tells the Supervisor it is waiting. Do not release a build between the two. Slice 3 also defers the coverage that a completed supervised transfer notifies the Supervisor, because a supervised Lead transfer can no longer reach `completed`; Slice 4 restores it.
+
+Assert terminal state, not state the pipeline passes through. The dispatch loop moves between `queued` and `dispatching` on its way to a `busy` answer, and journal phases advance under a runner, so a test that pins an intermediate value fails under load and gets blamed on whatever change is in the tree. This cost a debugging session already; see the handback assertion in `transfer.test.ts`.
 
 ## Probes
 

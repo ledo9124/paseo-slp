@@ -29,6 +29,26 @@ export class SlpInitializationConflictError extends Error {
   }
 }
 
+/**
+ * The source of a Supervisor-controlled handoff tried to start product work
+ * while its replacement waits for a decision. Named rather than reported as
+ * `busy` or `retired`: the slot is neither, and the caller needs to know a
+ * decision is outstanding and which transfer it belongs to.
+ */
+export class SlpSourceSuspendedError extends Error {
+  constructor(
+    public readonly agentId: string,
+    public readonly groupId: string,
+    public readonly transferId: string,
+    public readonly phase: string,
+  ) {
+    super(
+      `SLP agent ${agentId} is suspended for handoff ${transferId} (${phase}) in group ${groupId}`,
+    );
+    this.name = "SlpSourceSuspendedError";
+  }
+}
+
 /** The group is frozen; automatic work on it is blocked until it is repaired. */
 export class SlpGroupFrozenError extends Error {
   constructor(
