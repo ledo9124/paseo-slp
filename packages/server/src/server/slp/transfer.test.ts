@@ -331,7 +331,10 @@ describe("SLP same-role handoff", () => {
     expect(candidate.startPrompts).toHaveLength(2);
     expect(candidate.startPrompts[1]).toContain(`SLP activation: transfer ${transferId}`);
     expect(candidate.startPrompts[1]).toContain("active generation 2");
-    expect(handbackMail(daemon)[0]?.state).toBe("queued");
+    // Undelivered, which is the claim; not `queued` exactly. The dispatch
+    // loop moves straight on to the handback and a busy successor returns it,
+    // so it passes through `dispatching` on the way back to the queue.
+    expect(handbackMail(daemon)[0]?.state).not.toBe("accepted");
     candidate.release();
     await untilSettled(
       () => handbackMail(daemon)[0]?.state === "accepted",
