@@ -1680,9 +1680,7 @@ export class DaemonClient {
     // and make a pending reconnect immediate. RPC callers should not have to
     // race the reconnect backoff window after a transient disconnect.
     const canReconnect =
-      status === "disconnected" &&
-      this.shouldReconnect &&
-      this.config.reconnect?.enabled !== false;
+      status === "disconnected" && this.shouldReconnect && this.config.reconnect?.enabled !== false;
     if (status === "connecting" || canReconnect) {
       if (canReconnect) {
         this.ensureConnected();
