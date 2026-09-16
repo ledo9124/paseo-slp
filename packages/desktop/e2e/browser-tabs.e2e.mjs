@@ -240,18 +240,23 @@ async function callBrowserTool(client, name, args = {}) {
   return mcpPayload(await client.callTool({ name, args }), name);
 }
 
-async function callBrowserToolUntilReady(client, name, args = {}) {
+async function callBrowserToolResponseUntilReady(client, name, args = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const result = await client.callTool({ name, args });
     const payload = result.structuredContent;
-    if (payload?.ok === true) return payload.result;
+    if (payload?.ok === true) return result;
     if (payload?.ok !== false || payload.error?.retryable !== true) {
-      return mcpPayload(result, name);
+      mcpPayload(result, name);
+      return result;
     }
     await delay(100);
   }
   throw new Error(`${name} remained unavailable for ${timeoutMs}ms`);
+}
+
+async function callBrowserToolUntilReady(client, name, args = {}) {
+  return mcpPayload(await callBrowserToolResponseUntilReady(client, name, args), name);
 }
 
 async function waitForGuestSelector(client, browserId) {
@@ -545,8 +550,11 @@ async function verifyHiddenBrowserScreenshots({
       browserId,
       function: "() => { document.body.style.background = 'rgb(0,255,0)'; }",
     });
-    const response = await client.callTool({ name: "browser_screenshot", args: { browserId } });
-    mcpPayload(response, "browser_screenshot");
+    const response = await callBrowserToolResponseUntilReady(
+      client,
+      "browser_screenshot",
+      { browserId },
+    );
     const screenshot = response.content.find((item) => item.type === "image");
     assert(screenshot, "browser_screenshot returned no image");
     fs.writeFileSync(
