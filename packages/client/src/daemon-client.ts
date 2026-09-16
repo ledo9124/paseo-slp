@@ -1676,8 +1676,17 @@ export class DaemonClient {
       return Promise.resolve();
     }
 
-    // If connecting, queue the message to be sent once connected
-    if (status === "connecting") {
+    // If connecting or waiting for an automatic reconnect, queue the message
+    // and make a pending reconnect immediate. RPC callers should not have to
+    // race the reconnect backoff window after a transient disconnect.
+    const canReconnect =
+      status === "disconnected" &&
+      this.shouldReconnect &&
+      this.config.reconnect?.enabled !== false;
+    if (status === "connecting" || canReconnect) {
+      if (canReconnect) {
+        this.ensureConnected();
+      }
       return new Promise((resolve, reject) => {
         const timeoutHandle = setTimeout(() => {
           // Remove from queue
