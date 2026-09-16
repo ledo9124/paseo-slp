@@ -550,11 +550,9 @@ async function verifyHiddenBrowserScreenshots({
       browserId,
       function: "() => { document.body.style.background = 'rgb(0,255,0)'; }",
     });
-    const response = await callBrowserToolResponseUntilReady(
-      client,
-      "browser_screenshot",
-      { browserId },
-    );
+    const response = await callBrowserToolResponseUntilReady(client, "browser_screenshot", {
+      browserId,
+    });
     const screenshot = response.content.find((item) => item.type === "image");
     assert(screenshot, "browser_screenshot returned no image");
     fs.writeFileSync(
