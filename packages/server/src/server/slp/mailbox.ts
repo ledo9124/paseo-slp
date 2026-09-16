@@ -27,6 +27,20 @@ export interface SlpMailboxOptions {
   onChange?: (groupId: string) => void;
 }
 
+/**
+ * How many times one message may fail before admission is reached before the
+ * loop stops working the slot. A failure there leaves nothing durable, so the
+ * message stays `queued`, which is already the honest record of a send that
+ * has not been delivered; giving up defers it to the next wake-up or to the
+ * pump every restart performs, rather than retrying forever behind a log.
+ */
+export const SLP_DISPATCH_ATTEMPTS = 5;
+const SLP_DISPATCH_RETRY_STEP_MS = 10;
+
+function pause(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
 export interface SlpMailInput {
   /** Stable message id; an existing id returns the existing record instead of a duplicate. */
   id?: string;
@@ -193,6 +207,7 @@ export class SlpMailbox {
   }
 
   private async drain(groupId: string, slotId: string): Promise<void> {
+    let failures = 0;
     for (;;) {
       if (this.closing) return;
       const next = this.nextQueued(groupId, slotId);
@@ -209,7 +224,22 @@ export class SlpMailbox {
       const boundary = nextTurnBoundary(this.agentManager, destination.agentId);
       try {
         const outcome = await this.dispatch(next, destination);
+        failures = 0;
         if (outcome === "busy") await Promise.race([boundary.reached, this.closed]);
+      } catch (error) {
+        failures += 1;
+        if (failures >= SLP_DISPATCH_ATTEMPTS) {
+          this.logger.error(
+            { mailId: next.id, groupId, slotId, failures, err: error },
+            "SLP mail delivery deferred to the next wake-up",
+          );
+          return;
+        }
+        this.logger.warn(
+          { mailId: next.id, groupId, slotId, failures, err: error },
+          "SLP mail dispatch failed before admission; retrying",
+        );
+        await Promise.race([pause(SLP_DISPATCH_RETRY_STEP_MS * failures), this.closed]);
       } finally {
         boundary.stop();
       }

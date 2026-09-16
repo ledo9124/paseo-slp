@@ -8,6 +8,7 @@ import type { ManagedAgent } from "../agent/agent-manager.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import { createStub } from "../test-utils/class-mocks.js";
 import {
+  SLP_DISPATCH_ATTEMPTS,
   SlpMailbox,
   type SlpMailboxAgentManager,
   type SlpMailInput,
@@ -24,8 +25,8 @@ interface Harness {
   mailbox: SlpMailbox;
   /** Mail ids in the order admission received them. */
   admitted: string[];
-  /** Resolves once admission has been asked to take `index + 1` messages. */
-  admissionReached: (count: number) => Promise<void>;
+  /** Resolves once the condition holds. */
+  until: (done: () => boolean) => Promise<void>;
   /** Resolves once the record is durable in the given state. */
   reaches: (mailId: string, state: string) => Promise<void>;
   releaseAdmission: () => void;
@@ -54,6 +55,8 @@ describe("SLP mail dispatch loop", () => {
   function createMailbox(options: {
     resolveSlot: () => SlpSlotDestination;
     holdAdmission?: boolean;
+    /** Runs before every dispatch; throwing stands in for a failure to load the agent. */
+    beforeDispatch?: () => void;
   }): Harness {
     const admitted: string[] = [];
     const waiters: Array<{ done: () => boolean; resolve: () => void }> = [];
@@ -63,11 +66,16 @@ describe("SLP mail dispatch loop", () => {
         else waiters.push(waiter);
       }
     };
-    const until = (done: () => boolean): Promise<void> =>
-      new Promise<void>((resolve) => {
+    const until = (done: () => boolean): Promise<void> => {
+      const waiting = new Promise<void>((resolve) => {
         waiters.push({ done, resolve });
         settle();
       });
+      // A dispatch that throws changes nothing durable, so a condition about
+      // retries has no change to ride on; every other wait settles on one.
+      const tick = setInterval(settle, 1);
+      return waiting.finally(() => clearInterval(tick));
+    };
     let releaseAdmission: () => void = () => undefined;
     const admissionReleased = new Promise<void>((resolve) => {
       releaseAdmission = resolve;
@@ -77,7 +85,10 @@ describe("SLP mail dispatch loop", () => {
       logger: createTestLogger(),
       agentManager: createStub<SlpMailboxAgentManager>({
         waitForAgentClose: async () => undefined,
-        getAgent: () => createStub<ManagedAgent>({}),
+        getAgent: () => {
+          options.beforeDispatch?.();
+          return createStub<ManagedAgent>({});
+        },
         subscribe: () => () => undefined,
         admitForegroundTurn: async (
           _agentId: string,
@@ -99,7 +110,7 @@ describe("SLP mail dispatch loop", () => {
     return {
       mailbox,
       admitted,
-      admissionReached: (count) => until(() => admitted.length >= count),
+      until,
       reaches: (mailId, state) => until(() => mailbox.get(mailId)?.state === state),
       releaseAdmission,
     };
@@ -129,7 +140,7 @@ describe("SLP mail dispatch loop", () => {
     const first = await harness.mailbox.enqueue(message("first"));
     // Pins the loop inside its first dispatch, so the second message is
     // certain to be queued before the loop looks for more work.
-    await harness.admissionReached(1);
+    await harness.until(() => harness.admitted.length === 1);
     const second = await harness.mailbox.enqueue(message("second"));
     harness.releaseAdmission();
 
@@ -156,5 +167,46 @@ describe("SLP mail dispatch loop", () => {
     expect(calls).toBe(1);
     expect(harness.admitted).toEqual([]);
     expect(harness.mailbox.get(queued.id)?.state).toBe("queued");
+  });
+
+  test("a dispatch that fails before admission is retried instead of stranding the message", async () => {
+    let loads = 0;
+    const harness = createMailbox({
+      resolveSlot: () => ACTIVE,
+      beforeDispatch: () => {
+        loads += 1;
+        if (loads <= 2) throw new Error("the agent could not be loaded");
+      },
+    });
+
+    const queued = await harness.mailbox.enqueue(message("after a transient failure"));
+    await harness.reaches(queued.id, "accepted");
+
+    expect(loads).toBe(3);
+    expect(harness.admitted).toEqual([queued.id]);
+  });
+
+  test("a dispatch that keeps failing defers delivery instead of abandoning it", async () => {
+    let loads = 0;
+    const harness = createMailbox({
+      resolveSlot: () => ACTIVE,
+      beforeDispatch: () => {
+        loads += 1;
+        if (loads <= SLP_DISPATCH_ATTEMPTS) throw new Error("the agent could not be loaded");
+      },
+    });
+
+    const queued = await harness.mailbox.enqueue(message("while the agent cannot load"));
+    await harness.until(() => loads >= SLP_DISPATCH_ATTEMPTS);
+
+    // The loop stops rather than retrying forever, and the message stays the
+    // durable record of a send that has not been delivered.
+    expect(harness.admitted).toEqual([]);
+    expect(harness.mailbox.get(queued.id)?.state).toBe("queued");
+
+    // The next wake-up, or the pump every restart performs, picks it up again.
+    harness.mailbox.pump(GROUP, SLOT);
+    await harness.reaches(queued.id, "accepted");
+    expect(harness.admitted).toEqual([queued.id]);
   });
 });
