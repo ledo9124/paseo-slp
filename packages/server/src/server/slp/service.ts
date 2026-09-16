@@ -17,6 +17,7 @@ import {
   SLP_PREPARATION_TOOLS,
   type SlpRelation,
 } from "./authority.js";
+import { SlpControlTurns } from "./control-turns.js";
 import { SlpCheckpointStore } from "./checkpoints.js";
 import { withSlpProviderOptions } from "./launch.js";
 import {
@@ -207,6 +208,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     this.isHandoffEnabled = options.isHandoffEnabled;
     this.instructionsDir = options.instructionsDir ?? resolveBundledSlpRolesDir();
     this.now = options.now ?? (() => new Date());
+    const controlTurns = new SlpControlTurns();
     this.mailbox = new SlpMailbox({
       directory: `${options.paseoHome}/slp/mail`,
       logger: this.logger,
@@ -215,6 +217,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       resolveSlot: (groupId, slotId) => this.resolveSlot(groupId, slotId),
       now: this.now,
       onChange: (groupId) => this.changed(groupId),
+      controlTurns,
     });
     this.handbacks = new SlpHandbackRegister({
       directory: `${options.paseoHome}/slp/handbacks`,
@@ -229,6 +232,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       agentManager: options.agentManager,
       mailbox: this.mailbox,
       resolveLead: (agentId) => this.leadReportTarget(agentId),
+      controlTurns,
     });
     this.leadReports.start();
     this.checkpoints = new SlpCheckpointStore({

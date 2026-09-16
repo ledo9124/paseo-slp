@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { createPaseoToolCatalog } from "../agent/tools/paseo-tools.js";
+import { asInternals } from "../test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { archiveByScope, type ArchiveDependencies } from "../workspace-archive-service.js";
@@ -208,6 +209,51 @@ describe("SlpService", () => {
     const second = await startDaemon();
     expect(await second.service.initializeGroup(input({ mode: "supervised" }))).toEqual(group);
     expect(second.client.sessions).toHaveLength(0);
+  });
+
+  test("supervised mode: the Lead's answer to a runtime control notice is not a report", async () => {
+    const daemon = await startDaemon({ releaseText: "Understood, I am the active Lead." });
+    const group = await daemon.service.initializeGroup(input({ mode: "supervised" }));
+    const supervisorId = activeAgentId(group, group.supervisorSlotId);
+    const leadId = leadAgentId(group);
+    sessionOf(daemon, supervisorId).release();
+    await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+    const reports = () => daemon.service.listMail().filter((mail) => mail.kind === "report");
+
+    // The runtime's own activation notice, the mail a completed transfer sends
+    // its successor. Answering it is not Lead telling Supervisor anything.
+    const activation = await daemon.service.deliverMail({
+      groupId: group.id,
+      slotId: group.leadSlotId,
+      fromSlotId: null,
+      kind: "activation",
+      prompt: "You are now the active Lead for this slot.",
+    });
+    await untilSettled(
+      () => mailState(daemon, activation.id) === "accepted",
+      "the activation notice reached the Lead",
+    );
+    sessionOf(daemon, leadId).release();
+    await daemon.manager.waitForAgentEvent(leadId, { waitForActive: true });
+
+    // The next ordinary turn does report, and its report is the only one. A
+    // report for the activation turn would have been queued before this one,
+    // so the first report to exist decides the assertion either way.
+    asInternals<{ releaseText: string }>(sessionOf(daemon, leadId)).releaseText =
+      "Analysis done: three phases.";
+    expect((await daemon.manager.admitForegroundTurn(leadId, "Analyze the project")).status).toBe(
+      "started",
+    );
+    await daemon.manager.waitForAgentRunStart(leadId);
+    sessionOf(daemon, leadId).release();
+    await untilSettled(() => reports().length > 0, "the ordinary turn produced a report");
+
+    expect(reports()).toHaveLength(1);
+    expect(JSON.stringify(reports()[0]!.prompt)).toContain("Analysis done: three phases.");
+    expect(reports()[0]).toMatchObject({
+      slotId: group.supervisorSlotId,
+      fromSlotId: group.leadSlotId,
+    });
   });
 
   test("supervised mode: the final Lead message reaches a busy Supervisor after a progress message", async () => {

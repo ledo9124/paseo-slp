@@ -4,6 +4,7 @@ import { ensureAgentLoaded, type AgentLoaderManager } from "../agent/agent-loadi
 import type { AgentManager } from "../agent/agent-manager.js";
 import type { AgentPromptInput } from "../agent/agent-sdk-types.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
+import { isControlMail, type SlpControlTurns } from "./control-turns.js";
 import { newSlpId, SlpMailSchema, SlpRecordStore, type SlpMailRecord } from "./store.js";
 import { nextTurnBoundary } from "./turn-boundary.js";
 
@@ -23,6 +24,8 @@ export interface SlpMailboxOptions {
   agentStorage: AgentStorage;
   resolveSlot: (groupId: string, slotId: string) => SlpSlotDestination;
   now: () => Date;
+  /** Records which turns the runtime started for its own mail, so they are not reported. */
+  controlTurns: SlpControlTurns;
   /** Called after every durable mail-state change; the service fans it out to clients. */
   onChange?: (groupId: string) => void;
 }
@@ -64,6 +67,7 @@ export class SlpMailbox {
   private readonly agentStorage: AgentStorage;
   private readonly resolveSlot: SlpMailboxOptions["resolveSlot"];
   private readonly now: () => Date;
+  private readonly controlTurns: SlpControlTurns;
   private readonly onChange: (groupId: string) => void;
   private readonly records = new Map<string, SlpMailRecord>();
   /** One dispatch loop per slot; `close` waits on these. */
@@ -89,6 +93,7 @@ export class SlpMailbox {
     this.agentStorage = options.agentStorage;
     this.resolveSlot = options.resolveSlot;
     this.now = options.now;
+    this.controlTurns = options.controlTurns;
     this.onChange = options.onChange ?? (() => undefined);
     this.closed = new Promise<void>((resolve) => {
       this.announceClosed = resolve;
@@ -279,17 +284,24 @@ export class SlpMailbox {
       at: this.now().toISOString(),
     };
     await this.persist({ ...record, state: "dispatching", attempt });
+    // Claimed before the call, not after: admission answers `started` only
+    // when it took the run slot in that same tick, so the turn it reports is
+    // this message's with nothing able to start one in between.
+    const control = isControlMail(record.kind);
+    if (control) this.controlTurns.claim(destination.agentId);
     let admission: Awaited<ReturnType<AgentManager["admitForegroundTurn"]>>;
     try {
       admission = await this.agentManager.admitForegroundTurn(destination.agentId, record.prompt, {
         clientMessageId: record.id,
       });
     } catch (error) {
+      if (control) this.controlTurns.release(destination.agentId);
       const reason = error instanceof Error ? error.message : String(error);
       await this.persist({ ...record, state: "uncertain", attempt, reason });
       this.logger.error({ mailId: record.id, err: error }, "SLP mail dispatch errored");
       return "uncertain";
     }
+    if (control && admission.status !== "started") this.controlTurns.release(destination.agentId);
     if (admission.status === "busy") {
       await this.persist({ ...record, state: "queued" });
       return "busy";

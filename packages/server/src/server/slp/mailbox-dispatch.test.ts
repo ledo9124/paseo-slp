@@ -7,6 +7,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { ManagedAgent } from "../agent/agent-manager.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import { createStub } from "../test-utils/class-mocks.js";
+import { SlpControlTurns } from "./control-turns.js";
 import {
   SLP_DISPATCH_ATTEMPTS,
   SlpMailbox,
@@ -23,6 +24,7 @@ const HELD: SlpSlotDestination = { status: "held", reason: "transfer" };
 
 interface Harness {
   mailbox: SlpMailbox;
+  controlTurns: SlpControlTurns;
   /** Mail ids in the order admission received them. */
   admitted: string[];
   /** Resolves once the condition holds. */
@@ -57,8 +59,11 @@ describe("SLP mail dispatch loop", () => {
     holdAdmission?: boolean;
     /** Runs before every dispatch; throwing stands in for a failure to load the agent. */
     beforeDispatch?: () => void;
+    /** What admission answers; defaults to taking the turn. */
+    admit?: () => { status: "started" | "busy" | "steered" };
   }): Harness {
     const admitted: string[] = [];
+    const controlTurns = new SlpControlTurns();
     const waiters: Array<{ done: () => boolean; resolve: () => void }> = [];
     const settle = (): void => {
       for (const waiter of waiters.splice(0)) {
@@ -98,17 +103,19 @@ describe("SLP mail dispatch loop", () => {
           admitted.push(admission?.clientMessageId ?? "");
           settle();
           if (options.holdAdmission && admitted.length === 1) await admissionReleased;
-          return { status: "started" as const };
+          return options.admit?.() ?? { status: "started" as const };
         },
       }),
       agentStorage: createStub<AgentStorage>({}),
       resolveSlot: options.resolveSlot,
       now: () => new Date("2026-09-16T00:00:00.000Z"),
       onChange: () => settle(),
+      controlTurns,
     });
     open.push(mailbox);
     return {
       mailbox,
+      controlTurns,
       admitted,
       until,
       reaches: (mailId, state) => until(() => mailbox.get(mailId)?.state === state),
@@ -118,6 +125,16 @@ describe("SLP mail dispatch loop", () => {
 
   function message(text: string): SlpMailInput {
     return { groupId: GROUP, slotId: SLOT, fromSlotId: null, kind: "message", prompt: text };
+  }
+
+  function activation(): SlpMailInput {
+    return {
+      groupId: GROUP,
+      slotId: SLOT,
+      fromSlotId: null,
+      kind: "activation",
+      prompt: "You are now the active Lead for this slot.",
+    };
   }
 
   test("a wake-up that arrives while the loop is exiting is not lost", async () => {
@@ -167,6 +184,39 @@ describe("SLP mail dispatch loop", () => {
     expect(calls).toBe(1);
     expect(harness.admitted).toEqual([]);
     expect(harness.mailbox.get(queued.id)?.state).toBe("queued");
+  });
+
+  test("the runtime claims the turn its own control message starts", async () => {
+    const harness = createMailbox({ resolveSlot: () => ACTIVE });
+
+    const notice = await harness.mailbox.enqueue(activation());
+    await harness.reaches(notice.id, "accepted");
+
+    expect(harness.controlTurns.settle(ACTIVE.agentId)).toBe(true);
+  });
+
+  test("a control message merged into someone else's turn leaves that turn theirs", async () => {
+    // The mailbox never asks to steer, so this is admission answering for a
+    // turn the mailbox did not start. Suppressing its report would swallow the
+    // final message of whoever does own it.
+    const harness = createMailbox({
+      resolveSlot: () => ACTIVE,
+      admit: () => ({ status: "steered" }),
+    });
+
+    const notice = await harness.mailbox.enqueue(activation());
+    await harness.reaches(notice.id, "accepted");
+
+    expect(harness.controlTurns.settle(ACTIVE.agentId)).toBe(false);
+  });
+
+  test("an ordinary message never claims the turn it starts", async () => {
+    const harness = createMailbox({ resolveSlot: () => ACTIVE });
+
+    const queued = await harness.mailbox.enqueue(message("Review the trace"));
+    await harness.reaches(queued.id, "accepted");
+
+    expect(harness.controlTurns.settle(ACTIVE.agentId)).toBe(false);
   });
 
   test("a dispatch that fails before admission is retried instead of stranding the message", async () => {

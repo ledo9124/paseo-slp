@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 
 import type { AgentManager } from "../agent/agent-manager.js";
 import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
+import type { SlpControlTurns } from "./control-turns.js";
 import type { SlpMailbox } from "./mailbox.js";
 
 export interface SlpLeadReportTarget {
@@ -16,6 +17,8 @@ export interface SlpLeadReportsOptions {
   mailbox: Pick<SlpMailbox, "enqueue">;
   /** The supervised group whose active Lead this agent is, else null. */
   resolveLead: (agentId: string) => SlpLeadReportTarget | null;
+  /** Turns the runtime started for its own mail; their answers are not reports. */
+  controlTurns: SlpControlTurns;
 }
 
 /**
@@ -23,12 +26,18 @@ export interface SlpLeadReportsOptions {
  * Its last message is delivered to the Supervisor slot as a report even if
  * the Lead sent progress earlier in the turn. The Lead needs no extra tool
  * call; see docs/slp/architecture.md#message-routing-and-delivery.
+ *
+ * A turn the runtime itself started is the exception, and the runtime knows
+ * which those are because it claimed them at admission. Do not infer it from
+ * the message: an earlier rule read "the Lead already sent mail this turn" as
+ * "already reported" and swallowed real final messages.
  */
 export class SlpLeadReports {
   private readonly logger: Logger;
   private readonly agentManager: SlpLeadReportsOptions["agentManager"];
   private readonly mailbox: SlpLeadReportsOptions["mailbox"];
   private readonly resolveLead: SlpLeadReportsOptions["resolveLead"];
+  private readonly controlTurns: SlpControlTurns;
   private readonly turns = new Set<string>();
   /** Relays already started; `dispose` awaits them so no mail lands after shutdown. */
   private readonly pending = new Set<Promise<void>>();
@@ -39,6 +48,7 @@ export class SlpLeadReports {
     this.agentManager = options.agentManager;
     this.mailbox = options.mailbox;
     this.resolveLead = options.resolveLead;
+    this.controlTurns = options.controlTurns;
   }
 
   start(): void {
@@ -55,7 +65,10 @@ export class SlpLeadReports {
           return;
         }
         if (!this.turns.delete(agentId)) return;
-        if (lifecycle === "idle") this.track(this.report(agentId));
+        // Settled however the turn ended, so a failed control turn does not
+        // leave its claim to silence the next ordinary one.
+        const runtimeControl = this.controlTurns.settle(agentId);
+        if (lifecycle === "idle" && !runtimeControl) this.track(this.report(agentId));
       },
       { replayState: false },
     );
