@@ -1,6 +1,6 @@
 # Supervisor-controlled Lead handoff
 
-Status: target contract. No production code implements it. [Handoff](handoff.md) owns the transfer that exists today; this document owns the decision boundary a supervised Lead transfer must stop at, and changes nothing for Direct Lead, Peer or Supervisor self-handoff.
+Status: this is how a supervised Lead handoff works. It stops at `awaiting_supervisor` with no candidate, its source is refused product turns, the Supervisor is told a decision is waiting and answers with `slp_decide_lead_handoff`, a restart resumes or finishes whatever the journal reached, and every member's banner says where the group is waiting. [Handoff](handoff.md) owns the pipeline, which is still the whole story for Direct Lead, Peer and Supervisor self-handoff.
 
 ## Outcome
 
@@ -110,6 +110,8 @@ When `awaiting_supervisor` is durable, the runtime enqueues a control notice to 
 
 A cancel enqueues a source-facing notice before the hold lifts: the handoff was cancelled, the source is still the active Lead, the reason if one was given, product admission is restored, and queued input needs reconciling before work resumes. It must not read as a Human instruction.
 
+Durable is not delivered. Enqueuing makes a notice durable; the dispatch loop retries a failing send a bounded number of times and then leaves it `queued` for the next wake-up ([admission](architecture.md#admission)). Nothing here may read "the notice is durable" as "the Supervisor has it" — the decision stays pending, and the projection, not the notice, is what makes it visible.
+
 Mailbox recovery turns `dispatching` into `uncertain` and never replays it, and retrying under the same stable ID returns the existing record rather than delivering anything. So an uncertain primary notice would leave a pending decision invisible forever. Two things prevent that: the pending decision is visible in the group projection, and recovery enqueues a separately identified notice that says it may duplicate the first. Duplicate wake-ups are harmless because the decision is idempotent.
 
 ```text
@@ -121,9 +123,11 @@ handoff_waiting_recovery_<transferId>_<attempt>
 
 A runtime control response is not a product report. The runtime must know a turn's origin; do not ask the prompt text not to be reported.
 
-Today `slp/reports.ts` watches `running -> idle`, takes the last assistant message and relays it. `AgentManagerEvent` carries an agent snapshot and no turn origin, and `admitForegroundTurn` returns no turn id to correlate against, so provenance needs a minimal correlation contract rather than a guess from the last message. The mailbox already passes the stable mail ID as `clientMessageId`, which is the correlation to carry through to turn completion.
+Provenance is claimed, not inferred, and it needs nothing from the agent manager. Admission takes the run slot synchronously and answers `started` only when it made the claim, so marking the agent before the call is enough to know the turn that answer describes: there is no turn id to correlate and no window for another writer to take the claim in between. Any other answer releases the mark. `busy` started nothing, and `steered` merged the message into a turn somebody else owns, whose final message is still theirs to report. `slp/control-turns.ts` holds the marks; settle them however the turn ends, or a failed control turn silences the next ordinary one.
 
-The initial scope is not a taxonomy. Relaying the Lead's final message stays the default, and only origins the runtime knows are suppressed: handoff activation, handoff cancel and resume control, and handoff recovery control. Product turns, Human turns, Supervisor requests and Peer handback processing still report. Suppression must not swallow the next ordinary report.
+An earlier reading of this problem concluded that `AgentManagerEvent` carrying no turn origin meant the implementation had to add a correlation contract to `AgentManager`. It does not, and adding one would have broken that suite's admission assertions for nothing.
+
+The scope is a set of mail kinds, not a taxonomy. Relaying the Lead's final message stays the default; only `activation` is control today, and cancel, resume and recovery notices join it by being added to that set. `interrupted` stays out: it reports a Peer's lost turn, and the Lead's answer to it is project work. Product turns, Human turns, Supervisor requests and Peer handback processing still report, and suppression must not swallow the next ordinary report.
 
 An earlier attempt suppressed a report when the Lead had already sent the Supervisor mail during the turn. That heuristic was removed deliberately in `76d13f62b`, because a Lead that reports progress still owes a final message. Origin correlation is a different basis and must not reintroduce it.
 
@@ -140,7 +144,9 @@ Boot currently reconciles transfers before mailbox records load, and reaches a t
 7. Start mailbox pumps and resumed transfer runners.
 8. Publish ready group state to clients.
 
-`mailbox.recover()` loads records and starts pumps in one call; step 3 and step 7 require splitting it.
+Loading records and starting pumps are separate calls for this reason: step 5 has to read whether the last notice came out `uncertain`, and a pump running alongside it would be changing the same records recovery has not read yet.
+
+Step 4 reaches a transfer that no hold points at. `request` persists the record before the hold, so a crash between the two leaves one behind: no runner owns it, no hold reconciles it, and a repeat request would keep handing the source its id. Every step of a transfer reads its own hold, so recovery re-establishes the hold the crash lost and then lets the ordinary rollback clear it.
 
 Per phase: `requested` without durable stop evidence rolls back under the existing safety policy. `stopped` with `control=supervisor` advances idempotently to `awaiting_supervisor` and ensures the notice. `awaiting_supervisor` preserves the hold and the suspension and creates no candidate. `continued` resumes preparation. `preparing` or `ready` still pointing at the source keeps the current rollback and retire-candidate policy unless the implementation proves the creation journal resumes safely. A candidate pointer rolls forward. `canceling` ensures the source notice and finishes. `canceled` ensures hold cleanup and a mail pump. A pointer matching neither generation, or an unreadable required record, freezes only that group.
 
@@ -160,13 +166,19 @@ decision?: "continue" | "cancel" | null;
 decidedAt?: string | null;
 ```
 
-The app's `LIVE_TRANSFER_PHASES` needs the pending phases. Its membership selector attaches a transfer only when the current agent is the source or the candidate, and Supervisor is neither, so the Supervisor banner needs a group-level pending Lead lookup or a first-class pending-control projection.
+The membership selector attaches a transfer only when the current agent is its source or its candidate, and the Supervisor is neither, so a group-level lookup answers instead: `findPendingLeadHandoff` reads the group and every member carries the result. Without it the one agent that can answer would be the only member with nothing on screen.
 
-Banners: Supervisor sees that a Lead handoff is waiting for its decision; the suspended source sees that it is waiting for Supervisor before its context is replaced; a Human-facing status says a Lead context replacement is pending. There is no approve or cancel button in the first release.
+Banners follow from who can act. The Supervisor is asked to answer. The stopped source is told what it is waiting for, and deliberately not the ordinary handing-off notice, because nothing is being prepared and it is not on its way out. Everyone else is told the group is waiting. There is no approve or cancel button: the decision is the Supervisor's, through its tool.
+
+`control` absent means automatic, the same as it does in the journal, so a daemon that predates this contract produces no pending decision anywhere in the app.
 
 ## Downgrade
 
 An old daemon need not understand the new phases, but it must not resume a source or create a candidate from a state it cannot read. A live transfer fails closed and freezes.
+
+The transfer schema is a closed union on `phase`, so a phase the reader has no variant for refuses to parse rather than matching a looser one. Recovery then finds a group holding a transfer it cannot load and freezes that group, leaving the file exactly as it found it. Both halves are covered: the schema in `slp/store.test.ts`, the daemon's response in `slp/transfer.test.ts`, seeded with a phase no build has so it stands for any version gap in either direction.
+
+Source suspension does not survive the downgrade. It is derived from the transfer journal, and a reader that cannot load the record cannot derive it, so an old daemon would let the source take a product turn if something addressed it directly. Quiescing is what covers that, which is why it is not optional.
 
 Quiesce first, as [architecture](architecture.md) already requires: stop starting transfers, resolve every pending one, confirm no live `awaiting_supervisor`, `continued`, `preparing`, `ready`, `switched` or `canceling` record remains, stop the daemon cleanly, back up `$PASEO_HOME/slp`, then downgrade. If an old daemon freezes a state it cannot read, restore the new build; do not edit journal files by hand.
 
@@ -186,4 +198,4 @@ Quiesce first, as [architecture](architecture.md) already requires: stop startin
 
 ## Done means
 
-A new supervised Lead handoff stops at a durable, visible decision boundary. The source is suspended from product execution while pending. No candidate exists before `continue`. Only the active same-group Supervisor can decide. Both outcomes are durable, idempotent and restart-safe. The runtime remains the only owner of candidate creation, the switch, reparenting and retirement. `slp_ready` still means candidate readiness. Cancel always leaves a durable source wake-up and restores the source exactly once. Runtime control turns do not become Lead reports, and ordinary Lead results still report exactly once. Pending and uncertain states survive reconnect and restart, and a duplicate-possible recovery notice is marked and cannot duplicate an effect. Direct Lead, Peer, Supervisor self-handoff and records without `control` stay automatic. Protocol changes stay additive. A live downgrade fails closed.
+A new supervised Lead handoff stops at a durable, visible decision boundary. The source is suspended from product execution while pending. No candidate exists before `continue`. Only the active same-group Supervisor can decide. Both outcomes are durable, idempotent and restart-safe. The runtime remains the only owner of candidate creation, the switch, reparenting and retirement. `slp_ready` still means candidate readiness. Cancel always leaves a durable source wake-up and restores the source exactly once. Runtime control turns do not become Lead reports, and ordinary Lead results still report exactly once. Pending and uncertain states survive reconnect and restart, and a duplicate-possible recovery notice is marked and cannot duplicate an effect. Direct Lead, Peer, Supervisor self-handoff and records without `control` stay automatic. Protocol changes stay additive. A live downgrade fails closed, proven by fixture rather than by argument.

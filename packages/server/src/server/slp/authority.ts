@@ -30,7 +30,14 @@ const LEAD_ONLY_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 /** The SLP control channel: members only, never in an ordinary agent's catalog. */
-export const SLP_CONTROL_TOOLS: ReadonlySet<string> = new Set(["slp_request_handoff", "slp_ready"]);
+export const SLP_CONTROL_TOOLS: ReadonlySet<string> = new Set([
+  "slp_request_handoff",
+  "slp_ready",
+  "slp_decide_lead_handoff",
+]);
+
+/** The Supervisor's alone: deciding when a supervised Lead's context is replaced. */
+const SUPERVISOR_ONLY_TOOLS: ReadonlySet<string> = new Set(["slp_decide_lead_handoff"]);
 
 /** All a candidate may execute during receive-only preparation. */
 export const SLP_PREPARATION_TOOLS: ReadonlySet<string> = new Set(["slp_ready"]);
@@ -48,8 +55,8 @@ const PEER_HIDDEN_TOOLS: ReadonlySet<string> = new Set([...LEAD_ONLY_TOOLS, "sen
 /** Tools an SLP role never sees in its catalog. */
 const HIDDEN_TOOLS: Record<SlpRole, ReadonlySet<string>> = {
   supervisor: LEAD_ONLY_TOOLS,
-  lead: new Set(),
-  peer: PEER_HIDDEN_TOOLS,
+  lead: SUPERVISOR_ONLY_TOOLS,
+  peer: new Set([...PEER_HIDDEN_TOOLS, ...SUPERVISOR_ONLY_TOOLS]),
 };
 
 export function isToolVisibleToRole(role: SlpRole, tool: string): boolean {

@@ -28,6 +28,8 @@ Mail queues without interrupting the recipient and returns a mail id. End your t
 
 ## Handoff
 
+In a supervised group your request stops you and then waits for Supervisor. Nothing is created until it answers, and it may cancel. A cancel means the replacement is not happening now; it is a decision about timing, not a verdict on your work or a rejection of the context you wrote. The runtime tells you, restores your product work, and you keep the slot. Reconcile whatever queued while you were stopped before you continue, and request again later if you still need it.
+
 When Supervisor requests a fresh context, reach a stopping boundary and call `slp_request_handoff` with `reason` and `context` in one operation. Preserve the next objective, applicable project guidance, accepted decisions and reasons, constraints, work done and remaining, evidence and artifact references, active Peers and unresolved operations, unknowns and next action. Include only context needed to continue; reference durable details rather than copying the conversation. The same operation is available when you need a fresh context yourself.
 
 End your turn after the call. Do not create a successor or resume work unless the runtime reactivates you. The runtime transfers your role and existing Peer relationships.

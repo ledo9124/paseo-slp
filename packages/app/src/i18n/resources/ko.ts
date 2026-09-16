@@ -307,6 +307,11 @@ export const ko: TranslationResources = {
       transferSource: "인계 중: 이 에이전트는 체크포인트 후 멈추고 후임자가 준비되면 은퇴합니다.",
       transferCandidate: "인계 준비 중: 호스트가 활성화할 때까지 읽기 전용입니다.",
       transferBlocked: "인계가 차단되었습니다: {{reason}}. 호스트를 재시작해 정합성을 맞추세요.",
+      decisionWaiting:
+        "Lead 인계가 당신의 결정을 기다리고 있습니다. 이 대화에서 계속할지 취소할지 답하세요.",
+      decisionSuspended:
+        "이 컨텍스트를 교체하기 전에 Supervisor를 기다리는 중입니다. 답이 올 때까지 이 에이전트는 멈춰 있습니다.",
+      decisionPending: "Lead 컨텍스트 교체가 Supervisor의 결정을 기다리고 있습니다.",
       retired: "은퇴한 세대입니다. 슬롯의 현재 에이전트가 작업을 이어갑니다.",
       openCurrent: "현재 {{role}} 열기",
       mailUncertain: "전달이 불확실한 메시지: {{count}}",

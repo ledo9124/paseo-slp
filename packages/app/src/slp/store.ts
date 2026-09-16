@@ -40,6 +40,13 @@ export interface SlpTransferView {
   isCandidate: boolean;
 }
 
+export interface SlpPendingLeadHandoff {
+  transferId: string;
+  /** The Lead being replaced, which is still the slot's active agent. */
+  sourceAgentId: string;
+  reason: string | null;
+}
+
 export interface SlpMembership {
   role: string;
   slotId: string;
@@ -50,9 +57,50 @@ export interface SlpMembership {
   /** The slot's current agent; differs from the agent when it is retired or preparing. */
   activeAgentId: string | null;
   transfer: SlpTransferView | null;
+  /**
+   * A Lead handoff waiting on the Supervisor, for any member of the group.
+   * The transfer belongs to the Lead slot, so the Supervisor is neither its
+   * source nor its candidate and `transfer` above is null for it; without
+   * this the one agent that can answer would be the one member with nothing
+   * on screen.
+   */
+  pendingLeadHandoff: SlpPendingLeadHandoff | null;
 }
 
-const LIVE_TRANSFER_PHASES = new Set(["requested", "stopped", "preparing", "ready", "switched"]);
+const LIVE_TRANSFER_PHASES = new Set([
+  "requested",
+  "stopped",
+  "awaiting_supervisor",
+  "continued",
+  "preparing",
+  "ready",
+  "switched",
+  "canceling",
+]);
+
+/**
+ * The Lead handoff this group is waiting on a Supervisor decision for, if
+ * any. Read from the group rather than from a membership, because who needs
+ * to see it is not who the transfer names.
+ */
+export function findPendingLeadHandoff(group: SlpGroupSummary): SlpPendingLeadHandoff | null {
+  const leadSlotIds = new Set(
+    group.slots.filter((slot) => slot.role === "lead").map((slot) => slot.id),
+  );
+  const pending = group.transfers.find(
+    (entry) =>
+      entry.phase === "awaiting_supervisor" &&
+      entry.control === "supervisor" &&
+      leadSlotIds.has(entry.slotId),
+  );
+  return pending
+    ? {
+        transferId: pending.id,
+        sourceAgentId: pending.sourceAgentId,
+        reason: pending.reason,
+      }
+    : null;
+}
 
 /** What one agent is inside its group, from the daemon's summary. Null when it is not a member. */
 export function describeSlpMembership(
@@ -76,6 +124,7 @@ export function describeSlpMembership(
       generationState: generation.state,
       isContact: group.contactAgentId === agentId,
       activeAgentId: slot.activeAgentId,
+      pendingLeadHandoff: findPendingLeadHandoff(group),
       transfer: transfer
         ? {
             id: transfer.id,
