@@ -701,3 +701,20 @@ Always run typecheck after changes:
 ```bash
 npm run typecheck
 ```
+
+## Formatting and commit hooks
+
+`npm run format` runs `oxfmt .`. Extra paths are appended to that argument list, not substituted for it, so `npm run format -- some/file.ts` formats the whole repository and buries your change in thousands of files. To format specific files, use the script that takes them:
+
+```bash
+npm run format:files -- packages/server/src/server/slp/mailbox.ts
+```
+
+The lefthook pre-commit hook runs `format:check:files`, `lint` and `typecheck` through Git's `sh.exe`. On Windows, npm's bin shims re-invoke `node`, and if the Node directory is not on the `PATH` that reaches that shell, all three jobs fail in about two seconds regardless of what you changed. The failure looks like a broken commit and is not. Put Node on the `PATH` before committing rather than passing `--no-verify`:
+
+```powershell
+$env:PATH = "C:
+vm4w
+odejs;" + $env:PATH
+git commit
+```

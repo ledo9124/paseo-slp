@@ -57,6 +57,32 @@ P5 decides, in this order: whether the Lead report relay stays; which task shape
 
 Frozen until P5 reports: PR 6, removing the report relay, any new relay or classifier, checkpoint guidance framed as crash recovery (the runtime reads checkpoints only inside a transfer).
 
+## Supervisor-controlled Lead handoff
+
+The contract is in [Supervisor-controlled handoff](supervisor-controlled-handoff.md). It is a separate track from the PR list above and ships only to workspaces created after it lands.
+
+| Slice | Deliverable                                                              | Depends on | State       |
+| ----- | ------------------------------------------------------------------------ | ---------- | ----------- |
+| 1     | Mailbox delivery reliability                                             | —          | Done        |
+| 2     | Report provenance: runtime control turns stop becoming Lead reports      | 1          | Not started |
+| 3     | `control` discriminator, v2 phases, typed source suspension              | 1          | Not started |
+| 4     | `slp_decide_lead_handoff`, execution-time authority, continue and cancel | 3          | Not started |
+| 5     | Staged recovery and marked recovery notices                              | 1, 3, 4    | Not started |
+| 6     | Projection, banners and docs                                             | 3–5        | Not started |
+| 7     | Integration and CI                                                       | 1–6        | Not started |
+
+Slice 1 was the stated dependency for every durable Supervisor and source notice, on the finding that a mailbox wake-up could be lost at drain exit. That finding was correct and is fixed, but it was not the whole cause of the symptom it was diagnosed from. Measured on Windows, 10 runs per configuration, against the two focused assertions that were timing out:
+
+|                      | `service.test.ts` busy Supervisor | `mailbox.test.ts` busy Peer |
+| -------------------- | --------------------------------- | --------------------------- |
+| Before               | 9/10 failures                     | 7/10 failures               |
+| Lost wake-up fixed   | 2/10 failures                     | 7/10 failures               |
+| Atomic write retried | 0/10 failures                     | 0/10 failures               |
+
+The dominant cause was a single-attempt `fs.rename` in `writeFileAtomic`, which Windows denies while any process still holds the destination. That failure rejected the dispatch loop, and the loop logged it and returned, leaving the message queued with nothing left to deliver it — so a durable write failure read as silently abandoned work. Both are fixed: the rename retries, and the loop retries a dispatch that fails before admission and defers rather than abandons. Do not read a flaky SLP delivery assertion as a mailbox logic fault without separating the two.
+
+Slice 2 must not reintroduce the removed suppression heuristic; see [report provenance](supervisor-controlled-handoff.md#report-provenance). Its test matrix needs the `steered` admission answer, which the mailbox treats as accepted, so a control message merged into a running product turn does not suppress that turn's real report.
+
 ## Probes
 
 | Probe | Question and method                                                                                                                                                          | Gate                                                                                     |
