@@ -1,6 +1,6 @@
 # Supervisor-controlled Lead handoff
 
-Status: the boundary and the decision exist. A supervised Lead transfer stops at `awaiting_supervisor` with no candidate, its source is refused product turns, the Supervisor is told a decision is waiting, and `slp_decide_lead_handoff` continues or cancels it. Staged recovery, the marked recovery notice for an uncertain notification, and the client projection are target contract. [Handoff](handoff.md) owns the pipeline, which is still the whole story for Direct Lead, Peer and Supervisor self-handoff.
+Status: built, except for the client projection. A supervised Lead transfer stops at `awaiting_supervisor` with no candidate, its source is refused product turns, the Supervisor is told a decision is waiting, `slp_decide_lead_handoff` continues or cancels it, and a restart resumes or finishes whatever the journal had reached. What a pending decision looks like to Human is still target contract: nothing surfaces it in the app. [Handoff](handoff.md) owns the pipeline, which is still the whole story for Direct Lead, Peer and Supervisor self-handoff.
 
 ## Outcome
 
@@ -144,7 +144,9 @@ Boot currently reconciles transfers before mailbox records load, and reaches a t
 7. Start mailbox pumps and resumed transfer runners.
 8. Publish ready group state to clients.
 
-`mailbox.recover()` loads records and starts pumps in one call; step 3 and step 7 require splitting it.
+Loading records and starting pumps are separate calls for this reason: step 5 has to read whether the last notice came out `uncertain`, and a pump running alongside it would be changing the same records recovery has not read yet.
+
+Step 4 reaches a transfer that no hold points at. `request` persists the record before the hold, so a crash between the two leaves one behind: no runner owns it, no hold reconciles it, and a repeat request would keep handing the source its id. Every step of a transfer reads its own hold, so recovery re-establishes the hold the crash lost and then lets the ordinary rollback clear it.
 
 Per phase: `requested` without durable stop evidence rolls back under the existing safety policy. `stopped` with `control=supervisor` advances idempotently to `awaiting_supervisor` and ensures the notice. `awaiting_supervisor` preserves the hold and the suspension and creates no candidate. `continued` resumes preparation. `preparing` or `ready` still pointing at the source keeps the current rollback and retire-candidate policy unless the implementation proves the creation journal resumes safely. A candidate pointer rolls forward. `canceling` ensures the source notice and finishes. `canceled` ensures hold cleanup and a mail pump. A pointer matching neither generation, or an unreadable required record, freezes only that group.
 

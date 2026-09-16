@@ -68,7 +68,12 @@ import {
   type SlpTransferRecord,
   type SlpWorkspaceMode,
 } from "./store.js";
-import { SlpTransfers, type SlpMemberCreationInput, type SlpTransferHost } from "./transfer.js";
+import {
+  SlpTransfers,
+  TERMINAL_TRANSFER_PHASES,
+  type SlpMemberCreationInput,
+  type SlpTransferHost,
+} from "./transfer.js";
 
 import type {
   SlpGroupSummary,
@@ -1079,7 +1084,18 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   async recover(): Promise<void> {
     await this.checkpoints.recover();
     await this.transfers.recover();
-    for (const stored of await this.store.list()) {
+    // Order matters here. Mail records load before anything reconciles, so a
+    // transfer deciding whether it still owes the Supervisor a notice can see
+    // that the last one is `uncertain`; and no pump runs until every decision
+    // is made, so nothing overwrites a record recovery has not read yet.
+    const groups = await this.store.list();
+    for (const entry of groups) {
+      if (entry.kind === "valid" && entry.record.status !== "ended") {
+        this.groups.set(entry.record.id, entry.record);
+      }
+    }
+    await this.mailbox.recoverRecords();
+    for (const stored of groups) {
       if (stored.kind === "unreadable") {
         this.unknownGroups.set(stored.groupId, {
           groupId: stored.groupId,
@@ -1125,7 +1141,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
         await this.freeze(record, `initialization recovery failed: ${describe(error)}`);
       }
     }
-    await this.mailbox.recover();
+    await this.reconcileUnheldTransfers();
     await this.handbacks.recover((handback) => {
       const group = this.groups.get(handback.groupId);
       const generation = group?.slots[handback.peerSlotId]?.generations.find(
@@ -1133,6 +1149,39 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       );
       return generation?.state === "active";
     });
+    this.mailbox.startPumps();
+  }
+
+  /**
+   * A transfer whose group holds no reference to it. `request` persists the
+   * record before the hold, so a crash between the two leaves one behind: its
+   * runner is gone, nothing will reconcile it through a hold, and the source
+   * would keep being handed its id by a repeat request. The group pointer
+   * decides its fate the same way it decides a held one's.
+   */
+  private async reconcileUnheldTransfers(): Promise<void> {
+    for (const record of this.transfers.list()) {
+      if (TERMINAL_TRANSFER_PHASES.has(record.phase)) continue;
+      const group = this.groups.get(record.groupId);
+      if (!group || group.status === "ended") continue;
+      if (group.hold) continue;
+      try {
+        // Every step of a transfer reads its own hold, so the reconciliation
+        // that ends this one needs the hold the crash lost. Re-establishing it
+        // is what the group already believed when it wrote the record; the
+        // rollback then clears it the ordinary way.
+        group.hold = {
+          kind: "transfer",
+          slotId: record.slotId,
+          transferId: record.id,
+          since: this.now().toISOString(),
+        };
+        await this.persist(group);
+        await this.transfers.reconcile(group, record.id);
+      } catch (error) {
+        await this.freeze(group, `transfer recovery failed: ${describe(error)}`);
+      }
+    }
   }
 
   /** A Peer the daemon died while creating either exists (activate) or does not (retire). */

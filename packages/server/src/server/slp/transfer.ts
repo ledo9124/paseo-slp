@@ -96,6 +96,17 @@ type TransferIn<P extends SlpTransferRecord["phase"]> = Extract<SlpTransferRecor
  * Design: docs/slp/handoff.md.
  */
 /**
+ * Nothing is owed on these. `canceled` belongs here as an outcome, but not in
+ * the freeze rule below: a cancellation whose hold outlived it is finished,
+ * not a group that needs repairing.
+ */
+export const TERMINAL_TRANSFER_PHASES: ReadonlySet<string> = new Set([
+  "completed",
+  "aborted",
+  "canceled",
+]);
+
+/**
  * While the journal sits in one of these and the pointer has not moved, the
  * source keeps the slot but may not start product work on it.
  */
@@ -294,6 +305,31 @@ export class SlpTransfers {
   }
 
   /**
+   * Which notice this transfer still owes the Supervisor, or null when it owes
+   * none. The first is keyed by the transfer, so re-running this is free. But
+   * a notice the daemon died while dispatching is `uncertain` for good — the
+   * mailbox never replays one, and re-enqueuing the same id returns the old
+   * record rather than delivering anything — so a fresh id has to carry it,
+   * and it has to say it may be arriving twice.
+   */
+  private retryNoticeFor(
+    record: TransferIn<"awaiting_supervisor">,
+  ): { id: string; preamble: string[] } | null {
+    const primary = `handoff_waiting_${record.id}`;
+    const existing = this.host.mailbox.list().filter((mail) => mail.id.startsWith(primary));
+    if (existing.length === 0) return { id: primary, preamble: [] };
+    // Anything not yet written off still stands; only every attempt being
+    // uncertain leaves the Supervisor possibly holding nothing.
+    if (existing.some((mail) => mail.state !== "uncertain")) return null;
+    return {
+      id: `handoff_waiting_recovery_${record.id}_${existing.length}`,
+      preamble: [
+        "This notice may be a duplicate. The daemon restarted while an earlier copy was being delivered and cannot tell whether it arrived. If you have already seen this, ignore it; deciding twice is safe and changes nothing.",
+      ],
+    };
+  }
+
+  /**
    * Durable before the Supervisor can be told anything, and keyed by the
    * transfer so a restart cannot queue a second one. Delivery is the
    * mailbox's problem: a queued notice is not a notice the Supervisor has.
@@ -301,14 +337,17 @@ export class SlpTransfers {
   private async noticeAwaitingDecision(record: TransferIn<"awaiting_supervisor">): Promise<void> {
     const group = this.host.getGroup(record.groupId);
     if (!group.supervisorSlotId) return;
+    const retry = this.retryNoticeFor(record);
+    if (retry === null) return;
     await this.host.mailbox.enqueue({
-      id: `handoff_waiting_${record.id}`,
+      id: retry.id,
       groupId: group.id,
       slotId: group.supervisorSlotId,
       fromSlotId: null,
       kind: "report",
       prompt: formatSystemNotificationPrompt(
         [
+          ...retry.preamble,
           "SLP runtime control event, not a message from Human or from Lead.",
           `Lead requested a context handoff (transfer ${record.id}) and has stopped. Its reason: ${record.reason}`,
           "No successor exists yet. The runtime creates one only if you continue.",
@@ -345,6 +384,9 @@ export class SlpTransfers {
       return;
     }
     const candidate = candidateOf(record);
+    // `canceled` is terminal too but is deliberately not here: its cleanup is
+    // allowed to outlive it, and finishing that is recovery's job rather than
+    // a reason to freeze the group.
     if (record.phase === "completed" || record.phase === "aborted") {
       await this.host.freezeGroup(
         group,

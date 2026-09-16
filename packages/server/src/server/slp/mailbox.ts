@@ -131,11 +131,13 @@ export class SlpMailbox {
   }
 
   /**
-   * Boot: a message the daemon died while dispatching may have reached the
-   * provider, so it becomes `uncertain` and is retained, never replayed.
-   * Queued mail resumes dispatch.
+   * Boot, first half: a message the daemon died while dispatching may have
+   * reached the provider, so it becomes `uncertain` and is retained, never
+   * replayed. Nothing is dispatched here. Recovery reads these records to
+   * decide what it still owes, and a pump running alongside that could
+   * overwrite an `uncertain` record before anything had read it.
    */
-  async recover(): Promise<void> {
+  async recoverRecords(): Promise<void> {
     for (const { id, result } of await this.store.list()) {
       if (result instanceof Error) {
         this.logger.error({ mailId: id, err: result }, "SLP mail record unreadable");
@@ -154,6 +156,10 @@ export class SlpMailbox {
         this.logger.warn({ mailId: record.id }, "SLP mail acceptance is uncertain after restart");
       }
     }
+  }
+
+  /** Boot, second half: once recovery has decided, queued mail resumes. */
+  startPumps(): void {
     const pumped = new Set<string>();
     for (const record of this.list()) {
       const key = `${record.groupId}/${record.slotId}`;

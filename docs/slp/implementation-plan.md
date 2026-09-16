@@ -67,7 +67,7 @@ The contract is in [Supervisor-controlled handoff](supervisor-controlled-handoff
 | 2     | Report provenance: runtime control turns stop becoming Lead reports      | 1          | Done        |
 | 3     | `control` discriminator, `awaiting_supervisor`, typed source suspension  | 1          | Done        |
 | 4     | `slp_decide_lead_handoff`, execution-time authority, continue and cancel | 3          | Done        |
-| 5     | Staged recovery and marked recovery notices                              | 1, 3, 4    | Not started |
+| 5     | Staged recovery and marked recovery notices                              | 1, 3, 4    | Done        |
 | 6     | Projection, banners and docs                                             | 3–5        | Not started |
 | 7     | Integration and CI                                                       | 1–6        | Not started |
 
