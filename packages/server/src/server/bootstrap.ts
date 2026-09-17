@@ -153,6 +153,8 @@ import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
+import { resolveSkillTargets } from "./orchestration-skills/internal/paths.js";
+import { installSlpSkills } from "./slp/skills.js";
 import { resolveConfigFromPersisted, type CliConfigOverrides } from "./config.js";
 import { resolvePaseoToolPolicy } from "./agent/paseo-tool-policy.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
@@ -629,6 +631,11 @@ export async function createPaseoDaemon(
   const orchestrationSkills = createOrchestrationSkills(daemonConfigStore);
   void orchestrationSkills.autoUpdate().catch((error) => {
     logger.error({ err: error }, "Failed to maintain orchestration skills at startup");
+  });
+  // SLP's own skills are role method, not a host preference, so they install
+  // unconditionally and outside the selection the line above honours.
+  void installSlpSkills({ targets: resolveSkillTargets(), logger }).catch((error) => {
+    logger.error({ err: error }, "Failed to install SLP skills at startup");
   });
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({});
