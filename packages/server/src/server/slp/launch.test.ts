@@ -20,11 +20,32 @@ describe("withSlpProviderOptions", () => {
   });
 
   test("blocks Claude native delegation while preserving existing restrictions", () => {
-    expect(withSlpProviderOptions("claude", { disallowedTools: ["Bash", "Agent"] })).toEqual({
+    expect(
+      withSlpProviderOptions("claude", { disallowedTools: ["Bash", "Agent"] }, "supervisor"),
+    ).toEqual({
       disallowedTools: ["Bash", "Agent", "Task"],
     });
-    expect(withSlpProviderOptions("claude/sonnet", null)).toEqual({
+    expect(withSlpProviderOptions("claude/sonnet", null, "supervisor")).toEqual({
       disallowedTools: ["Agent", "Task"],
+    });
+  });
+
+  test("also denies AskUserQuestion to a Peer or Lead, but not a Supervisor", () => {
+    expect(withSlpProviderOptions("claude", null, "peer")).toEqual({
+      disallowedTools: ["Agent", "Task", "AskUserQuestion"],
+    });
+    expect(withSlpProviderOptions("claude/sonnet", null, "lead")).toEqual({
+      disallowedTools: ["Agent", "Task", "AskUserQuestion"],
+    });
+    expect(withSlpProviderOptions("claude", null, "supervisor")).toEqual({
+      disallowedTools: ["Agent", "Task"],
+    });
+  });
+
+  test("defaults to the Peer denial (AskUserQuestion included) when no role is given", () => {
+    // The Peer creation path (create-agent/create.ts) never passes a role.
+    expect(withSlpProviderOptions("claude", null)).toEqual({
+      disallowedTools: ["Agent", "Task", "AskUserQuestion"],
     });
   });
 

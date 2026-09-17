@@ -19,7 +19,11 @@ const questionItem = {
   questions: [{ title: "Which color?", options: ["Blue", "Green"] }],
 };
 
-async function setup(metadata?: Record<string, unknown>, rejectSteer = false) {
+async function setup(
+  metadata?: Record<string, unknown>,
+  rejectSteer = false,
+  denyInteractiveQuestions = false,
+) {
   const appServer = createFakeCodexAppServer({
     "turn/interrupt": () => ({}),
     "turn/steer": () => {
@@ -33,6 +37,14 @@ async function setup(metadata?: Record<string, unknown>, rejectSteer = false) {
     metadata ? { sessionId: "thread-1", metadata } : null,
     createTestLogger(),
     async () => appServer.child,
+    {},
+    false,
+    false,
+    false,
+    undefined,
+    "interactive",
+    undefined,
+    denyInteractiveQuestions,
   );
   const events: AgentStreamEvent[] = [];
   session.subscribe((event) => events.push(event));
@@ -405,6 +417,32 @@ test("late answers use the existing follow-up prompt and dismissal does not inte
       followUpPrompt: "Answers to your questions:\n\nWhich color?\nGreen",
     });
     expect(appServer.requests().some((request) => request.method === "turn/interrupt")).toBe(false);
+  } finally {
+    await session.close();
+  }
+});
+
+test("denies an async question for a caller with no recipient, and nudges the turn instead of hanging", async () => {
+  const { session, appServer, events, ask } = await setup(undefined, false, true);
+  try {
+    await ask();
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(events.some((event) => event.type === "permission_requested")).toBe(false);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "permission_resolved",
+        requestId: "permission-async-question-1",
+        resolution: {
+          behavior: "deny",
+          message: expect.stringContaining("End this turn now"),
+        },
+      }),
+    );
+    const steer = await appServer.waitForRequest("turn/steer");
+    expect(steer).toMatchObject({
+      expectedTurnId: "native-turn",
+      input: [{ type: "text", text: expect.stringContaining("End this turn now") }],
+    });
   } finally {
     await session.close();
   }

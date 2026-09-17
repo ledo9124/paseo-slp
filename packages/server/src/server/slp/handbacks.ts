@@ -189,7 +189,11 @@ export class SlpHandbackRegister {
           this.fire(id, "errored");
         } else if (lifecycle === "idle" && running) {
           running = false;
-          this.fire(id, "returned");
+          // The manager marks a turn cut by an explicit cancel before it
+          // interrupts, so the idle state carries it. Without that the owner is
+          // told its Peer returned, over whatever the Peer last happened to
+          // narrate; see docs/slp/evidence.md#field-run.
+          this.fire(id, event.agent.lastTurnCancelled ? "cancelled" : "returned");
         } else if (lifecycle === "closed") {
           this.fire(id, "closed");
         }
@@ -232,11 +236,16 @@ export class SlpHandbackRegister {
   private async queueHandback(
     record: Extract<SlpHandbackRecord, { state: "fired" }>,
   ): Promise<void> {
-    const terminal = record.outcome.reason !== "returned";
+    const terminal = record.outcome.reason !== "returned" && record.outcome.reason !== "cancelled";
     if (terminal) this.stopWatching(record.id);
     const lastMessage = await this.agentManager.getLastAssistantMessage(record.peerAgentId);
-    if (!terminal && !lastMessage?.trim()) {
+    const cancelled = record.outcome.reason === "cancelled";
+    if (!terminal && !cancelled && !lastMessage?.trim()) {
       // A turn that left nothing behind is not a handback.
+      this.logger.info(
+        { handbackId: record.id, peerAgentId: record.peerAgentId, ownerSlotId: record.ownerSlotId },
+        "SLP Peer turn ended with no message; nothing to hand back",
+      );
       await this.persist({ ...baseOf(record), state: "armed", turn: null, notice: null });
       return;
     }
@@ -348,6 +357,8 @@ function describeOutcome(reason: SlpHandbackOutcome["reason"]): string {
   switch (reason) {
     case "returned":
       return "returned its turn; the last message below is what it left for you. Decide whether it is a result, a question or a blocker. A returned turn is not assignment completion and not acceptance.";
+    case "cancelled":
+      return "had its turn cancelled before it finished. Anything below is whatever it had last said mid-turn, not a result and not a report: work it was doing may be half-done. Establish where it actually got to before you decide anything. Its assignment still stands and it will hand back again when a later turn ends.";
     case "errored":
       return "errored before handing back.";
     case "closed":

@@ -1411,11 +1411,20 @@ export async function createPaseoDaemon(
     archiveWorkspace: archiveScheduleWorkspaceExternal,
   });
   await scheduleService.start();
+  // One archived-agent slot, two consumers. Composed here rather than made
+  // multi-subscriber in AgentManager: this is the composition root and there
+  // is no third demand. Each consumer gets its own catch so a failure in one
+  // cannot swallow the other.
   agentManager.setAgentArchivedCallback(async (agentId) => {
     try {
       await scheduleService.completeForAgent(agentId);
     } catch (error) {
       logger.warn({ err: error, agentId }, "Failed to complete schedules for archived agent");
+    }
+    try {
+      await slpService.memberAgentArchived(agentId);
+    } catch (error) {
+      logger.warn({ err: error, agentId }, "Failed to settle the SLP group for archived agent");
     }
   });
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");

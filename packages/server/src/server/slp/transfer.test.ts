@@ -354,11 +354,18 @@ describe("SLP same-role handoff", () => {
     expect(handbackMail(daemon)[0]).toMatchObject({ attempt: { agentId: candidateId } });
 
     // The retired generation is history: no turn, no tool.
+    const resumesBefore = daemon.client.resumedPurposes.length;
     await ensureAgentLoaded(leadId, {
       agentManager: daemon.manager,
       agentStorage: daemon.storage,
       logger: createTestLogger(),
     });
+    // Loading it must not bring it back as a writable session. Retirement
+    // closes the agent but never archives it, and resume reads `archivedAt`
+    // alone, so without the retirement check this call revived a handed-off
+    // Lead beside its own successor and nothing downstream could tell them
+    // apart.
+    expect(daemon.client.resumedPurposes.slice(resumesBefore)).toEqual(["history"]);
     await expect(daemon.manager.admitForegroundTurn(leadId, "one more thing")).rejects.toThrow(
       SlpGenerationRetiredError,
     );

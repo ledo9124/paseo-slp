@@ -10,6 +10,7 @@ import type { AgentStorage } from "../agent/agent-storage.js";
 import type { SlpCreationHook, SlpPeerCreation } from "../agent/create-agent/create.js";
 import type { SlpToolAuthority } from "../agent/tools/types.js";
 import {
+  isInteractiveQuestionDenied,
   isTargetAllowed,
   isToolVisibleToRole,
   SLP_AGENT_TARGET_TOOLS,
@@ -63,6 +64,7 @@ import {
   type SlpHandbackRecord,
   type SlpInitializationRecord,
   type SlpMailRecord,
+  type SlpRole,
   type SlpSlotRecord,
   type SlpTimelineCursor,
   type SlpTransferRecord,
@@ -180,7 +182,10 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
   private readonly agentManager: SlpServiceOptions["agentManager"];
   private readonly agentStorage: SlpServiceOptions["agentStorage"];
   private readonly agentRequests: SlpServiceOptions["agentRequests"];
-  private readonly createMemberAgent: SlpServiceOptions["createMemberAgent"];
+  private readonly createMemberAgent: (
+    input: SlpMemberCreationInput,
+    role?: SlpRole,
+  ) => Promise<void>;
   private readonly roleSettings: SlpServiceOptions["roleSettings"];
   private readonly isDelegationToolingEnabled: SlpServiceOptions["isDelegationToolingEnabled"];
   private readonly isHandoffEnabled: SlpServiceOptions["isHandoffEnabled"];
@@ -199,7 +204,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     this.agentManager = options.agentManager;
     this.agentStorage = options.agentStorage;
     this.agentRequests = options.agentRequests;
-    this.createMemberAgent = (input) =>
+    this.createMemberAgent = (input, role) =>
       options.createMemberAgent({
         ...input,
         source: {
@@ -207,6 +212,7 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
           providerOptions: withSlpProviderOptions(
             input.source.provider,
             input.source.providerOptions,
+            role,
           ),
         },
       });
@@ -279,7 +285,11 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
           }),
         };
       },
-      createMemberAgent: (input) => this.createMemberAgent(input),
+      // The candidate's generation is already in its slot by this point
+      // (SlpTransfers.prepare pushes it before calling this), so its role is
+      // known here without threading a new field through SlpMemberCreationInput.
+      createMemberAgent: (input) =>
+        this.createMemberAgent(input, this.roleForMember(input.groupId, input.agentId)),
     });
     this.agentManager.setDestructiveOperationGate(this.destructiveOperationGate());
     this.agentManager.setAdmissionGate({
@@ -295,6 +305,27 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
         }
       },
       executionPolicyFor: (agentId) => this.executionPolicyFor(agentId),
+      isGenerationRetired: (agentId) => {
+        const group = this.getGroupForAgent(agentId);
+        if (!group) return false;
+        return membershipOf(group, agentId).generation.state === "retired";
+      },
+      denyInteractiveQuestions: (agentId) => {
+        // A root launches before its own generation is recorded in its slot,
+        // so membership alone cannot answer for it and a direct-mode Lead —
+        // the first and only root — escaped the denial entirely. The planned
+        // ids are written with the group record, before either agent exists,
+        // so they answer for a root at any point in initialization.
+        const planned = this.groupForPlannedRoot(agentId);
+        if (planned) {
+          return isInteractiveQuestionDenied(
+            planned.initialization.supervisorAgentId === agentId ? "supervisor" : "lead",
+          );
+        }
+        const group = this.getGroupForAgent(agentId);
+        if (!group) return false;
+        return isInteractiveQuestionDenied(membershipOf(group, agentId).slot.role);
+      },
     });
   }
 
@@ -327,6 +358,16 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
     return null;
   }
 
+  /** The group whose initialization planned this agent id as a root, if any. */
+  private groupForPlannedRoot(agentId: string): SlpGroupRecord | null {
+    for (const group of this.groups.values()) {
+      if (group.status === "ended") continue;
+      const { leadAgentId, supervisorAgentId } = group.initialization;
+      if (leadAgentId === agentId || supervisorAgentId === agentId) return group;
+    }
+    return null;
+  }
+
   getGroupForAgent(agentId: string): SlpGroupRecord | null {
     for (const group of this.groups.values()) {
       if (group.status !== "ended" && groupAgentIds(group).includes(agentId)) return group;
@@ -349,6 +390,40 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       await this.persist(group);
       await this.archiveMembers(group);
       return group;
+    });
+  }
+
+  /**
+   * A member was archived through the ordinary archive path — a single
+   * tab, or a workspace-level fan-out that reaches every agent in the
+   * workspace "regardless of parentage" (docs/slp/architecture.md) — rather
+   * than through `slp.group.end`. Ends the group the same way `endGroup`
+   * does, but only once every one of its members is already archived: a
+   * single member's archive (a stray stale tab, or one Peer among several)
+   * leaves the rest of the group working and must not end it. This never
+   * infers completion from the work looking done, only from a real archive
+   * event leaving nothing left. A held group is mid-transfer and is left
+   * alone; its own gate already refused the archive that would have reached
+   * here while it was held, but a hold taken between two members of a
+   * multi-agent fan-out is still checked, not overridden.
+   *
+   * Wiring gap: nothing calls this yet. `AgentManager.setAgentArchivedCallback`
+   * is a single slot and bootstrap.ts already spends it on the schedule
+   * service; combining the two callbacks belongs to bootstrap.ts, not here.
+   */
+  async memberAgentArchived(agentId: string): Promise<void> {
+    const group = this.getGroupForAgent(agentId);
+    if (!group) return;
+    await this.serializeByWorkspace(group.workspaceId, async () => {
+      const current = this.groups.get(group.id);
+      if (!current || current.status !== "ready" || current.hold) return;
+      for (const memberId of groupAgentIds(current)) {
+        const stored = await this.agentStorage.get(memberId);
+        if (stored && !stored.archivedAt) return;
+      }
+      current.status = "ended";
+      current.hold = null;
+      await this.persist(current);
     });
   }
 
@@ -953,24 +1028,27 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
         this.agentManager.getAgent(candidate) != null ||
         (await this.agentStorage.get(candidate)) !== null,
       create: (candidate) =>
-        this.createMemberAgent({
-          agentId: candidate,
-          groupId: record.id,
-          workspaceId: record.workspaceId,
-          title: role === "lead" ? "Lead" : "Supervisor",
-          source: {
-            cwd: record.initialization.lead.cwd,
-            providerOptions: null,
-            // COMPAT(slpLaunchSnapshot): added in v0.7.3; remove after 2027-03-13 once old initializing groups are gone.
-            ...(record.initialization.roles?.[role] ??
-              applyRoleLaunch(
-                { ...record.initialization.lead, thinkingOptionId: null, providerOptions: null },
-                this.roleSettings()[role],
-              )),
+        this.createMemberAgent(
+          {
+            agentId: candidate,
+            groupId: record.id,
+            workspaceId: record.workspaceId,
+            title: role === "lead" ? "Lead" : "Supervisor",
+            source: {
+              cwd: record.initialization.lead.cwd,
+              providerOptions: null,
+              // COMPAT(slpLaunchSnapshot): added in v0.7.3; remove after 2027-03-13 once old initializing groups are gone.
+              ...(record.initialization.roles?.[role] ??
+                applyRoleLaunch(
+                  { ...record.initialization.lead, thinkingOptionId: null, providerOptions: null },
+                  this.roleSettings()[role],
+                )),
+            },
+            systemPrompt,
+            labels: { [SLP_GROUP_LABEL]: record.id },
           },
-          systemPrompt,
-          labels: { [SLP_GROUP_LABEL]: record.id },
-        }),
+          role,
+        ),
     });
     const at = this.now().toISOString();
     const generation = newGeneration({
@@ -1233,6 +1311,21 @@ export class SlpService implements SlpCreationHook, SlpToolAuthority {
       throw error;
     });
     return this.instructionsLoad;
+  }
+
+  /**
+   * The role of a generation already recorded in its slot, for provider
+   * launch policy. Only the transfer candidate path needs this: `prepare`
+   * pushes the candidate's generation into its slot before creating the
+   * agent, so the lookup always finds it there.
+   */
+  private roleForMember(groupId: string, agentId: string): SlpRole | undefined {
+    const group = this.groups.get(groupId);
+    if (!group) return undefined;
+    for (const slot of Object.values(group.slots)) {
+      if (slot.generations.some((generation) => generation.agentId === agentId)) return slot.role;
+    }
+    return undefined;
   }
 
   private resolveSlot(groupId: string, slotId: string): SlpSlotDestination {

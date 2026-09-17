@@ -134,6 +134,11 @@ export class AgentRunCancellationError extends Error {
   }
 }
 
+/** Why a run is being cancelled. Only an explicit user cancel marks the turn as cut. */
+export interface AgentRunCancellationOptions {
+  cause?: "user" | "internal";
+}
+
 export type AgentRunCancellationResult =
   | { status: "not_running" }
   | { status: "settled" }
@@ -351,6 +356,18 @@ export interface DestructiveOperationGate {
 export interface AgentAdmissionGate {
   assertTurnAllowed(agentId: string): void;
   executionPolicyFor(agentId: string): AgentExecutionPolicy;
+  /**
+   * Whether this agent is a generation that has already been handed off.
+   * Consulted when deciding how to resume, because retirement is recorded in
+   * the group and never in the agent record.
+   */
+  isGenerationRetired(agentId: string): boolean;
+  /**
+   * Whether this agent may not open an interactive question. Carried on the
+   * launch context rather than in provider options, because Codex copies those
+   * verbatim into its own config file and a policy flag would leak into it.
+   */
+  denyInteractiveQuestions(agentId: string): boolean;
 }
 
 export interface AdmitForegroundTurnOptions extends AgentRunOptions {
@@ -440,6 +457,14 @@ interface ManagedAgentBase {
   lastUserMessageAt: Date | null;
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
+  /**
+   * The turn that is running, or the one that just ended, was cut by an
+   * explicit cancel rather than finishing. Set before the interrupt so the
+   * idle transition carries it, and cleared when the next turn opens. Without
+   * it a cancelled turn and a finished one are the same event by the time
+   * anything downstream reacts; see docs/slp/evidence.md#field-run.
+   */
+  lastTurnCancelled: boolean;
   lastUsage?: AgentUsage;
   lastError?: string;
   attention: AttentionState;
@@ -1394,8 +1419,16 @@ export class AgentManager {
     // Decide residency from durable state inside the lifecycle lane. A loader may
     // have read the record before a queued archive or restore completed.
     const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
+    // Archival is not the only reason a session must come back read-only. A
+    // retired generation is closed but never archived — "close does not
+    // cascade" — so `archivedAt` alone resumed it as a writable session and
+    // opening the chat brought a handed-off Lead back to life beside its own
+    // successor. The turn gate would still refuse it work, but it held a live
+    // provider session and was indistinguishable from the agent that replaced
+    // it. See docs/slp/handoff.md#retirement and docs/slp/evidence.md#field-run.
+    const retired = this.admissionGate?.isGenerationRetired(resolvedAgentId) ?? false;
     const currentResumeOptions = record
-      ? { purpose: record.archivedAt ? ("history" as const) : ("interactive" as const) }
+      ? { purpose: record.archivedAt || retired ? ("history" as const) : ("interactive" as const) }
       : resumeOptions;
     const client = this.requireClient(handle.provider);
     const available = await client.isAvailable();
@@ -1930,6 +1963,7 @@ export class AgentManager {
         activeForegroundTurnId: null,
         activeTurnId: null,
         activeTurnStartedAt: null,
+        lastTurnCancelled: false,
         foregroundTurnWaiters: new Set(),
         finalizedForegroundTurnIds: new Set(),
         unsubscribeSession: null,
@@ -2674,6 +2708,7 @@ export class AgentManager {
   private openActiveTurn(agent: ActiveManagedAgent, turnId: string, startedAt: Date): void {
     agent.activeTurnId = turnId;
     agent.activeTurnStartedAt = startedAt;
+    agent.lastTurnCancelled = false;
   }
 
   private applyActiveTurnTerminal(
@@ -3099,11 +3134,17 @@ export class AgentManager {
     }
   }
 
-  async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
-    return this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId));
+  async cancelAgentRun(
+    agentId: string,
+    options?: AgentRunCancellationOptions,
+  ): Promise<AgentRunCancellationResult> {
+    return this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId, options));
   }
 
-  private async cancelAgentRunNow(agentId: string): Promise<AgentRunCancellationResult> {
+  private async cancelAgentRunNow(
+    agentId: string,
+    options?: AgentRunCancellationOptions,
+  ): Promise<AgentRunCancellationResult> {
     const agent = this.requireSessionAgent(agentId);
     const run =
       this.runs.getRun(agentId) ??
@@ -3111,6 +3152,13 @@ export class AgentManager {
     if (!run) {
       return { status: "not_running" };
     }
+
+    // Marked before the interrupt, not after it: the run settles inside this
+    // call and the idle state it emits is what downstream watchers react to,
+    // so a mark applied on the way out would always lose that race. `internal`
+    // cancels (the prelude to a reload, replace or rewind) are not a cut turn
+    // and leave the flag alone.
+    if (options?.cause === "user") agent.lastTurnCancelled = true;
 
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
     const settlement = await this.waitWithTimeout({
@@ -3121,7 +3169,11 @@ export class AgentManager {
     });
 
     if (!interruptAcknowledged) {
-      return { status: settlement === "completed" ? "settled" : "refused" };
+      if (settlement === "completed") return { status: "settled" };
+      // Refused: the turn is still running and will end on its own terms, so
+      // the optimistic mark above would mislabel that ending as a cut.
+      agent.lastTurnCancelled = false;
+      return { status: "refused" };
     }
 
     const runTurnId = this.runs.getTurnId(agentId);
@@ -3721,6 +3773,7 @@ export class AgentManager {
       activeForegroundTurnId: null,
       activeTurnId: null,
       activeTurnStartedAt: null,
+      lastTurnCancelled: false,
       foregroundTurnWaiters: new Set<ForegroundTurnWaiter>(),
       finalizedForegroundTurnIds: new Set<string>(),
       unsubscribeSession: null,
@@ -3776,6 +3829,7 @@ export class AgentManager {
       activeForegroundTurnId: null,
       activeTurnId: null,
       activeTurnStartedAt: null,
+      lastTurnCancelled: false,
       pendingPermissions: new Map(),
       bufferedPermissionResolutions: new Map(),
       inFlightPermissionResponses: new Set(),
@@ -4885,6 +4939,13 @@ export class AgentManager {
 
     // Check if agent transitioned from running to idle (finished)
     if (previousStatus === "running" && currentStatus === "idle") {
+      // A delegated agent's completion already reaches its owner, and
+      // `broadcastAgentAttention` has always suppressed the push for one — but
+      // the flag was written first and the client reads the flag, so finishing
+      // still raised a badge nobody could act on. Gated here rather than at the
+      // top of the function: `error` is rare and exceptional and keeps its
+      // flag, and `permission` is push-only and never sets one at all.
+      if (isDelegatedAgent(agent)) return;
       agent.attention = {
         requiresAttention: true,
         attentionReason: "finished",
@@ -5277,6 +5338,7 @@ export class AgentManager {
     const gate = this.admissionGate;
     if (gate) {
       context.resolveExecutionPolicy = () => gate.executionPolicyFor(agentId);
+      context.denyInteractiveQuestions = gate.denyInteractiveQuestions(agentId);
     }
     if (
       this.paseoToolsEnabled &&

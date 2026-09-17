@@ -1,9 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { Logger } from "pino";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { ManagedAgent } from "../agent/agent-manager.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import { createStub } from "../test-utils/class-mocks.js";
@@ -22,16 +22,53 @@ const SLOT = "slot_lead";
 const ACTIVE: SlpSlotDestination = { status: "active", agentId: "agt_lead", generationId: "gen_1" };
 const HELD: SlpSlotDestination = { status: "held", reason: "transfer" };
 
+interface CapturedLog {
+  level: "debug" | "info" | "warn" | "error";
+  message: string;
+  payload: Record<string, unknown>;
+}
+
+/** Captures every call instead of writing anywhere, so a test can assert on what admission logged. */
+function createCapturingLogger(): { logger: Logger; records: CapturedLog[] } {
+  const records: CapturedLog[] = [];
+  const capture =
+    (level: CapturedLog["level"]) =>
+    (payload: unknown, message?: string): void => {
+      records.push({ level, message: message ?? "", payload: payload as Record<string, unknown> });
+    };
+  const logger = {
+    child: () => logger,
+    trace: () => undefined,
+    debug: capture("debug"),
+    info: capture("info"),
+    warn: capture("warn"),
+    error: capture("error"),
+  };
+  return { logger: logger as unknown as Logger, records };
+}
+
+function isEnteringWait(record: CapturedLog): boolean {
+  return record.level === "debug" && record.message === "SLP mail delivery is waiting";
+}
+
+function isLeavingWait(record: CapturedLog): boolean {
+  return record.level === "info" && record.message === "SLP mail delivery resumed after a wait";
+}
+
 interface Harness {
   mailbox: SlpMailbox;
   controlTurns: SlpControlTurns;
   /** Mail ids in the order admission received them. */
   admitted: string[];
+  /** Everything logged through this mailbox's logger. */
+  logRecords: CapturedLog[];
   /** Resolves once the condition holds. */
   until: (done: () => boolean) => Promise<void>;
   /** Resolves once the record is durable in the given state. */
   reaches: (mailId: string, state: string) => Promise<void>;
   releaseAdmission: () => void;
+  /** Fires the terminal turn-boundary event `nextTurnBoundary` waits on for this agent. */
+  endTurn: (agentId: string) => void;
 }
 
 /**
@@ -85,16 +122,29 @@ describe("SLP mail dispatch loop", () => {
     const admissionReleased = new Promise<void>((resolve) => {
       releaseAdmission = resolve;
     });
+    const { logger, records: logRecords } = createCapturingLogger();
+    interface StateEvent {
+      type: "agent_state";
+      agent: { lifecycle: "idle" };
+    }
+    const listeners = new Set<{ agentId?: string; callback: (event: StateEvent) => void }>();
     const mailbox = new SlpMailbox({
       directory: path.join(directory, "mail"),
-      logger: createTestLogger(),
+      logger,
       agentManager: createStub<SlpMailboxAgentManager>({
         waitForAgentClose: async () => undefined,
         getAgent: () => {
           options.beforeDispatch?.();
           return createStub<ManagedAgent>({});
         },
-        subscribe: () => () => undefined,
+        subscribe: (
+          callback: (event: StateEvent) => void,
+          subscribeOptions?: { agentId?: string },
+        ) => {
+          const entry = { agentId: subscribeOptions?.agentId, callback };
+          listeners.add(entry);
+          return () => listeners.delete(entry);
+        },
         admitForegroundTurn: async (
           _agentId: string,
           _prompt: unknown,
@@ -117,9 +167,16 @@ describe("SLP mail dispatch loop", () => {
       mailbox,
       controlTurns,
       admitted,
+      logRecords,
       until,
       reaches: (mailId, state) => until(() => mailbox.get(mailId)?.state === state),
       releaseAdmission,
+      endTurn: (agentId) => {
+        for (const entry of listeners) {
+          if (entry.agentId && entry.agentId !== agentId) continue;
+          entry.callback({ type: "agent_state", agent: { lifecycle: "idle" } });
+        }
+      },
     };
   }
 
@@ -134,6 +191,16 @@ describe("SLP mail dispatch loop", () => {
       fromSlotId: null,
       kind: "activation",
       prompt: "You are now the active Lead for this slot.",
+    };
+  }
+
+  function report(text: string): SlpMailInput {
+    return {
+      groupId: GROUP,
+      slotId: SLOT,
+      fromSlotId: "slot_lead_1",
+      kind: "report",
+      prompt: text,
     };
   }
 
@@ -258,5 +325,111 @@ describe("SLP mail dispatch loop", () => {
     harness.mailbox.pump(GROUP, SLOT);
     await harness.reaches(queued.id, "accepted");
     expect(harness.admitted).toEqual([queued.id]);
+  });
+
+  test("an immediate admission logs nothing about waiting", async () => {
+    const harness = createMailbox({ resolveSlot: () => ACTIVE });
+
+    const queued = await harness.mailbox.enqueue(message("fast"));
+    await harness.reaches(queued.id, "accepted");
+
+    expect(harness.logRecords.filter((record) => record.message.includes("wait"))).toEqual([]);
+  });
+
+  test("a held slot logs the wait's reason on entry and its duration on the way out", async () => {
+    let calls = 0;
+    const harness = createMailbox({
+      resolveSlot: () => {
+        calls += 1;
+        return calls <= 2 ? HELD : ACTIVE;
+      },
+    });
+
+    const queued = await harness.mailbox.enqueue(message("waits on hold"));
+    await harness.until(() => calls >= 1);
+    harness.mailbox.pump(GROUP, SLOT);
+    await harness.until(() => calls >= 2);
+    harness.mailbox.pump(GROUP, SLOT);
+    await harness.reaches(queued.id, "accepted");
+
+    const entering = harness.logRecords.filter(isEnteringWait);
+    // Logged once even though the loop re-checked the same held reason twice.
+    expect(entering).toHaveLength(1);
+    expect(entering[0]?.payload).toMatchObject({ mailId: queued.id, reason: "held" });
+    const leaving = harness.logRecords.find(isLeavingWait);
+    expect(leaving?.payload).toMatchObject({ mailId: queued.id, reason: "held" });
+    expect(leaving?.payload.waitMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test("a busy answer logs the wait as busy and its duration once the turn ends", async () => {
+    let admitCalls = 0;
+    const harness = createMailbox({
+      resolveSlot: () => ACTIVE,
+      admit: () => {
+        admitCalls += 1;
+        return admitCalls === 1 ? { status: "busy" as const } : { status: "started" as const };
+      },
+    });
+
+    const queued = await harness.mailbox.enqueue(message("busy recipient"));
+    await harness.until(() => harness.logRecords.some(isEnteringWait));
+    const entering = harness.logRecords.find(isEnteringWait);
+    expect(entering?.payload).toMatchObject({ mailId: queued.id, reason: "busy" });
+
+    // Nothing but the turn's own boundary should release this wait.
+    expect(harness.logRecords.some(isLeavingWait)).toBe(false);
+    harness.endTurn(ACTIVE.agentId);
+    await harness.reaches(queued.id, "accepted");
+
+    const leaving = harness.logRecords.find(isLeavingWait);
+    expect(leaving?.payload).toMatchObject({ mailId: queued.id, reason: "busy" });
+    expect(leaving?.payload.waitMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test("appendToQueuedReport merges into a report still queued for the slot instead of adding a second one", async () => {
+    const harness = createMailbox({ resolveSlot: () => HELD });
+    const first = await harness.mailbox.enqueue(report("first report"));
+
+    const appended = await harness.mailbox.appendToQueuedReport(
+      GROUP,
+      SLOT,
+      (existing) => `${existing}\nsecond report`,
+    );
+
+    expect(appended).toBe(true);
+    expect(harness.mailbox.list().filter((record) => record.kind === "report")).toHaveLength(1);
+    expect(harness.mailbox.get(first.id)).toMatchObject({
+      state: "queued",
+      prompt: "first report\nsecond report",
+    });
+  });
+
+  test("appendToQueuedReport returns false when no report is queued for the slot", async () => {
+    const harness = createMailbox({ resolveSlot: () => ACTIVE });
+
+    const appended = await harness.mailbox.appendToQueuedReport(
+      GROUP,
+      SLOT,
+      (existing) => existing,
+    );
+
+    expect(appended).toBe(false);
+  });
+
+  test("appendToQueuedReport will not touch a report dispatch already owns", async () => {
+    const harness = createMailbox({ resolveSlot: () => ACTIVE, holdAdmission: true });
+    const queued = await harness.mailbox.enqueue(report("first report"));
+    await harness.until(() => harness.admitted.length === 1);
+
+    const appended = await harness.mailbox.appendToQueuedReport(
+      GROUP,
+      SLOT,
+      (existing) => `${existing}\nsecond report`,
+    );
+    expect(appended).toBe(false);
+
+    harness.releaseAdmission();
+    await harness.reaches(queued.id, "accepted");
+    expect(harness.mailbox.get(queued.id)?.prompt).toBe("first report");
   });
 });

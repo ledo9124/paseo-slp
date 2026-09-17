@@ -138,6 +138,9 @@ describe("SLP Peer creation and handback", () => {
 
     expect(registeredAtFirstSight).toBe(true);
     expect(created.handbackRegistered).toBe(true);
+    // A Peer reaches its Lead by ending its turn, so it may not open a
+    // question either. The Lead is the first session in a direct group.
+    expect(daemon.client.questionDenials).toEqual([true, true]);
     const peerId = created.snapshot.id;
     const peerRecord = await daemon.storage.get(peerId);
     const prompt = peerRecord?.config?.systemPrompt ?? "";
@@ -256,6 +259,34 @@ describe("SLP Peer creation and handback", () => {
     expect(delivered).toContain(`Peer: Investigate login latency (${created.snapshot.id})`);
     // Nothing is left to hand back, so the record closes instead of re-arming.
     expect(handbackFor(daemon, created.snapshot.id)).toMatchObject({ state: "delivered" });
+  });
+
+  test("a Peer whose turn is cancelled is reported as cut, not as a result", async () => {
+    const daemon = await startDaemon();
+    const group = await readyGroup(daemon);
+    const leadId = leadAgentId(group);
+    const created = await daemon.createAgent(peerCreation(leadId));
+    const lead = daemon.client.sessions[0]!;
+    await daemon.manager.waitForAgentRunStart(created.snapshot.id);
+
+    // Someone pressed Stop. The Lead must not be told this came back with a
+    // result: whatever the Peer last narrated is mid-turn, not an answer.
+    const cancellation = await daemon.manager.cancelAgentRun(created.snapshot.id, {
+      cause: "user",
+    });
+    expect(cancellation.status).toBe("settled");
+    await untilSettled(() => accepted(daemon, created.snapshot.id), "cancel handback delivered");
+
+    const delivered = lead.startPrompts[1]!;
+    expect(delivered).toContain("had its turn cancelled before it finished");
+    expect(delivered).not.toContain("returned its turn");
+    // A cut turn does not end the assignment: the record re-arms for the next
+    // one, which is why the outcome is read off the delivered mail and not off
+    // the record — re-arming drops it.
+    expect(handbackFor(daemon, created.snapshot.id)).toMatchObject({
+      state: "armed",
+      deliveries: 1,
+    });
   });
 
   test("a busy Lead is never steered or interrupted; handbacks arrive in order after its turn", async () => {

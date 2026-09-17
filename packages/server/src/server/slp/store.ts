@@ -128,8 +128,13 @@ const SlpHandbackBaseSchema = z.object({
 });
 
 const SlpHandbackOutcomeSchema = z.object({
-  /** `returned` is a turn end, not assignment completion: the owner decides what the message is. */
-  reason: z.enum(["returned", "errored", "closed"]),
+  /**
+   * `returned` is a turn end, not assignment completion: the owner decides what
+   * the message is. `cancelled` is a turn someone cut, which reads as a return
+   * unless it is named — the owner would otherwise be handed whatever the Peer
+   * last happened to narrate and told it came back with a result.
+   */
+  reason: z.enum(["returned", "cancelled", "errored", "closed"]),
   at: z.string(),
 });
 export type SlpHandbackOutcome = z.infer<typeof SlpHandbackOutcomeSchema>;

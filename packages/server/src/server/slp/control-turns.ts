@@ -6,9 +6,12 @@ import type { SlpMailRecord } from "./store.js";
  * it starts is not relayed as a report.
  *
  * `interrupted` is deliberately absent: it reports a Peer's lost turn, and the
- * Lead's answer to it is ordinary project work.
+ * Lead's answer to it is ordinary project work. `control` is here because its
+ * only producer today is the handoff-cancelled notice (`transfer.ts`): the
+ * Lead's acknowledgement of a decision the Supervisor itself made is not a
+ * report either.
  */
-const CONTROL_KINDS: ReadonlySet<SlpMailRecord["kind"]> = new Set(["activation"]);
+const CONTROL_KINDS: ReadonlySet<SlpMailRecord["kind"]> = new Set(["activation", "control"]);
 
 export function isControlMail(kind: SlpMailRecord["kind"]): boolean {
   return CONTROL_KINDS.has(kind);

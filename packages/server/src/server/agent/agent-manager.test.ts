@@ -7690,6 +7690,10 @@ test("onAgentAttention is not called for delegated child agents", async () => {
   await manager.runAgent(agent.id, "hello");
 
   expect(attentionCalls).toEqual([]);
+  // The push was always suppressed here; the flag was not, and the client reads
+  // the flag — so a delegated agent finishing still raised a badge for work its
+  // owner had already been handed.
+  expect(manager.getAgent(agent.id)?.attention).toMatchObject({ requiresAttention: false });
 });
 
 test("clearAgentAttention on errored agent stays cleared until a new error transition", async () => {

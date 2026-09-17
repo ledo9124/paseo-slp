@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 
 import {
   AgentRunCancellationError,
+  type AgentRunCancellationOptions,
   type AgentRunCancellationResult,
   type ManagedAgent,
 } from "./agent-manager.js";
@@ -13,7 +14,10 @@ export type LifecycleAgentSnapshot = Pick<ManagedAgent, "id" | "cwd" | "lifecycl
 export interface LifecycleAgentManager {
   getAgent(agentId: string): LifecycleAgentSnapshot | null;
   hasInFlightRun(agentId: string): boolean;
-  cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult>;
+  cancelAgentRun(
+    agentId: string,
+    options?: AgentRunCancellationOptions,
+  ): Promise<AgentRunCancellationResult>;
   clearAgentAttention(agentId: string): Promise<void>;
   archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
   archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord>;
@@ -80,7 +84,7 @@ async function requestAgentRunCancellation(
     "cancelAgentRunCommand: interrupting",
   );
   const startedAt = Date.now();
-  const cancellation = await agentManager.cancelAgentRun(agentId);
+  const cancellation = await agentManager.cancelAgentRun(agentId, { cause: "user" });
   logger.debug(
     { agentId, cancellation: cancellation.status, durationMs: Date.now() - startedAt },
     "cancelAgentRunCommand: cancelAgentRun completed",

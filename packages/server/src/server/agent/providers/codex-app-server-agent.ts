@@ -141,6 +141,9 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
+/** See denyInteractiveQuestions on AgentLaunchContext. */
+const SLP_INTERACTIVE_QUESTION_REFUSAL =
+  "Interactive questions are not available in this session. End this turn now and put your question in your final message.";
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
 // CLI identity instead of showing up as Paseo in provider usage logs.
@@ -3421,6 +3424,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
     private readonly resolveExecutionPolicy?: () => AgentExecutionPolicy,
+    private readonly denyInteractiveQuestions: boolean = false,
   ) {
     this.logger = logger.child({
       module: "agent",
@@ -6381,8 +6385,43 @@ export class CodexAppServerAgentSession implements AgentSession {
   private receiveAsyncQuestion(threadId: string | null, item: unknown): void {
     if (threadId !== this.currentThreadId) return;
     const request = this.asyncQuestions.receive(item);
-    if (request)
-      this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
+    if (!request) return;
+    if (this.denyInteractiveQuestions) {
+      this.denyAsyncQuestion(request.id);
+      return;
+    }
+    this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
+  }
+
+  /**
+   * A denied caller has no recipient for this question: it can only reach
+   * its Lead or Human by ending its own turn. Resolve the record immediately
+   * rather than emitting `permission_requested`, so it never sits in
+   * `getPendingPermissions()` reporting lifecycle `running` with nobody able
+   * to answer, and nudge the active turn so the model knows what to do
+   * instead of waiting on an answer that will never come.
+   */
+  private denyAsyncQuestion(requestId: string): void {
+    const response: AgentPermissionResponse = {
+      behavior: "deny",
+      message: SLP_INTERACTIVE_QUESTION_REFUSAL,
+    };
+    const prepared = this.asyncQuestions.prepareResponse(requestId, response);
+    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: prepared.complete() });
+    this.emitEvent({
+      type: "permission_resolved",
+      provider: CODEX_PROVIDER,
+      requestId,
+      resolution: response,
+    });
+    const expectedTurnId = this.activeForegroundTurnId;
+    if (!expectedTurnId) return;
+    void this.steerActiveTurn(SLP_INTERACTIVE_QUESTION_REFUSAL, {
+      expectedTurnId,
+      clientMessageId: randomUUID(),
+    }).catch((error: unknown) => {
+      this.logger.warn({ error, requestId }, "codex.slp.deny_async_question.steer_failed");
+    });
   }
 
   private dismissInterruptedAsyncQuestions(): void {
@@ -7150,6 +7189,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       launchContext?.agentId,
       "interactive",
       launchContext?.resolveExecutionPolicy,
+      launchContext?.denyInteractiveQuestions ?? false,
     );
     await session.connect();
     return session;
@@ -7183,6 +7223,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       launchContext?.agentId,
       options?.purpose ?? "interactive",
       launchContext?.resolveExecutionPolicy,
+      launchContext?.denyInteractiveQuestions ?? false,
     );
     await session.connect();
     return session;

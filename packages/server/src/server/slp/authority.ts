@@ -73,6 +73,22 @@ export type SlpRelation =
   | "outside";
 
 /**
+ * A Peer or Lead has no route to answer an interactive question: the SLP
+ * contract is "end your turn, the reply arrives as mail" (see
+ * PEER_HIDDEN_TOOLS above), so a "question" permission request would leave
+ * it reporting lifecycle `running` with nobody able to see or answer it.
+ * Only Supervisor keeps the channel — its chat is the one Human reads.
+ * Mirrors the `AskUserQuestion` denial in `slp/launch.ts` for Claude; a
+ * provider whose question channel isn't a denylistable tool (Codex's
+ * `request_user_input_async`) consults this instead, at the point the
+ * question is turned into a permission request rather than at launch. See
+ * docs/slp/architecture.md#tool-and-write-boundaries.
+ */
+export function isInteractiveQuestionDenied(role: SlpRole): boolean {
+  return role !== "supervisor";
+}
+
+/**
  * Directions from docs/slp/architecture.md#message-routing-and-delivery:
  * Supervisor writes to Lead; Lead writes to its Peers and Supervisor; a Peer
  * writes to nobody and reaches its Lead by ending its turn. Mutating tools

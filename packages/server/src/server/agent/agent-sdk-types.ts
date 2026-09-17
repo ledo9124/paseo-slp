@@ -647,6 +647,20 @@ export interface AgentLaunchContext {
    * stored copy that could disagree.
    */
   resolveExecutionPolicy?: () => AgentExecutionPolicy;
+  /**
+   * True when the caller's SLP role has no route to answer an interactive
+   * question: a Peer or Lead reaches its own recipient only by ending its
+   * turn, so a "question" permission request nobody can see would leave it
+   * reporting lifecycle `running` forever. Fixed at launch, like a role's
+   * tool catalog — it does not change over the generation's life. Providers
+   * whose question channel is a denylistable tool (Claude's
+   * `AskUserQuestion`) are covered through `disallowedTools` in
+   * `slp/launch.ts` instead; this field is for a provider whose question
+   * channel is part of its own message protocol and can't be reached that
+   * way (Codex's `request_user_input_async`). See
+   * docs/slp/architecture.md#tool-and-write-boundaries.
+   */
+  denyInteractiveQuestions?: boolean;
 }
 
 export interface AgentCreateSessionOptions {
