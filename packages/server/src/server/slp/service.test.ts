@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { createPaseoToolCatalog } from "../agent/tools/paseo-tools.js";
+import { asInternals } from "../test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { archiveByScope, type ArchiveDependencies } from "../workspace-archive-service.js";
@@ -173,6 +174,17 @@ describe("SlpService", () => {
     return session;
   }
 
+  test("only the Supervisor may open an interactive question", async () => {
+    const daemon = await startDaemon();
+    await daemon.service.initializeGroup(input({ mode: "supervised" }));
+
+    // Initialization creates the Supervisor first, then the Lead. The flag
+    // rides the launch context because Codex copies provider options verbatim
+    // into its own config file, so a policy flag there would leak into it.
+    // Supervisor keeps the channel: its chat is the one Human reads.
+    expect(daemon.client.questionDenials).toEqual([false, true]);
+  });
+
   test("supervised mode: the Supervisor is the Human's contact and the Lead starts idle", async () => {
     const daemon = await startDaemon();
     const group = await daemon.service.initializeGroup(input({ mode: "supervised" }));
@@ -208,6 +220,51 @@ describe("SlpService", () => {
     const second = await startDaemon();
     expect(await second.service.initializeGroup(input({ mode: "supervised" }))).toEqual(group);
     expect(second.client.sessions).toHaveLength(0);
+  });
+
+  test("supervised mode: the Lead's answer to a runtime control notice is not a report", async () => {
+    const daemon = await startDaemon({ releaseText: "Understood, I am the active Lead." });
+    const group = await daemon.service.initializeGroup(input({ mode: "supervised" }));
+    const supervisorId = activeAgentId(group, group.supervisorSlotId);
+    const leadId = leadAgentId(group);
+    sessionOf(daemon, supervisorId).release();
+    await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+    const reports = () => daemon.service.listMail().filter((mail) => mail.kind === "report");
+
+    // The runtime's own activation notice, the mail a completed transfer sends
+    // its successor. Answering it is not Lead telling Supervisor anything.
+    const activation = await daemon.service.deliverMail({
+      groupId: group.id,
+      slotId: group.leadSlotId,
+      fromSlotId: null,
+      kind: "activation",
+      prompt: "You are now the active Lead for this slot.",
+    });
+    await untilSettled(
+      () => mailState(daemon, activation.id) === "accepted",
+      "the activation notice reached the Lead",
+    );
+    sessionOf(daemon, leadId).release();
+    await daemon.manager.waitForAgentEvent(leadId, { waitForActive: true });
+
+    // The next ordinary turn does report, and its report is the only one. A
+    // report for the activation turn would have been queued before this one,
+    // so the first report to exist decides the assertion either way.
+    asInternals<{ releaseText: string }>(sessionOf(daemon, leadId)).releaseText =
+      "Analysis done: three phases.";
+    expect((await daemon.manager.admitForegroundTurn(leadId, "Analyze the project")).status).toBe(
+      "started",
+    );
+    await daemon.manager.waitForAgentRunStart(leadId);
+    sessionOf(daemon, leadId).release();
+    await untilSettled(() => reports().length > 0, "the ordinary turn produced a report");
+
+    expect(reports()).toHaveLength(1);
+    expect(JSON.stringify(reports()[0]!.prompt)).toContain("Analysis done: three phases.");
+    expect(reports()[0]).toMatchObject({
+      slotId: group.supervisorSlotId,
+      fromSlotId: group.leadSlotId,
+    });
   });
 
   test("supervised mode: the final Lead message reaches a busy Supervisor after a progress message", async () => {
@@ -392,6 +449,25 @@ describe("SlpService", () => {
     ]);
   });
 
+  test("a Claude Lead denies AskUserQuestion; a Claude Supervisor does not", async () => {
+    const daemon = await startDaemon({
+      roleSettings: () => ({
+        supervisor: { provider: "claude" },
+        lead: { provider: "claude" },
+      }),
+    });
+    await daemon.service.initializeGroup(input({ mode: "supervised" }));
+    expect(
+      daemon.creations.map((creation) => [creation.title, creation.source.providerOptions]),
+    ).toEqual([
+      ["Supervisor", { disallowedTools: ["Agent", "Task"] }],
+      // A Peer and Lead have no recipient for a blocking question: the SLP
+      // contract is "end your turn, the reply arrives as mail" (see
+      // docs/slp/evidence.md). The Supervisor keeps it: Human reads its chat.
+      ["Lead", { disallowedTools: ["Agent", "Task", "AskUserQuestion"] }],
+    ]);
+  });
+
   test("a root override wins over host defaults without changing the other role", async () => {
     const daemon = await startDaemon({
       roleSettings: () => ({
@@ -451,6 +527,37 @@ describe("SlpService", () => {
     const second = await startDaemon();
     expect(second.service.getGroupForWorkspace(WORKSPACE)?.id).toBe(next.id);
     expect(second.service.getGroup(group.id)?.status).toBe("ended");
+  });
+
+  test("memberAgentArchived ends the group once every member is archived, not before", async () => {
+    const daemon = await startDaemon();
+    const group = await daemon.service.initializeGroup(input({ mode: "supervised" }));
+    const supervisorId = activeAgentId(group, group.supervisorSlotId);
+    const leadId = leadAgentId(group);
+
+    await daemon.manager.archiveSnapshot(supervisorId, new Date().toISOString());
+    await daemon.service.memberAgentArchived(supervisorId);
+    expect(daemon.service.getGroup(group.id)?.status).toBe("ready");
+
+    await daemon.manager.archiveSnapshot(leadId, new Date().toISOString());
+    await daemon.service.memberAgentArchived(leadId);
+    expect(daemon.service.getGroup(group.id)?.status).toBe("ended");
+    expect(daemon.service.getGroupForWorkspace(WORKSPACE)).toBeNull();
+  });
+
+  test("memberAgentArchived leaves a transferring group held, not ended", async () => {
+    const first = await startDaemon();
+    const group = await heldGroup(first, "transfer");
+    const second = await startDaemon();
+    expect(second.service.getGroup(group.id)?.status).toBe("frozen");
+
+    await second.service.memberAgentArchived(leadAgentId(group));
+    expect(second.service.getGroup(group.id)?.status).toBe("frozen");
+  });
+
+  test("memberAgentArchived does nothing for an agent outside any group", async () => {
+    const daemon = await startDaemon();
+    await expect(daemon.service.memberAgentArchived("agt_unknown")).resolves.toBeUndefined();
   });
 
   test("a conflicting mode or first message for the same workspace fails visibly", async () => {

@@ -79,8 +79,8 @@ test(
         }),
       );
       assert.equal(result.home, slpHome);
-      assert.equal(result.host, "127.0.0.1:17777");
-      assert.equal(result.listen, result.host);
+      assert.equal(result.host, undefined);
+      assert.equal(result.listen, "127.0.0.1:17777");
       assert.equal(result.cli, shim);
       assert.equal(path.resolve(result.app), executable);
       assert.deepEqual(result.args.slice(-3), ["daemon", "status", "--json"]);

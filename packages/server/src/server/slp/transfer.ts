@@ -9,7 +9,9 @@ import type { AgentStorage } from "../agent/agent-storage.js";
 import type { AgentRequests } from "../agent/requests/index.js";
 import type { SlpCheckpointStore } from "./checkpoints.js";
 import {
+  SlpDecisionConflictError,
   SlpNotCandidateError,
+  SlpNotDecidingSupervisorError,
   SlpTransferBlockedError,
   SlpTransferRefusedError,
 } from "./errors.js";
@@ -93,6 +95,28 @@ type TransferIn<P extends SlpTransferRecord["phase"]> = Extract<SlpTransferRecor
  * commit; this journal is the manifest boot recovery reconciles against it.
  * Design: docs/slp/handoff.md.
  */
+/**
+ * Nothing is owed on these. `canceled` belongs here as an outcome, but not in
+ * the freeze rule below: a cancellation whose hold outlived it is finished,
+ * not a group that needs repairing.
+ */
+export const TERMINAL_TRANSFER_PHASES: ReadonlySet<string> = new Set([
+  "completed",
+  "aborted",
+  "canceled",
+]);
+
+/**
+ * While the journal sits in one of these and the pointer has not moved, the
+ * source keeps the slot but may not start product work on it.
+ */
+const SUSPENDED_PHASES: ReadonlySet<string> = new Set([
+  "stopped",
+  "awaiting_supervisor",
+  "preparing",
+  "ready",
+]);
+
 export class SlpTransfers {
   private readonly store: SlpRecordStore<SlpTransferRecord>;
   private readonly host: SlpTransferHost;
@@ -112,6 +136,20 @@ export class SlpTransfers {
   forCandidate(agentId: string): SlpTransferRecord | null {
     for (const record of this.records.values()) {
       if (candidateOf(record)?.agentId === agentId) return record;
+    }
+    return null;
+  }
+
+  /**
+   * The Supervisor-controlled transfer that suspends this agent, if any. The
+   * answer comes from the journal, so it is the same after a restart with
+   * nothing extra persisted, and it ends the moment the pointer moves: from
+   * `switched` on, the source is retired and the retirement rule answers.
+   */
+  suspending(agentId: string): SlpTransferRecord | null {
+    for (const record of this.records.values()) {
+      if (record.sourceAgentId !== agentId || record.control !== "supervisor") continue;
+      if (SUSPENDED_PHASES.has(record.phase)) return record;
     }
     return null;
   }
@@ -136,6 +174,7 @@ export class SlpTransfers {
     source: SlpGenerationRecord;
     checkpoint: SlpCheckpointRecord;
     reason: string;
+    control: "automatic" | "supervisor";
   }): Promise<SlpTransferRecord> {
     const { group, slot, source } = input;
     if (group.status !== "ready" || group.hold) {
@@ -152,6 +191,7 @@ export class SlpTransfers {
       sourceGenerationId: source.id,
       sourceAgentId: source.agentId,
       reason: input.reason,
+      control: input.control,
       checkpointRevision: input.checkpoint.revision,
       phase: "requested",
       createdAt: at,
@@ -163,6 +203,159 @@ export class SlpTransfers {
     if (slot.role === "peer") await this.host.handbacks.setTransferInProgress(source.agentId, true);
     void this.run(record.id);
     return record;
+  }
+
+  /**
+   * The Supervisor's answer. Ordering is the contract, not an implementation
+   * detail: the decision is durable before anything it authorizes, and a
+   * cancel's source notice is durable before the hold lifts, so the notice is
+   * the first thing the slot can drain when it runs again.
+   */
+  async decide(input: {
+    transferId: string;
+    actorAgentId: string;
+    actorGenerationId: string;
+    outcome: "continue" | "cancel";
+    reason?: string;
+  }): Promise<SlpTransferRecord> {
+    const record = this.records.get(input.transferId);
+    if (!record)
+      throw new SlpNotDecidingSupervisorError(
+        input.actorAgentId,
+        input.transferId,
+        "it has no record",
+      );
+    // A repeat of the same answer is the same answer; a different one is a
+    // conflict, whatever the transfer has done since.
+    if (record.decision) {
+      if (record.decision.outcome === input.outcome) return record;
+      throw new SlpDecisionConflictError(record.id, record.decision.outcome, input.outcome);
+    }
+    if (record.phase !== "awaiting_supervisor") {
+      throw new SlpTransferRefusedError(
+        record.slotId,
+        `it is ${record.phase}, not awaiting a decision`,
+      );
+    }
+    const decision = {
+      outcome: input.outcome,
+      actorAgentId: input.actorAgentId,
+      actorGenerationId: input.actorGenerationId,
+      decidedAt: this.host.now().toISOString(),
+      ...(input.reason ? { reason: input.reason } : {}),
+    } as const;
+    if (input.outcome === "continue") {
+      const continued = await this.persist({ ...record, phase: "continued", decision });
+      void this.run(record.id);
+      return continued;
+    }
+    return this.cancel(await this.persist({ ...record, phase: "canceling", decision }));
+  }
+
+  /**
+   * Steps 2 to 5 of the cancellation journal, reachable both from the decision
+   * and from recovery, so a crash between any two of them finishes once.
+   */
+  private async cancel(record: TransferIn<"canceling">): Promise<SlpTransferRecord> {
+    const { group, slot } = this.locate(record);
+    await this.host.mailbox.enqueue({
+      id: `handoff_canceled_${record.id}`,
+      groupId: group.id,
+      slotId: slot.id,
+      fromSlotId: null,
+      kind: "control",
+      prompt: formatSystemNotificationPrompt(
+        [
+          `SLP runtime: the handoff you requested (transfer ${record.id}) was canceled by the Supervisor.`,
+          record.decision.reason ? `Reason given: ${record.decision.reason}` : null,
+          "You are still the active Lead for this slot and your context was not replaced. The runtime has re-enabled your product work.",
+          "Reconcile anything that queued while you were stopped before continuing. You may request a handoff again later.",
+        ]
+          .filter((line): line is string => line !== null)
+          .join("\n"),
+      ),
+    });
+    const canceled = await this.persist({
+      ...record,
+      phase: "canceled",
+      canceledAt: this.host.now().toISOString(),
+    });
+    if (group.hold?.kind === "transfer" && group.hold.transferId === record.id) {
+      group.hold = null;
+      await this.host.persistGroup(group);
+    }
+    this.host.logger.info(
+      { transferId: record.id, slotId: slot.id },
+      "SLP handoff canceled by the Supervisor",
+    );
+    for (const slotId of Object.keys(group.slots)) this.host.mailbox.pump(group.id, slotId);
+    return canceled;
+  }
+
+  /** A cancellation whose record is terminal but whose cleanup did not finish. */
+  private async finishCancellation(
+    record: TransferIn<"canceled">,
+    group: SlpGroupRecord,
+  ): Promise<void> {
+    if (group.hold?.kind === "transfer" && group.hold.transferId === record.id) {
+      group.hold = null;
+      await this.host.persistGroup(group);
+    }
+    for (const slotId of Object.keys(group.slots)) this.host.mailbox.pump(group.id, slotId);
+  }
+
+  /**
+   * Which notice this transfer still owes the Supervisor, or null when it owes
+   * none. The first is keyed by the transfer, so re-running this is free. But
+   * a notice the daemon died while dispatching is `uncertain` for good — the
+   * mailbox never replays one, and re-enqueuing the same id returns the old
+   * record rather than delivering anything — so a fresh id has to carry it,
+   * and it has to say it may be arriving twice.
+   */
+  private retryNoticeFor(
+    record: TransferIn<"awaiting_supervisor">,
+  ): { id: string; preamble: string[] } | null {
+    const primary = `handoff_waiting_${record.id}`;
+    const existing = this.host.mailbox.list().filter((mail) => mail.id.startsWith(primary));
+    if (existing.length === 0) return { id: primary, preamble: [] };
+    // Anything not yet written off still stands; only every attempt being
+    // uncertain leaves the Supervisor possibly holding nothing.
+    if (existing.some((mail) => mail.state !== "uncertain")) return null;
+    return {
+      id: `handoff_waiting_recovery_${record.id}_${existing.length}`,
+      preamble: [
+        "This notice may be a duplicate. The daemon restarted while an earlier copy was being delivered and cannot tell whether it arrived. If you have already seen this, ignore it; deciding twice is safe and changes nothing.",
+      ],
+    };
+  }
+
+  /**
+   * Durable before the Supervisor can be told anything, and keyed by the
+   * transfer so a restart cannot queue a second one. Delivery is the
+   * mailbox's problem: a queued notice is not a notice the Supervisor has.
+   */
+  private async noticeAwaitingDecision(record: TransferIn<"awaiting_supervisor">): Promise<void> {
+    const group = this.host.getGroup(record.groupId);
+    if (!group.supervisorSlotId) return;
+    const retry = this.retryNoticeFor(record);
+    if (retry === null) return;
+    await this.host.mailbox.enqueue({
+      id: retry.id,
+      groupId: group.id,
+      slotId: group.supervisorSlotId,
+      fromSlotId: null,
+      kind: "report",
+      prompt: formatSystemNotificationPrompt(
+        [
+          ...retry.preamble,
+          "SLP runtime control event, not a message from Human or from Lead.",
+          `Lead requested a context handoff (transfer ${record.id}) and has stopped. Its reason: ${record.reason}`,
+          "No successor exists yet. The runtime creates one only if you continue.",
+          `Decide with slp_decide_lead_handoff({ transferId: "${record.id}", decision: "continue" | "cancel" }). A short reason helps the Lead if you cancel.`,
+          "This decides when the Lead's context is replaced. It is not an engineering judgement about the work, and it does not accept or reject anything the Lead has done.",
+        ].join("\n"),
+      ),
+    });
   }
 
   /** Called from the candidate's `slp_ready` tool; the runner stops its turn and switches. */
@@ -191,6 +384,9 @@ export class SlpTransfers {
       return;
     }
     const candidate = candidateOf(record);
+    // `canceled` is terminal too but is deliberately not here: its cleanup is
+    // allowed to outlive it, and finishing that is recovery's job rather than
+    // a reason to freeze the group.
     if (record.phase === "completed" || record.phase === "aborted") {
       await this.host.freezeGroup(
         group,
@@ -199,6 +395,19 @@ export class SlpTransfers {
       return;
     }
     if (slot.activeGenerationId === record.sourceGenerationId) {
+      if (record.control === "supervisor" && record.phase !== "requested") {
+        // A restart is not an answer to the Supervisor's question. What the
+        // journal already decided is finished; what it has not is preserved,
+        // hold and suspension included, and no candidate is created.
+        if (record.phase === "canceling") await this.cancel(record);
+        else if (record.phase === "canceled") await this.finishCancellation(record, group);
+        else if (record.phase === "stopped" || record.phase === "continued") {
+          void this.run(record.id);
+        } else if (record.phase === "awaiting_supervisor") {
+          await this.noticeAwaitingDecision(record);
+        }
+        return;
+      }
       await this.abort(record, "daemon restarted before the active-generation switch");
       return;
     }
@@ -226,7 +435,18 @@ export class SlpTransfers {
     try {
       let record = this.require(id);
       if (record.phase === "requested") record = await this.stop(record);
-      if (record.phase === "stopped") record = await this.prepare(record);
+      if (record.phase === "stopped") {
+        // The source is stopped and suspended. Only a Supervisor decision
+        // releases the replacement, and until then no candidate exists.
+        if (record.control === "supervisor") {
+          record = await this.persist({ ...record, phase: "awaiting_supervisor" });
+          await this.noticeAwaitingDecision(record);
+          return;
+        }
+        record = await this.prepare(record);
+      }
+      if (record.phase === "awaiting_supervisor") return;
+      if (record.phase === "continued") record = await this.prepare(record);
       if (record.phase === "preparing") record = await this.awaitReady(record);
       if (record.phase === "ready") record = await this.switch(record);
       if (record.phase === "switched") await this.complete(record);
@@ -303,7 +523,9 @@ export class SlpTransfers {
    * exists, under the creation journal so a retry cannot create a second
    * candidate. Its first turn is receive-only preparation.
    */
-  private async prepare(record: TransferIn<"stopped">): Promise<TransferIn<"preparing">> {
+  private async prepare(
+    record: TransferIn<"stopped"> | TransferIn<"continued">,
+  ): Promise<TransferIn<"preparing">> {
     const { group, slot } = this.locate(record);
     const sourceRecord = await this.host.agentStorage.get(record.sourceAgentId);
     if (!sourceRecord)
@@ -598,7 +820,7 @@ export class SlpTransfers {
   }
 
   private async describeHandoff(
-    record: TransferIn<"stopped">,
+    record: TransferIn<"stopped"> | TransferIn<"continued">,
     slot: SlpSlotRecord,
     checkpoint: SlpCheckpointRecord,
   ): Promise<string> {

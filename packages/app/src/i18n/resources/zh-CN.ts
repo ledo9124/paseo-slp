@@ -12,6 +12,7 @@ export const zhCN: TranslationResources = {
       copy: "复制",
       copyLine: "复制行",
       dismiss: "关闭",
+      reload: "重新加载",
       retry: "重试",
       search: "搜索",
       select: "选择",
@@ -153,7 +154,7 @@ export const zhCN: TranslationResources = {
       initialPromptRequired: "初始 prompt 必填",
       alreadyLoading: "正在加载",
       uploadFailed: "Failed to upload file",
-      noClipboardImage: "剪贴板中没有图片",
+      noClipboardImage: "当前剪贴板中没有图片。请尝试通过键盘粘贴。",
       pasteImageFailed: "无法粘贴图片",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
@@ -208,6 +209,10 @@ export const zhCN: TranslationResources = {
     historyLoadFailed: "无法加载智能体历史记录",
     messageCapped: "此消息已被截断（{{bytes}} 字节）。",
     permission: {
+      rejectedPlan: "已拒绝的计划",
+      approvedPlan: "已批准的计划",
+      canceledPlan: "已取消的计划",
+
       plan: "Plan",
       required: "需要权限",
       deny: "拒绝",
@@ -294,6 +299,9 @@ export const zhCN: TranslationResources = {
       transferSource: "正在交接：此代理在检查点后停止，待继任者就绪后退役。",
       transferCandidate: "正在准备接手：在主机激活之前为只读。",
       transferBlocked: "交接被阻塞：{{reason}}。请重启主机以完成对账。",
+      decisionWaiting: "一次 Lead 交接正在等待你的决定。在此对话中回复以继续或取消替换。",
+      decisionSuspended: "在替换此上下文前正在等待 Supervisor。在它答复之前，此代理处于停止状态。",
+      decisionPending: "一次 Lead 上下文替换正在等待 Supervisor 的决定。",
       retired: "已退役的一代。该席位的当前代理继续工作。",
       openCurrent: "打开当前{{role}}",
       mailUncertain: "投递状态不确定的消息：{{count}}",
@@ -976,11 +984,8 @@ export const zhCN: TranslationResources = {
         refresh: "刷新",
         refreshState: "刷新 git 和 {{brand}} 状态",
         failedRefresh: "刷新 git 状态失败。",
-        emptyHiddenWhitespace: "隐藏空白差异后没有可见变更",
-        emptyUncommitted: "没有未 commit 的变更",
         seeUncommittedChanges: "查看未 commit 的变更",
         seeCommittedChanges: "查看已 commit 的变更",
-        emptyAgainstBase: "相对于 {{baseRef}} 没有变更",
         checkingRepository: "正在检查 repository...",
         notRepository: "不是 git repository",
         diffMode: "Diff 模式",
@@ -1118,6 +1123,16 @@ export const zhCN: TranslationResources = {
       deleteMessage_other: "这会从此主机的{{count}}个工作区中移除该标签。",
       offline: "此主机离线。",
       updateHost: "请更新此主机以管理标签。",
+    },
+  },
+  changelog: {
+    title: "新功能",
+    installed: "已安装",
+    showMore: "显示更多",
+    openWebsite: "完整更新日志",
+    error: {
+      title: "无法加载更新日志",
+      description: "请检查网络连接后重试。",
     },
   },
   sidebar: {
@@ -1338,6 +1353,7 @@ export const zhCN: TranslationResources = {
       detail: "正在停止本地 daemon。",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "Daemon",
       status: {
         title: "状态",
@@ -2130,6 +2146,7 @@ export const zhCN: TranslationResources = {
     about: {
       title: "关于",
       appVersion: "应用版本",
+      whatsNewHint: "每个版本的发布说明",
       thisDevice: "此设备",
       connectedHosts: "已连接的 Host",
       offline: "离线",

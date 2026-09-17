@@ -128,8 +128,13 @@ const SlpHandbackBaseSchema = z.object({
 });
 
 const SlpHandbackOutcomeSchema = z.object({
-  /** `returned` is a turn end, not assignment completion: the owner decides what the message is. */
-  reason: z.enum(["returned", "errored", "closed"]),
+  /**
+   * `returned` is a turn end, not assignment completion: the owner decides what
+   * the message is. `cancelled` is a turn someone cut, which reads as a return
+   * unless it is named — the owner would otherwise be handed whatever the Peer
+   * last happened to narrate and told it came back with a result.
+   */
+  reason: z.enum(["returned", "cancelled", "errored", "closed"]),
   at: z.string(),
 });
 export type SlpHandbackOutcome = z.infer<typeof SlpHandbackOutcomeSchema>;
@@ -188,7 +193,7 @@ const SlpMailBaseSchema = z.object({
   slotId: z.string(),
   fromSlotId: z.string().nullable(),
   /** `activation` is the runtime's own notice after a switch; it dispatches before anything else queued. */
-  kind: z.enum(["message", "handback", "interrupted", "activation", "report"]),
+  kind: z.enum(["message", "handback", "interrupted", "activation", "report", "control"]),
   prompt: SlpMailPromptSchema,
   /** Dispatch order within the slot. */
   sequence: z.number().int().nonnegative(),
@@ -282,6 +287,21 @@ export const SlpHistoryTailSchema = z.object({
 });
 export type SlpHistoryTail = z.infer<typeof SlpHistoryTailSchema>;
 
+/**
+ * What the Supervisor decided about a prepared replacement, and who decided
+ * it. Durable before any effect it authorizes, so a crash cannot leave an
+ * effect that no record explains
+ * (docs/slp/supervisor-controlled-handoff.md#durable-state).
+ */
+export const SlpTransferDecisionSchema = z.object({
+  outcome: z.enum(["continue", "cancel"]),
+  actorAgentId: z.string(),
+  actorGenerationId: z.string(),
+  decidedAt: z.string(),
+  reason: z.string().optional(),
+});
+export type SlpTransferDecision = z.infer<typeof SlpTransferDecisionSchema>;
+
 const SlpTransferBaseSchema = z.object({
   id: z.string(),
   groupId: z.string(),
@@ -289,6 +309,15 @@ const SlpTransferBaseSchema = z.object({
   sourceGenerationId: z.string(),
   sourceAgentId: z.string(),
   reason: z.string(),
+  /**
+   * Who releases the replacement. Absent on records written before the
+   * supervised Lead contract, and read as `automatic`, so a restart never
+   * infers the pipeline from the group's current mode
+   * (docs/slp/supervisor-controlled-handoff.md#durable-state).
+   */
+  control: z.enum(["automatic", "supervisor"]).optional(),
+  /** Present from the decision onward; every later phase carries it. */
+  decision: SlpTransferDecisionSchema.optional(),
   /** The current checkpoint's revision when the transfer was requested. */
   checkpointRevision: z.number().int().positive(),
   createdAt: z.string(),
@@ -313,6 +342,27 @@ export const SlpTransferSchema = z.discriminatedUnion("phase", [
   SlpTransferBaseSchema.extend({ phase: z.literal("requested") }),
   // The source's stop was acknowledged by the manager and its tail captured.
   SlpTransferStoppedSchema.extend({ phase: z.literal("stopped") }),
+  // Stopped, suspended and waiting: only a Supervisor decision moves it, and
+  // no candidate exists yet.
+  SlpTransferStoppedSchema.extend({ phase: z.literal("awaiting_supervisor") }),
+  // Released by the Supervisor; preparation runs from here exactly as it does
+  // for an automatic transfer.
+  SlpTransferStoppedSchema.extend({
+    phase: z.literal("continued"),
+    decision: SlpTransferDecisionSchema,
+  }),
+  // Cancelling. The decision is durable; the source notice and the cleanup
+  // may not be yet, so recovery finishes them.
+  SlpTransferStoppedSchema.extend({
+    phase: z.literal("canceling"),
+    decision: SlpTransferDecisionSchema,
+  }),
+  // Terminal: the decision and the source's wake-up notice are both durable.
+  SlpTransferStoppedSchema.extend({
+    phase: z.literal("canceled"),
+    decision: SlpTransferDecisionSchema,
+    canceledAt: z.string(),
+  }),
   // A candidate generation exists in the group; its agent is being created or preparing.
   SlpTransferStoppedSchema.extend({
     phase: z.literal("preparing"),

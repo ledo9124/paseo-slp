@@ -500,16 +500,17 @@ so the port may already be bound. `portScript` takes precedence when both values
 
 The daemon can optionally serve the browser web client from the same HTTP server. This is disabled by default.
 
-Enable it for a running daemon with:
+Enable it in persistent configuration:
 
 ```bash
-paseo daemon start --web-ui
+paseo daemon config set features.webUi.enabled true
+paseo daemon start
 ```
 
 Or set the environment variable:
 
 ```bash
-PASEO_WEB_UI_ENABLED=true paseo daemon start
+PASEO_WEB_UI_ENABLED=true paseo daemon run
 ```
 
 Or persist it in `config.json`:
@@ -620,7 +621,7 @@ npm run cli -- --host ssh://user@host ls -a
 ```
 
 Set `PASEO_HOST` to use the same target across invocations. An explicit
-`--host` overrides the environment variable.
+selector overrides both environment selectors. With both `PASEO_HOME` and `PASEO_HOST` set, pass an explicit selector. See [CLI target selection](../public-docs/cli.md#select-one-daemon).
 
 In an SSH URI, the URL port is the SSH server port. The remote daemon defaults to `127.0.0.1:6767`; use `?daemonPort=7777` to override it. The transport runs non-interactively through the local OpenSSH client and never installs, starts, or configures the remote daemon. User-facing setup and troubleshooting live in [public-docs/connectivity.md](../public-docs/connectivity.md#ssh).
 
@@ -699,4 +700,29 @@ Always run typecheck after changes:
 
 ```bash
 npm run typecheck
+```
+
+## Formatting and commit hooks
+
+`npm run format` runs `oxfmt .`. Extra paths are appended to that argument list, not substituted for it, so `npm run format -- some/file.ts` formats the whole repository and buries your change in thousands of files. To format specific files, use the script that takes them:
+
+```bash
+npm run format:files -- packages/server/src/server/slp/mailbox.ts
+```
+
+The lefthook pre-commit hook runs `format:check:files`, `lint` and `typecheck` through Git's `sh.exe`. On Windows, npm's bin shims re-invoke `node`, and if the Node directory is not on the `PATH` that reaches that shell, all three jobs fail in about two seconds regardless of what you changed. The failure looks like a broken commit and is not. Put Node on the `PATH` before committing rather than passing `--no-verify`:
+
+```powershell
+$env:PATH = "C:\nvm4w\nodejs;" + $env:PATH
+git commit
+```
+
+`npm run format:check` over the whole repository fails on a Windows checkout, and it is not telling you anything about your change. There is no `.gitattributes`, `core.autocrlf` is on, so the working tree is CRLF while the formatter wants LF: every file fails, on any branch, including ones you have not touched. CI checks out LF and sees the truth. To check your own work the way CI will, read the committed content rather than the working tree:
+
+```bash
+mkdir -p .dev/fmtcheck
+for f in $(git diff --name-only <base>..HEAD); do
+  mkdir -p ".dev/fmtcheck/$(dirname "$f")" && git show "HEAD:$f" > ".dev/fmtcheck/$f"
+done
+npm run format:check:files -- $(find .dev/fmtcheck -type f)
 ```

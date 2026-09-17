@@ -43,7 +43,7 @@ fi
 
 export PASEO_HOME="${PASEO_SLP_HOME:-$HOME/.paseo-slp}"
 export PASEO_LISTEN="${PASEO_SLP_LISTEN:-127.0.0.1:6777}"
-export PASEO_HOST="$PASEO_LISTEN"
+unset PASEO_HOST
 
 if [ -d "${MACOS_DIR}" ]; then
   export PASEO_SLP_DESKTOP_APP="${RESOURCES_DIR}/../.."

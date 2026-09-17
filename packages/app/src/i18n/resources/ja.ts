@@ -12,6 +12,7 @@ export const ja: TranslationResources = {
       copy: "コピー",
       copyLine: "行をコピー",
       dismiss: "閉じる",
+      reload: "再読み込み",
       retry: "再試行",
       search: "検索",
       select: "選択",
@@ -153,7 +154,8 @@ export const ja: TranslationResources = {
       initialPromptRequired: "初期プロンプトが必要です",
       alreadyLoading: "すでに読み込み中です",
       uploadFailed: "ファイルのアップロードに失敗しました",
-      noClipboardImage: "クリップボードに画像がありません",
+      noClipboardImage:
+        "現在のクリップボードに画像がありません。キーボードから貼り付けてみてください。",
       pasteImageFailed: "画像を貼り付けられませんでした",
       fileTooLarge: "{{fileName}}が大きすぎます（最大{{size}}）",
     },
@@ -208,6 +210,10 @@ export const ja: TranslationResources = {
     historyLoadFailed: "エージェントの履歴を読み込めませんでした",
     messageCapped: "このメッセージは上限で切り詰められました（{{bytes}}バイト）。",
     permission: {
+      rejectedPlan: "却下されたプラン",
+      approvedPlan: "承認されたプラン",
+      canceledPlan: "キャンセルされたプラン",
+
       plan: "プラン",
       required: "権限が必要です",
       deny: "拒否",
@@ -305,6 +311,11 @@ export const ja: TranslationResources = {
       transferCandidate: "引き継ぎ準備中: ホストが有効化するまで読み取り専用です。",
       transferBlocked:
         "引き継ぎがブロックされました: {{reason}}。ホストを再起動して整合させてください。",
+      decisionWaiting:
+        "Lead の引き継ぎがあなたの判断を待っています。このチャットで続行するかキャンセルするか答えてください。",
+      decisionSuspended:
+        "コンテキストを置き換える前に Supervisor の判断を待っています。応答があるまでこのエージェントは停止しています。",
+      decisionPending: "Lead のコンテキスト置き換えが Supervisor の判断待ちです。",
       retired: "退役した世代です。スロットの現在のエージェントが作業を続けます。",
       openCurrent: "現在の{{role}}を開く",
       mailUncertain: "配信が不確かなメッセージ: {{count}}",
@@ -1006,11 +1017,8 @@ export const ja: TranslationResources = {
         refresh: "更新",
         refreshState: "gitと{{brand}}の状態を更新",
         failedRefresh: "gitの状態の更新に失敗しました。",
-        emptyHiddenWhitespace: "空白を非表示にすると変更は表示されません",
-        emptyUncommitted: "未コミットの変更なし",
         seeUncommittedChanges: "未コミットの変更を表示",
         seeCommittedChanges: "コミット済みの変更を表示",
-        emptyAgainstBase: "{{baseRef}}との差分なし",
         checkingRepository: "リポジトリを確認中...",
         notRepository: "gitリポジトリではありません",
         diffMode: "差分モード",
@@ -1148,6 +1156,16 @@ export const ja: TranslationResources = {
       deleteMessage_other: "このホストの{{count}}個のワークスペースからラベルを削除します。",
       offline: "このホストはオフラインです。",
       updateHost: "ラベルを管理するにはホストを更新してください。",
+    },
+  },
+  changelog: {
+    title: "新着情報",
+    installed: "インストール済み",
+    showMore: "もっと見る",
+    openWebsite: "変更履歴をすべて表示",
+    error: {
+      title: "変更履歴を読み込めません",
+      description: "接続を確認してもう一度お試しください。",
     },
   },
   sidebar: {
@@ -1372,6 +1390,7 @@ export const ja: TranslationResources = {
       detail: "ローカルデーモンを停止中。",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "デーモン",
       status: {
         title: "ステータス",
@@ -2182,6 +2201,7 @@ export const ja: TranslationResources = {
     about: {
       title: "アプリ情報",
       appVersion: "アプリバージョン",
+      whatsNewHint: "各バージョンのリリースノート",
       thisDevice: "このデバイス",
       connectedHosts: "接続されているホスト",
       offline: "オフライン",

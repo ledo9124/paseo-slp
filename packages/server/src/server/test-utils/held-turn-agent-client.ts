@@ -197,13 +197,29 @@ export class HeldTurnClient implements AgentClient {
     return true;
   }
 
-  async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
+  /** Whether each launched session was told it may not open an interactive question. */
+  readonly questionDenials: (boolean | undefined)[] = [];
+
+  async createSession(
+    _config: AgentSessionConfig,
+    launchContext?: { denyInteractiveQuestions?: boolean },
+  ): Promise<AgentSession> {
+    this.questionDenials.push(launchContext?.denyInteractiveQuestions);
     const session = new HeldTurnSession(this.options);
     this.sessions.push(session);
     return session;
   }
 
-  async resumeSession(handle: AgentPersistenceHandle): Promise<AgentSession> {
+  /** Every resume's purpose, in order, so a test can prove a session came back read-only. */
+  readonly resumedPurposes: (string | undefined)[] = [];
+
+  async resumeSession(
+    handle: AgentPersistenceHandle,
+    _overrides?: unknown,
+    _launchContext?: unknown,
+    options?: { purpose?: "interactive" | "history" },
+  ): Promise<AgentSession> {
+    this.resumedPurposes.push(options?.purpose);
     const session = new HeldTurnSession({ ...this.options, id: handle.sessionId });
     this.sessions.push(session);
     return session;

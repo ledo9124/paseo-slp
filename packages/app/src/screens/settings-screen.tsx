@@ -32,6 +32,7 @@ import {
   Sparkles,
   Blocks,
   PanelsTopLeft,
+  ChevronRight,
   Users,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
@@ -80,6 +81,7 @@ import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { isElectronRuntime } from "@/desktop/host";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { resolveAppVersion } from "@/utils/app-version";
+import { openChangelog } from "@/changelog";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
 import { settingsStyles } from "@/styles/settings";
 import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pcm";
@@ -600,6 +602,7 @@ function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSection
             </View>
             <Text style={styles.aboutValue}>{appVersionText}</Text>
           </View>
+          <WhatsNewRow />
           {isDesktopApp ? <DesktopAppUpdateRow /> : null}
         </View>
       </SettingsSection>
@@ -608,6 +611,33 @@ function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSection
         <CommunityLinks />
       </View>
     </>
+  );
+}
+
+function WhatsNewRow() {
+  const { t } = useTranslation();
+  const { theme } = useUnistyles();
+
+  return (
+    <Pressable
+      style={[settingsStyles.row, settingsStyles.rowBorder]}
+      onPress={openChangelog}
+      accessibilityRole="button"
+      testID="settings-whats-new"
+    >
+      {({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => (
+        <>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>{t("changelog.title")}</Text>
+            <Text style={settingsStyles.rowHint}>{t("settings.about.whatsNewHint")}</Text>
+          </View>
+          <ChevronRight
+            size={theme.iconSize.sm}
+            color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+          />
+        </>
+      )}
+    </Pressable>
   );
 }
 

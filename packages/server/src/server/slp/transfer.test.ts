@@ -19,13 +19,17 @@ import {
 import {
   SlpGenerationRetiredError,
   SlpGroupHeldError,
+  SlpDecisionConflictError,
+  SlpNotDecidingSupervisorError,
   SlpPreparationPolicyError,
+  SlpSourceSuspendedError,
   SlpTransferRefusedError,
 } from "./errors.js";
 import type { SlpInitializeGroupInput } from "./service.js";
 import {
   SlpCheckpointSchema,
   SlpGroupSchema,
+  SlpMailSchema,
   SlpTransferSchema,
   type SlpGroupRecord,
   type SlpSlotRecord,
@@ -161,6 +165,10 @@ describe("SLP same-role handoff", () => {
   async function readSlpFile<T>(schema: z.ZodType<T>, kind: string, id: string): Promise<T> {
     const file = path.join(paseoHome, "slp", kind, `${id}.json`);
     return schema.parse(JSON.parse(await readFile(file, "utf8")));
+  }
+
+  function transferFile(id: string): string {
+    return path.join(paseoHome, "slp", "transfers", `${id}.json`);
   }
 
   async function writeSlpFile(kind: string, id: string, record: unknown): Promise<void> {
@@ -331,7 +339,10 @@ describe("SLP same-role handoff", () => {
     expect(candidate.startPrompts).toHaveLength(2);
     expect(candidate.startPrompts[1]).toContain(`SLP activation: transfer ${transferId}`);
     expect(candidate.startPrompts[1]).toContain("active generation 2");
-    expect(handbackMail(daemon)[0]?.state).toBe("queued");
+    // Undelivered, which is the claim; not `queued` exactly. The dispatch
+    // loop moves straight on to the handback and a busy successor returns it,
+    // so it passes through `dispatching` on the way back to the queue.
+    expect(handbackMail(daemon)[0]?.state).not.toBe("accepted");
     candidate.release();
     await untilSettled(
       () => handbackMail(daemon)[0]?.state === "accepted",
@@ -343,11 +354,18 @@ describe("SLP same-role handoff", () => {
     expect(handbackMail(daemon)[0]).toMatchObject({ attempt: { agentId: candidateId } });
 
     // The retired generation is history: no turn, no tool.
+    const resumesBefore = daemon.client.resumedPurposes.length;
     await ensureAgentLoaded(leadId, {
       agentManager: daemon.manager,
       agentStorage: daemon.storage,
       logger: createTestLogger(),
     });
+    // Loading it must not bring it back as a writable session. Retirement
+    // closes the agent but never archives it, and resume reads `archivedAt`
+    // alone, so without the retirement check this call revived a handed-off
+    // Lead beside its own successor and nothing downstream could tell them
+    // apart.
+    expect(daemon.client.resumedPurposes.slice(resumesBefore)).toEqual(["history"]);
     await expect(daemon.manager.admitForegroundTurn(leadId, "one more thing")).rejects.toThrow(
       SlpGenerationRetiredError,
     );
@@ -412,29 +430,520 @@ describe("SLP same-role handoff", () => {
     expect(lead.startPrompts.at(-1)).toContain(`(${successorId})`);
   });
 
-  test("a supervised Lead handoff notifies Supervisor after activation", async () => {
+  test("a supervised Lead handoff stops for Supervisor and creates no candidate", async () => {
     const daemon = await startDaemon();
     const group = await daemon.service.initializeGroup({ ...input(), mode: "supervised" });
-    const supervisorSlot = group.supervisorSlotId!;
-    const supervisorId = activeAgentId(daemon, group.id, supervisorSlot);
+    const supervisorId = activeAgentId(daemon, group.id, group.supervisorSlotId!);
+    sessionOf(daemon, supervisorId).release();
+    await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+    const leadId = leadAgentId(group);
+    const generationsBefore = slotOf(daemon, group.id, group.leadSlotId).generations.length;
+
+    const transferId = await requestHandoffFromTurn(daemon, leadId, "Next task");
+    sessionOf(daemon, leadId).release();
+    await untilSettled(
+      () => phaseOf(daemon, transferId) === "awaiting_supervisor",
+      "the transfer waits for the Supervisor",
+    );
+
+    const record = transfer(daemon, transferId);
+    expect(record).toMatchObject({ control: "supervisor", phase: "awaiting_supervisor" });
+    expect(record).not.toHaveProperty("candidate");
+    // The runtime owns candidate creation and has not been told to create one.
+    expect(slotOf(daemon, group.id, group.leadSlotId).generations).toHaveLength(generationsBefore);
+    expect(activeAgentId(daemon, group.id, group.leadSlotId)).toBe(leadId);
+    expect(daemon.service.getGroup(group.id)?.hold).toMatchObject({ kind: "transfer", transferId });
+    expect(await readSlpFile(SlpTransferSchema, "transfers", transferId)).toMatchObject({
+      phase: "awaiting_supervisor",
+      control: "supervisor",
+    });
+
+    // The source keeps the slot but may not start product work on it.
+    await expect(daemon.manager.admitForegroundTurn(leadId, "More work")).rejects.toThrow(
+      SlpSourceSuspendedError,
+    );
+  });
+
+  /** A supervised group whose Lead has asked for a handoff and stopped. */
+  async function awaitingDecision(daemon: Daemon): Promise<{
+    group: SlpGroupRecord;
+    supervisorId: string;
+    leadId: string;
+    transferId: string;
+  }> {
+    const group = await daemon.service.initializeGroup({ ...input(), mode: "supervised" });
+    const supervisorId = activeAgentId(daemon, group.id, group.supervisorSlotId!);
     sessionOf(daemon, supervisorId).release();
     await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
     const leadId = leadAgentId(group);
     const transferId = await requestHandoffFromTurn(daemon, leadId, "Next task");
     sessionOf(daemon, leadId).release();
-    const candidateId = await candidateStarted(daemon, transferId);
-    expect(sessionOf(daemon, supervisorId).startPrompts.join("\n")).not.toContain(
-      "Lead handoff completed",
+    await untilSettled(
+      () => phaseOf(daemon, transferId) === "awaiting_supervisor",
+      "the transfer waits for the Supervisor",
     );
+    await untilSettled(
+      () => mailState(daemon, `handoff_waiting_${transferId}`) === "accepted",
+      "the Supervisor was told a decision is waiting",
+    );
+    sessionOf(daemon, supervisorId).release();
+    await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+    return { group, supervisorId, leadId, transferId };
+  }
+
+  function decide(daemon: Daemon, agentId: string, args: Record<string, unknown>) {
+    return catalogFor(daemon, agentId).executeTool("slp_decide_lead_handoff", args);
+  }
+
+  test("the Supervisor is told a decision is waiting, and only it can make one", async () => {
+    const daemon = await startDaemon();
+    const { group, supervisorId, leadId, transferId } = await awaitingDecision(daemon);
+
+    const notice = sessionOf(daemon, supervisorId).startPrompts.at(-1) ?? "";
+    expect(notice).toContain("SLP runtime control event");
+    expect(notice).toContain(transferId);
+    expect(notice).toContain("slp_decide_lead_handoff");
+    expect(notice).toContain("No successor exists yet");
+    expect(notice).toContain("not an engineering judgement");
+
+    // The catalog hides it from every role but the Supervisor, and the
+    // execution check refuses a caller that asserts an identity anyway.
+    expect(catalogFor(daemon, leadId).getTool("slp_decide_lead_handoff")).toBeUndefined();
+    expect(catalogFor(daemon, supervisorId).getTool("slp_decide_lead_handoff")).toBeDefined();
+    await expect(daemon.service.decideLeadHandoff(leadId, transferId, "continue")).rejects.toThrow(
+      SlpNotDecidingSupervisorError,
+    );
+    expect(phaseOf(daemon, transferId)).toBe("awaiting_supervisor");
+    expect(slotOf(daemon, group.id, group.leadSlotId).generations).toHaveLength(1);
+  });
+
+  test("continue builds exactly one candidate and completes the replacement", async () => {
+    const daemon = await startDaemon();
+    const { group, supervisorId, leadId, transferId } = await awaitingDecision(daemon);
+
+    await decide(daemon, supervisorId, { transferId, decision: "continue" });
+    const candidateId = await candidateStarted(daemon, transferId);
+    // Receive-only until it says it is ready and the pointer moves.
+    expect(daemon.service.executionPolicyFor(candidateId)).toMatchObject({ kind: "preparation" });
     await acknowledge(daemon, candidateId);
     await untilSettled(() => phaseOf(daemon, transferId) === "completed", "transfer completed");
+
+    expect(transfer(daemon, transferId)).toMatchObject({
+      control: "supervisor",
+      decision: { outcome: "continue", actorAgentId: supervisorId },
+    });
+    expect(slotOf(daemon, group.id, group.leadSlotId).generations).toHaveLength(2);
+    expect(activeAgentId(daemon, group.id, group.leadSlotId)).toBe(candidateId);
+    expect(daemon.service.executionPolicyFor(candidateId)).toEqual({ kind: "authorized" });
+    expect(daemon.service.getGroup(group.id)?.hold).toBeNull();
+    // The coverage the decision boundary displaced: completion still tells the
+    // Supervisor its Lead was replaced.
     await untilSettled(
-      () =>
-        sessionOf(daemon, supervisorId).startPrompts.join("\n").includes("Lead handoff completed"),
-      "Supervisor notified",
+      () => mailState(daemon, `handoff_completed_${transferId}`) === "accepted",
+      "Supervisor notified of the completed handoff",
     );
     expect(sessionOf(daemon, supervisorId).startPrompts.at(-1)).toContain(candidateId);
-    expect(activeAgentId(daemon, group.id, group.leadSlotId)).toBe(candidateId);
+    expect(daemon.manager.getAgent(leadId)).toBeNull();
+  });
+
+  test("cancel builds no candidate, wakes the source and gives it back its slot", async () => {
+    const daemon = await startDaemon();
+    const { group, supervisorId, leadId, transferId } = await awaitingDecision(daemon);
+    // Mail that queued while the slot was held. The source cannot read it
+    // sensibly until it knows it is still the Lead, so the cancellation notice
+    // has to reach it first even though this was queued earlier.
+    const queuedFirst = await daemon.service.deliverMail({
+      groupId: group.id,
+      slotId: group.leadSlotId,
+      fromSlotId: group.supervisorSlotId,
+      kind: "message",
+      prompt: "While you were stopped: Human asked for a status update.",
+    });
+
+    await decide(daemon, supervisorId, {
+      transferId,
+      decision: "cancel",
+      reason: "the current context is fine for the next task",
+    });
+
+    expect(phaseOf(daemon, transferId)).toBe("canceled");
+    expect(transfer(daemon, transferId)).toMatchObject({
+      decision: { outcome: "cancel", reason: "the current context is fine for the next task" },
+    });
+    expect(slotOf(daemon, group.id, group.leadSlotId).generations).toHaveLength(1);
+    expect(activeAgentId(daemon, group.id, group.leadSlotId)).toBe(leadId);
+    expect(daemon.service.getGroup(group.id)?.hold).toBeNull();
+
+    await untilSettled(
+      () => mailState(daemon, `handoff_canceled_${transferId}`) === "accepted",
+      "the source was told its handoff was canceled",
+    );
+    const woken = sessionOf(daemon, leadId).startPrompts.at(-1) ?? "";
+    expect(woken).toContain("canceled by the Supervisor");
+    expect(woken).toContain("the current context is fine for the next task");
+    expect(woken).toContain("still the active Lead");
+    expect(mailState(daemon, queuedFirst.id)).toBe("queued");
+
+    // Only then does what queued during the hold arrive, and the source works again.
+    sessionOf(daemon, leadId).release();
+    await untilSettled(
+      () => mailState(daemon, queuedFirst.id) === "accepted",
+      "the message that queued during the hold followed the notice",
+    );
+    expect(sessionOf(daemon, leadId).startPrompts.at(-1)).toContain("Human asked for a status");
+    sessionOf(daemon, leadId).release();
+    await daemon.manager.waitForAgentEvent(leadId, { waitForActive: true });
+    expect((await daemon.manager.admitForegroundTurn(leadId, "Back to work")).status).toBe(
+      "started",
+    );
+  });
+
+  test("a cancel needs no reason, and repeating a decision changes nothing", async () => {
+    const daemon = await startDaemon();
+    const { supervisorId, transferId } = await awaitingDecision(daemon);
+
+    const first = await decide(daemon, supervisorId, { transferId, decision: "cancel" });
+    const canceled = transfer(daemon, transferId);
+    const again = await decide(daemon, supervisorId, { transferId, decision: "cancel" });
+
+    expect(first.structuredContent).toEqual(again.structuredContent);
+    expect(transfer(daemon, transferId)).toEqual(canceled);
+    expect(daemon.service.listMail().filter((mail) => mail.kind === "control")).toHaveLength(1);
+
+    // The other answer, after the fact, is a conflict rather than a second outcome.
+    await expect(
+      daemon.service.decideLeadHandoff(supervisorId, transferId, "continue"),
+    ).rejects.toThrow(SlpDecisionConflictError);
+    expect(phaseOf(daemon, transferId)).toBe("canceled");
+  });
+
+  test("a pending decision survives the handoff feature being turned off", async () => {
+    let handoffEnabled = true;
+    const daemon = await startSlpTestDaemon({
+      paseoHome,
+      releaseText: "done",
+      isHandoffEnabled: () => handoffEnabled,
+    });
+    daemons.push(daemon);
+    const { supervisorId, leadId, transferId } = await awaitingDecision(daemon);
+
+    handoffEnabled = false;
+    // The Lead can no longer start one; the Supervisor can still end the one
+    // it was already asked about.
+    expect(daemon.service.isToolAllowed(leadId, "slp_request_handoff")).toBe(false);
+    expect(daemon.service.isToolAllowed(supervisorId, "slp_decide_lead_handoff")).toBe(true);
+    await decide(daemon, supervisorId, { transferId, decision: "cancel" });
+    expect(phaseOf(daemon, transferId)).toBe("canceled");
+    expect(daemon.service.isToolAllowed(supervisorId, "slp_decide_lead_handoff")).toBe(false);
+  });
+
+  test("a pending decision survives a restart, still without a candidate", async () => {
+    const first = await startDaemon();
+    const { group, leadId, transferId } = await awaitingDecision(first);
+    await first.stop();
+
+    const second = await startDaemon();
+    expect(phaseOf(second, transferId)).toBe("awaiting_supervisor");
+    expect(transfer(second, transferId)).not.toHaveProperty("candidate");
+    expect(slotOf(second, group.id, group.leadSlotId).generations).toHaveLength(1);
+    expect(second.service.getGroup(group.id)?.hold).toMatchObject({ transferId });
+    // The suspension follows the journal, so it is back without being stored.
+    await ensureAgentLoaded(leadId, {
+      agentManager: second.manager,
+      agentStorage: second.storage,
+      logger: createTestLogger(),
+    });
+    await expect(second.manager.admitForegroundTurn(leadId, "More work")).rejects.toThrow(
+      SlpSourceSuspendedError,
+    );
+  });
+
+  test("a decision taken before the crash is carried out after it", async () => {
+    const first = await startDaemon();
+    const { group, transferId } = await awaitingDecision(first);
+    const pending = await readSlpFile(SlpTransferSchema, "transfers", transferId);
+    await first.stop();
+    // Seed the crash between persisting the decision and creating anything:
+    // the daemon died knowing the answer and having done nothing about it.
+    await writeSlpFile("transfers", transferId, {
+      ...pending,
+      phase: "continued",
+      decision: {
+        outcome: "continue",
+        actorAgentId: "agt_supervisor",
+        actorGenerationId: "gen_supervisor",
+        decidedAt: new Date().toISOString(),
+      },
+    });
+
+    const second = await startDaemon();
+    const candidateId = await candidateStarted(second, transferId);
+    await acknowledge(second, candidateId);
+    await untilSettled(() => phaseOf(second, transferId) === "completed", "transfer completed");
+    expect(transfer(second, transferId)).toMatchObject({ decision: { outcome: "continue" } });
+    expect(activeAgentId(second, group.id, group.leadSlotId)).toBe(candidateId);
+  });
+
+  test("a cancellation interrupted before its cleanup finishes once", async () => {
+    const first = await startDaemon();
+    const { group, leadId, transferId } = await awaitingDecision(first);
+    // Seed the crash after the decision is durable and before the notice is:
+    // the point the ordering exists to make recoverable.
+    const pending = await readSlpFile(SlpTransferSchema, "transfers", transferId);
+    await first.stop();
+    await writeSlpFile("transfers", transferId, {
+      ...pending,
+      phase: "canceling",
+      decision: {
+        outcome: "cancel",
+        actorAgentId: "agt_supervisor",
+        actorGenerationId: "gen_supervisor",
+        decidedAt: new Date().toISOString(),
+        reason: "decided before the crash",
+      },
+    });
+
+    const second = await startDaemon();
+    await untilSettled(() => phaseOf(second, transferId) === "canceled", "cancellation finished");
+    expect(second.service.getGroup(group.id)?.hold).toBeNull();
+    expect(activeAgentId(second, group.id, group.leadSlotId)).toBe(leadId);
+    await untilSettled(
+      () => mailState(second, `handoff_canceled_${transferId}`) === "accepted",
+      "the source was told after the restart",
+    );
+    expect(sessionOf(second, leadId).startPrompts.at(-1)).toContain("decided before the crash");
+    expect(second.service.listMail().filter((mail) => mail.kind === "control")).toHaveLength(1);
+  });
+
+  test("a cancellation whose hold outlived it is finished, not frozen", async () => {
+    const first = await startDaemon();
+    const { group, supervisorId, transferId } = await awaitingDecision(first);
+    await decide(first, supervisorId, { transferId, decision: "cancel" });
+    const canceled = await readSlpFile(SlpTransferSchema, "transfers", transferId);
+    const storedGroup = await readSlpFile(SlpGroupSchema, "groups", group.id);
+    await first.stop();
+    // Seed the crash between the terminal record and clearing the hold.
+    await writeSlpFile("groups", group.id, {
+      ...storedGroup,
+      hold: {
+        kind: "transfer",
+        slotId: group.leadSlotId,
+        transferId,
+        since: storedGroup.updatedAt,
+      },
+    });
+
+    const second = await startDaemon();
+    expect(second.service.getGroup(group.id)?.status).toBe("ready");
+    expect(second.service.getGroup(group.id)?.hold).toBeNull();
+    expect(transfer(second, transferId)).toEqual(canceled);
+  });
+
+  test("a notice the daemon died delivering is replaced by one marked as possibly duplicate", async () => {
+    const first = await startDaemon();
+    const group = await first.service.initializeGroup({ ...input(), mode: "supervised" });
+    const supervisorId = activeAgentId(first, group.id, group.supervisorSlotId!);
+    sessionOf(first, supervisorId).release();
+    await first.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+    const leadId = leadAgentId(group);
+    const transferId = await requestHandoffFromTurn(first, leadId, "Next task");
+    sessionOf(first, leadId).release();
+    await untilSettled(
+      () => phaseOf(first, transferId) === "awaiting_supervisor",
+      "the transfer waits for the Supervisor",
+    );
+    const primary = `handoff_waiting_${transferId}`;
+    await untilSettled(() => mailState(first, primary) === "accepted", "the notice was delivered");
+    const delivery = await readSlpFile(SlpMailSchema, "mail", primary);
+    if (delivery.state !== "accepted") throw new Error(`notice is ${delivery.state}`);
+    await first.stop();
+    // The daemon died mid-dispatch: acceptance can be neither proven nor
+    // disproven, and the mailbox never replays such a record.
+    const { acceptedAt: _acceptedAt, ...attempted } = delivery;
+    await writeSlpFile("mail", primary, { ...attempted, state: "dispatching" });
+
+    const second = await startDaemon();
+    expect(mailState(second, primary)).toBe("uncertain");
+    const retryId = `handoff_waiting_recovery_${transferId}_1`;
+    await untilSettled(() => mailState(second, retryId) === "accepted", "a fresh notice arrived");
+    const delivered =
+      sessionOf(second, activeAgentId(second, group.id, group.supervisorSlotId!)).startPrompts.at(
+        -1,
+      ) ?? "";
+    expect(delivered).toContain("may be a duplicate");
+    expect(delivered).toContain("deciding twice is safe");
+    expect(delivered).toContain(transferId);
+    // The uncertain record is retained exactly as recovery found it.
+    expect(await readSlpFile(SlpMailSchema, "mail", primary)).toMatchObject({
+      state: "uncertain",
+      reason: "daemon restarted during dispatch",
+    });
+  });
+
+  test("a transfer whose group never recorded its hold is rolled back", async () => {
+    const first = await startDaemon();
+    const group = await readyGroup(first);
+    const leadId = leadAgentId(group);
+    const transferId = await requestHandoffFromTurn(first, leadId, "Make login fast");
+    sessionOf(first, leadId).release();
+    await untilSettled(() => phaseOf(first, transferId) !== "requested", "the source stopped");
+    const storedGroup = await readSlpFile(SlpGroupSchema, "groups", group.id);
+    await first.stop();
+    // The record is persisted before the hold, so a crash in between leaves a
+    // transfer nothing points at and no runner owns.
+    await writeSlpFile("groups", group.id, { ...storedGroup, hold: null });
+
+    const second = await startDaemon();
+    await untilSettled(
+      () => phaseOf(second, transferId) === "aborted",
+      "the orphan was rolled back",
+    );
+    expect(second.service.getGroup(group.id)?.status).toBe("ready");
+    expect(activeAgentId(second, group.id, group.leadSlotId)).toBe(leadId);
+  });
+
+  test("a transfer phase this build cannot read freezes its group and is left alone", async () => {
+    const first = await startDaemon();
+    const { group, leadId, transferId } = await awaitingDecision(first);
+    const other = await first.service.initializeGroup({
+      ...input(),
+      workspaceId: "wks_slp_other",
+      mode: "direct",
+    });
+    latestSession(first).release();
+    await first.manager.waitForAgentEvent(leadAgentId(other), { waitForActive: true });
+    await first.stop();
+
+    // What a downgrade looks like from the journal's side: a phase the
+    // reader has no variant for. The schema is a closed union, so the record
+    // does not parse, and this is the same shape as an older build meeting
+    // the phases this one added (see store.test.ts for that half).
+    const stored = await readSlpFile(SlpTransferSchema, "transfers", transferId);
+    const unreadable = { ...stored, phase: "decided_by_human" };
+    await writeSlpFile("transfers", transferId, unreadable);
+
+    const second = await startDaemon();
+
+    // Fails closed: held, visibly broken, and nothing was invented.
+    const frozen = second.service.getGroup(group.id)!;
+    expect(frozen.status).toBe("frozen");
+    expect(frozen.freeze?.reason).toContain(transferId);
+    expect(frozen.hold).toMatchObject({ kind: "transfer", transferId });
+    expect(slotOf(second, group.id, group.leadSlotId).generations).toHaveLength(1);
+    expect(activeAgentId(second, group.id, group.leadSlotId)).toBe(leadId);
+    expect(second.service.listTransfers().find((entry) => entry.id === transferId)).toBeUndefined();
+
+    // The journal is not rewritten by a build that cannot read it: the
+    // runbook says restore the newer build, not repair the file by hand.
+    expect(JSON.parse(await readFile(transferFile(transferId), "utf8"))).toEqual(unreadable);
+
+    // Only that group. The other workspace is untouched.
+    expect(second.service.getGroup(other.id)?.status).toBe("ready");
+  });
+
+  test("a supervised Peer handoff stays automatic", async () => {
+    const daemon = await startDaemon();
+    const group = await daemon.service.initializeGroup({ ...input(), mode: "supervised" });
+    const supervisorId = activeAgentId(daemon, group.id, group.supervisorSlotId!);
+    sessionOf(daemon, supervisorId).release();
+    await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+    const leadId = leadAgentId(group);
+    const created = await daemon.createAgent(peerCreation(leadId));
+    const peerId = created.snapshot.id;
+    latestSession(daemon).release();
+    await daemon.manager.waitForAgentEvent(peerId, { waitForActive: true });
+
+    // Only the Lead slot answers to the Supervisor; a Peer replacement is the
+    // Lead's own topology and runs to completion on its own.
+    const transferId = await requestHandoffFromTurn(daemon, peerId, "Keep digging");
+    sessionOf(daemon, peerId).release();
+    const candidateId = await candidateStarted(daemon, transferId);
+    await acknowledge(daemon, candidateId);
+    await untilSettled(
+      () => phaseOf(daemon, transferId) === "completed",
+      "peer transfer completed",
+    );
+    expect(transfer(daemon, transferId)).toMatchObject({ control: "automatic" });
+  });
+
+  test("a Supervisor self-handoff stays automatic", async () => {
+    const daemon = await startDaemon();
+    const group = await daemon.service.initializeGroup({ ...input(), mode: "supervised" });
+    const supervisorId = activeAgentId(daemon, group.id, group.supervisorSlotId!);
+    sessionOf(daemon, supervisorId).release();
+    await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+
+    // The boundary exists so the Supervisor can decide when the Lead's context
+    // is replaced. It has no one to ask about its own.
+    const transferId = await requestHandoffFromTurn(daemon, supervisorId, "Fresh context");
+    sessionOf(daemon, supervisorId).release();
+    const candidateId = await candidateStarted(daemon, transferId);
+    await acknowledge(daemon, candidateId);
+    await untilSettled(
+      () => phaseOf(daemon, transferId) === "completed",
+      "supervisor transfer completed",
+    );
+    expect(transfer(daemon, transferId)).toMatchObject({ control: "automatic" });
+    expect(activeAgentId(daemon, group.id, group.supervisorSlotId!)).toBe(candidateId);
+  });
+
+  test("a transfer record written without a control mode stays automatic", async () => {
+    const first = await startDaemon();
+    const group = await first.service.initializeGroup({ ...input(), mode: "supervised" });
+    const supervisorId = activeAgentId(first, group.id, group.supervisorSlotId!);
+    sessionOf(first, supervisorId).release();
+    await first.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+    const leadId = leadAgentId(group);
+    const transferId = await requestHandoffFromTurn(first, leadId, "Next task");
+    sessionOf(first, leadId).release();
+    await untilSettled(
+      () => phaseOf(first, transferId) === "awaiting_supervisor",
+      "the transfer waits for the Supervisor",
+    );
+    await first.stop();
+
+    // A record from a daemon that predates this contract carries no control
+    // mode. Recovery reads it as automatic and applies the v1 rollback, rather
+    // than inferring the new pipeline from the group's mode.
+    const stored = await readSlpFile(SlpTransferSchema, "transfers", transferId);
+    const { control: _control, phase: _phase, ...legacy } = stored;
+    await writeSlpFile("transfers", transferId, { ...legacy, phase: "stopped" });
+
+    const second = await startDaemon();
+    await untilSettled(
+      () => phaseOf(second, transferId) === "aborted",
+      "legacy record rolled back",
+    );
+    expect(second.service.getGroup(group.id)?.hold).toBeNull();
+    expect(activeAgentId(second, group.id, group.leadSlotId)).toBe(leadId);
+  });
+
+  test("a second handoff request returns the pending transfer and its checkpoint", async () => {
+    const daemon = await startDaemon();
+    const group = await daemon.service.initializeGroup({ ...input(), mode: "supervised" });
+    const supervisorId = activeAgentId(daemon, group.id, group.supervisorSlotId!);
+    sessionOf(daemon, supervisorId).release();
+    await daemon.manager.waitForAgentEvent(supervisorId, { waitForActive: true });
+    const leadId = leadAgentId(group);
+
+    const transferId = await requestHandoffFromTurn(daemon, leadId, "First objective");
+    const checkpoint = await readSlpFile(SlpCheckpointSchema, "checkpoints", group.leadSlotId);
+    const again = await catalogFor(daemon, leadId).executeTool("slp_request_handoff", {
+      reason: "asked twice",
+      context: { objective: "Second objective", nextAction: "Something else entirely" },
+    });
+    sessionOf(daemon, leadId).release();
+    await untilSettled(
+      () => phaseOf(daemon, transferId) === "awaiting_supervisor",
+      "the transfer waits for the Supervisor",
+    );
+
+    expect(TransferReceiptSchema.parse(again.structuredContent).transferId).toBe(transferId);
+    expect(daemon.service.listTransfers()).toHaveLength(1);
+    // The retry does not overwrite the context the successor will be given.
+    expect(await readSlpFile(SlpCheckpointSchema, "checkpoints", group.leadSlotId)).toEqual(
+      checkpoint,
+    );
   });
 
   test("handoff refuses an archived source and holds archive once requested", async () => {

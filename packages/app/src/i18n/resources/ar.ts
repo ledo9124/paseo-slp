@@ -12,6 +12,7 @@ export const ar: TranslationResources = {
       copy: "ينسخ",
       copyLine: "نسخ السطر",
       dismiss: "رفض",
+      reload: "إعادة التحميل",
       retry: "أعد المحاولة",
       search: "يبحث",
       select: "يختار",
@@ -153,7 +154,7 @@ export const ar: TranslationResources = {
       initialPromptRequired: "مطلوب موجه الأولي",
       alreadyLoading: "جارٍ التحميل بالفعل",
       uploadFailed: "Failed to upload file",
-      noClipboardImage: "لا توجد صورة في الحافظة",
+      noClipboardImage: "لا توجد صورة في الحافظة الحالية. جرّب اللصق من لوحة المفاتيح.",
       pasteImageFailed: "تعذر لصق الصورة",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
@@ -208,6 +209,10 @@ export const ar: TranslationResources = {
     historyLoadFailed: "تعذر تحميل سجل الوكيل",
     messageCapped: "تم اقتطاع هذه الرسالة ({{bytes}} بايت).",
     permission: {
+      rejectedPlan: "خطة مرفوضة",
+      approvedPlan: "خطة معتمدة",
+      canceledPlan: "خطة ملغاة",
+
       plan: "يخطط",
       required: "الإذن مطلوب",
       deny: "ينكر",
@@ -299,6 +304,9 @@ export const ar: TranslationResources = {
         "جارٍ التسليم: يتوقف هذا الوكيل بعد نقطة التحقق ويتقاعد عندما يصبح خليفته جاهزًا.",
       transferCandidate: "يستعد لتولي المهمة: للقراءة فقط حتى يفعّله المضيف.",
       transferBlocked: "التسليم محظور: {{reason}}. أعد تشغيل المضيف لتسوية الحالة.",
+      decisionWaiting: "تسليم Lead ينتظر قرارك. أجب في هذه المحادثة للمتابعة أو لإلغاء الاستبدال.",
+      decisionSuspended: "في انتظار Supervisor قبل استبدال هذا السياق. هذا الوكيل متوقف حتى يجيب.",
+      decisionPending: "استبدال سياق Lead ينتظر قرار Supervisor.",
       retired: "جيل متقاعد. يواصل الوكيل الحالي للمنصب العمل.",
       openCurrent: "فتح {{role}} الحالي",
       mailUncertain: "رسائل تسليمها غير مؤكد: {{count}}",
@@ -989,11 +997,8 @@ export const ar: TranslationResources = {
         refresh: "ينعش",
         refreshState: "تحديث حالة git و{{brand}}",
         failedRefresh: "فشل تحديث حالة git.",
-        emptyHiddenWhitespace: "لا توجد تغييرات مرئية بعد إخفاء المسافة البيضاء",
-        emptyUncommitted: "لا توجد تغييرات غير ملتزم بها",
         seeUncommittedChanges: "عرض التغييرات غير الملتزم بها",
         seeCommittedChanges: "عرض التغييرات الملتزم بها",
-        emptyAgainstBase: "لا توجد تغييرات مقابل{{baseRef}}",
         checkingRepository: "فحص المستودع...",
         notRepository: "ليس مستودع جيت",
         diffMode: "وضع الفرق",
@@ -1131,6 +1136,16 @@ export const ar: TranslationResources = {
       deleteMessage_other: "سيؤدي هذا إلى إزالة التسمية من {{count}} مساحات عمل على هذا المضيف.",
       offline: "هذا المضيف غير متصل.",
       updateHost: "حدّث هذا المضيف لإدارة التسميات.",
+    },
+  },
+  changelog: {
+    title: "ما الجديد",
+    installed: "مثبّت",
+    showMore: "عرض المزيد",
+    openWebsite: "سجل التغييرات الكامل",
+    error: {
+      title: "تعذّر تحميل سجل التغييرات",
+      description: "تحقق من اتصالك وحاول مرة أخرى.",
     },
   },
   sidebar: {
@@ -1354,6 +1369,7 @@ export const ar: TranslationResources = {
       detail: "إيقاف البرنامج الخفي المحلي.",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "Daemon",
       status: {
         title: "حالة",
@@ -2159,6 +2175,7 @@ export const ar: TranslationResources = {
     about: {
       title: "عن",
       appVersion: "نسخة التطبيق",
+      whatsNewHint: "ملاحظات الإصدار لكل نسخة",
       thisDevice: "هذا الجهاز",
       connectedHosts: "المضيفين المتصلين",
       offline: "غير متصل",

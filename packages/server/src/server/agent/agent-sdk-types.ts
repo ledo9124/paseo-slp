@@ -647,6 +647,20 @@ export interface AgentLaunchContext {
    * stored copy that could disagree.
    */
   resolveExecutionPolicy?: () => AgentExecutionPolicy;
+  /**
+   * True when the caller's SLP role has no route to answer an interactive
+   * question: a Peer or Lead reaches its own recipient only by ending its
+   * turn, so a "question" permission request nobody can see would leave it
+   * reporting lifecycle `running` forever. Fixed at launch, like a role's
+   * tool catalog — it does not change over the generation's life. Providers
+   * whose question channel is a denylistable tool (Claude's
+   * `AskUserQuestion`) are covered through `disallowedTools` in
+   * `slp/launch.ts` instead; this field is for a provider whose question
+   * channel is part of its own message protocol and can't be reached that
+   * way (Codex's `request_user_input_async`). See
+   * docs/slp/architecture.md#tool-and-write-boundaries.
+   */
+  denyInteractiveQuestions?: boolean;
 }
 
 export interface AgentCreateSessionOptions {
@@ -762,6 +776,10 @@ export interface AgentClient {
     launchContext?: AgentLaunchContext,
     options?: AgentResumeSessionOptions,
   ): Promise<AgentSession>;
+  /** Equal keys share availability and catalogue discovery within this configured client.
+   * Include the execution environment and effective configuration; omit to use target identity.
+   * force must not affect identity. Resolve before every cache lookup. */
+  getCatalogCacheKey?(options: FetchCatalogOptions): Promise<string | undefined>;
   /**
    * Discover models and modes together. Implementations may use one upstream
    * process, separate upstream calls, static modes, or private helpers; callers
@@ -789,10 +807,10 @@ export interface AgentClient {
     context: ImportProviderSessionContext,
   ): Promise<ImportedProviderSession>;
   /**
-   * Check if this provider is available (CLI binary is installed).
+   * Check availability in the catalogue target when supplied (CLI binary is installed).
    * Returns true if available, false otherwise.
    */
-  isAvailable(signal?: AbortSignal): Promise<boolean>;
+  isAvailable(signal?: AbortSignal, options?: FetchCatalogOptions): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().

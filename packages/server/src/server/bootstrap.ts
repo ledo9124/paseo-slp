@@ -1,3 +1,4 @@
+import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { constants, existsSync, unlinkSync } from "fs";
@@ -80,12 +81,12 @@ export function parseListenString(listen: string): ListenTarget {
   throw new Error(`Invalid listen string: ${listen}`);
 }
 
-function formatListenTarget(listenTarget: ListenTarget | null): string | null {
+export function formatListenTarget(listenTarget: ListenTarget | null): string | null {
   if (!listenTarget) {
     return null;
   }
   if (listenTarget.type === "tcp") {
-    return `${listenTarget.host}:${listenTarget.port}`;
+    return `${formatHostForHttpUrl(listenTarget.host)}:${listenTarget.port}`;
   }
   return listenTarget.path;
 }
@@ -152,6 +153,8 @@ import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
+import { resolveSkillTargets } from "./orchestration-skills/internal/paths.js";
+import { installSlpSkills } from "./slp/skills.js";
 import { resolveConfigFromPersisted, type CliConfigOverrides } from "./config.js";
 import { resolvePaseoToolPolicy } from "./agent/paseo-tool-policy.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
@@ -629,6 +632,11 @@ export async function createPaseoDaemon(
   void orchestrationSkills.autoUpdate().catch((error) => {
     logger.error({ err: error }, "Failed to maintain orchestration skills at startup");
   });
+  // SLP's own skills are role method, not a host preference, so they install
+  // unconditionally and outside the selection the line above honours.
+  void installSlpSkills({ targets: resolveSkillTargets(), logger }).catch((error) => {
+    logger.error({ err: error }, "Failed to install SLP skills at startup");
+  });
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({});
   const pluginRuntime = new PluginService(logger, daemonConfigStore, daemonVersion, {
@@ -906,7 +914,15 @@ export async function createPaseoDaemon(
       forgeOverrides: { github },
     },
   });
+  workspaceRegistry.subscribeToMutations((mutation) => {
+    if (mutation.kind === "archive" && mutation.workspace) {
+      pluginRuntime.emit("workspace.archived", {
+        workspace: describeHookWorkspace(mutation.workspace),
+      });
+    }
+  });
   const workspaceProvisioning = createWorkspaceProvisioningService({
+    lifecycle: pluginRuntime,
     serverId,
     projectRegistry,
     workspaceRegistry,
@@ -940,6 +956,7 @@ export async function createPaseoDaemon(
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
+    pluginLifecycle: pluginRuntime,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
@@ -1401,11 +1418,20 @@ export async function createPaseoDaemon(
     archiveWorkspace: archiveScheduleWorkspaceExternal,
   });
   await scheduleService.start();
+  // One archived-agent slot, two consumers. Composed here rather than made
+  // multi-subscriber in AgentManager: this is the composition root and there
+  // is no third demand. Each consumer gets its own catch so a failure in one
+  // cannot swallow the other.
   agentManager.setAgentArchivedCallback(async (agentId) => {
     try {
       await scheduleService.completeForAgent(agentId);
     } catch (error) {
       logger.warn({ err: error, agentId }, "Failed to complete schedules for archived agent");
+    }
+    try {
+      await slpService.memberAgentArchived(agentId);
+    } catch (error) {
+      logger.warn({ err: error, agentId }, "Failed to settle the SLP group for archived agent");
     }
   });
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");

@@ -12,6 +12,7 @@ export const fr: TranslationResources = {
       copy: "Copie",
       copyLine: "Copier la ligne",
       dismiss: "Rejeter",
+      reload: "Recharger",
       retry: "Réessayer",
       search: "Recherche",
       select: "Sélectionner",
@@ -155,7 +156,8 @@ export const fr: TranslationResources = {
       initialPromptRequired: "Une invite initiale est requise",
       alreadyLoading: "Déjà en cours de chargement",
       uploadFailed: "Failed to upload file",
-      noClipboardImage: "Aucune image dans le presse-papiers",
+      noClipboardImage:
+        "Aucune image dans le presse-papiers actuel. Essayez de coller depuis votre clavier.",
       pasteImageFailed: "Impossible de coller l’image",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
@@ -210,6 +212,10 @@ export const fr: TranslationResources = {
     historyLoadFailed: "Impossible de charger l’historique de l’agent",
     messageCapped: "Ce message a été tronqué ({{bytes}} octets).",
     permission: {
+      rejectedPlan: "Plan refusé",
+      approvedPlan: "Plan approuvé",
+      canceledPlan: "Plan annulé",
+
       plan: "Plan",
       required: "Autorisation requise",
       deny: "Refuser",
@@ -310,6 +316,11 @@ export const fr: TranslationResources = {
       transferCandidate:
         "Se prépare à prendre le relais : lecture seule jusqu’à l’activation par l’hôte.",
       transferBlocked: "Passation bloquée : {{reason}}. Redémarrez l’hôte pour la réconcilier.",
+      decisionWaiting:
+        "Une passation du Lead attend votre décision. Répondez dans ce chat pour poursuivre ou annuler le remplacement.",
+      decisionSuspended:
+        "En attente du Superviseur avant le remplacement de ce contexte. Cet agent est arrêté jusqu’à sa réponse.",
+      decisionPending: "Un remplacement de contexte du Lead attend la décision du Superviseur.",
       retired: "Génération retirée. L’agent actuel du poste poursuit le travail.",
       openCurrent: "Ouvrir le {{role}} actuel",
       mailUncertain: "Messages à livraison incertaine : {{count}}",
@@ -1028,11 +1039,8 @@ export const fr: TranslationResources = {
         refresh: "Rafraîchir",
         refreshState: "Actualiser l'état de git et de {{brand}}",
         failedRefresh: "Échec de l'actualisation de l'état git.",
-        emptyHiddenWhitespace: "Aucun changement visible après avoir masqué les espaces",
-        emptyUncommitted: "Aucune modification non validée",
         seeUncommittedChanges: "Voir les modifications non validées",
         seeCommittedChanges: "Voir les modifications validées",
-        emptyAgainstBase: "Aucun changement par rapport à{{baseRef}}",
         checkingRepository: "Vérification du référentiel...",
         notRepository: "Pas un dépôt git",
         diffMode: "Mode différentiel",
@@ -1173,6 +1181,16 @@ export const fr: TranslationResources = {
       deleteMessage_other: "Cela retire l’étiquette de {{count}} espaces de travail sur cet hôte.",
       offline: "Cet hôte est hors ligne.",
       updateHost: "Mettez à jour cet hôte pour gérer les étiquettes.",
+    },
+  },
+  changelog: {
+    title: "Nouveautés",
+    installed: "Installée",
+    showMore: "Afficher plus",
+    openWebsite: "Journal des modifications complet",
+    error: {
+      title: "Impossible de charger le journal des modifications",
+      description: "Vérifiez votre connexion et réessayez.",
     },
   },
   sidebar: {
@@ -1397,6 +1415,7 @@ export const fr: TranslationResources = {
       detail: "Arrêt du démon local.",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "Daemon",
       status: {
         title: "Statut",
@@ -2221,6 +2240,7 @@ export const fr: TranslationResources = {
     about: {
       title: "À propos",
       appVersion: "Version de l'application",
+      whatsNewHint: "Notes de version pour chaque release",
       thisDevice: "Cet appareil",
       connectedHosts: "Hôtes connectés",
       offline: "Hors ligne",

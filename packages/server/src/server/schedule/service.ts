@@ -7,7 +7,7 @@ import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
 import { ensureAgentLoaded, type AgentLoaderManager } from "../agent/agent-loading.js";
-import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
+import { formatSystemNotificationPrompt, type AgentRunController } from "../agent/agent-prompt.js";
 import { resolveCreateAgentTitles } from "../agent/create-agent-title.js";
 import { type BoundCreateAgentCommand, formatProviderModel } from "../agent/create-agent/create.js";
 import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
@@ -196,6 +196,16 @@ function buildRunOutput(params: {
 }
 
 type ScheduleAgentManager = AgentLoaderManager &
+  Pick<
+    AgentRunController,
+    | "getAgent"
+    | "reloadAgentSession"
+    | "tryRunOutOfBand"
+    | "hasInFlightRun"
+    | "replaceAgentRun"
+    | "steerOrReplaceActiveTurn"
+    | "streamAgent"
+  > &
   Pick<
     AgentManager,
     "admitForegroundTurn" | "runAgent" | "waitForAgentEvent" | "waitForAgentRunStart"

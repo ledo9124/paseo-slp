@@ -30,7 +30,14 @@ const LEAD_ONLY_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 /** The SLP control channel: members only, never in an ordinary agent's catalog. */
-export const SLP_CONTROL_TOOLS: ReadonlySet<string> = new Set(["slp_request_handoff", "slp_ready"]);
+export const SLP_CONTROL_TOOLS: ReadonlySet<string> = new Set([
+  "slp_request_handoff",
+  "slp_ready",
+  "slp_decide_lead_handoff",
+]);
+
+/** The Supervisor's alone: deciding when a supervised Lead's context is replaced. */
+const SUPERVISOR_ONLY_TOOLS: ReadonlySet<string> = new Set(["slp_decide_lead_handoff"]);
 
 /** All a candidate may execute during receive-only preparation. */
 export const SLP_PREPARATION_TOOLS: ReadonlySet<string> = new Set(["slp_ready"]);
@@ -48,8 +55,8 @@ const PEER_HIDDEN_TOOLS: ReadonlySet<string> = new Set([...LEAD_ONLY_TOOLS, "sen
 /** Tools an SLP role never sees in its catalog. */
 const HIDDEN_TOOLS: Record<SlpRole, ReadonlySet<string>> = {
   supervisor: LEAD_ONLY_TOOLS,
-  lead: new Set(),
-  peer: PEER_HIDDEN_TOOLS,
+  lead: SUPERVISOR_ONLY_TOOLS,
+  peer: new Set([...PEER_HIDDEN_TOOLS, ...SUPERVISOR_ONLY_TOOLS]),
 };
 
 export function isToolVisibleToRole(role: SlpRole, tool: string): boolean {
@@ -64,6 +71,22 @@ export type SlpRelation =
   | "lead"
   | "other-member"
   | "outside";
+
+/**
+ * A Peer or Lead has no route to answer an interactive question: the SLP
+ * contract is "end your turn, the reply arrives as mail" (see
+ * PEER_HIDDEN_TOOLS above), so a "question" permission request would leave
+ * it reporting lifecycle `running` with nobody able to see or answer it.
+ * Only Supervisor keeps the channel — its chat is the one Human reads.
+ * Mirrors the `AskUserQuestion` denial in `slp/launch.ts` for Claude; a
+ * provider whose question channel isn't a denylistable tool (Codex's
+ * `request_user_input_async`) consults this instead, at the point the
+ * question is turned into a permission request rather than at launch. See
+ * docs/slp/architecture.md#tool-and-write-boundaries.
+ */
+export function isInteractiveQuestionDenied(role: SlpRole): boolean {
+  return role !== "supervisor";
+}
 
 /**
  * Directions from docs/slp/architecture.md#message-routing-and-delivery:

@@ -4,6 +4,7 @@ import { ensureAgentLoaded, type AgentLoaderManager } from "../agent/agent-loadi
 import type { AgentManager } from "../agent/agent-manager.js";
 import type { AgentPromptInput } from "../agent/agent-sdk-types.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
+import { isControlMail, type SlpControlTurns } from "./control-turns.js";
 import { newSlpId, SlpMailSchema, SlpRecordStore, type SlpMailRecord } from "./store.js";
 import { nextTurnBoundary } from "./turn-boundary.js";
 
@@ -16,6 +17,9 @@ export type SlpSlotDestination =
   | { status: "held"; reason: string }
   | { status: "empty" };
 
+/** Why a queued mail cannot be admitted right now. */
+type SlpMailWaitReason = Exclude<SlpSlotDestination["status"], "active"> | "busy";
+
 export interface SlpMailboxOptions {
   directory: string;
   logger: Logger;
@@ -23,8 +27,24 @@ export interface SlpMailboxOptions {
   agentStorage: AgentStorage;
   resolveSlot: (groupId: string, slotId: string) => SlpSlotDestination;
   now: () => Date;
+  /** Records which turns the runtime started for its own mail, so they are not reported. */
+  controlTurns: SlpControlTurns;
   /** Called after every durable mail-state change; the service fans it out to clients. */
   onChange?: (groupId: string) => void;
+}
+
+/**
+ * How many times one message may fail before admission is reached before the
+ * loop stops working the slot. A failure there leaves nothing durable, so the
+ * message stays `queued`, which is already the honest record of a send that
+ * has not been delivered; giving up defers it to the next wake-up or to the
+ * pump every restart performs, rather than retrying forever behind a log.
+ */
+export const SLP_DISPATCH_ATTEMPTS = 5;
+const SLP_DISPATCH_RETRY_STEP_MS = 10;
+
+function pause(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
 export interface SlpMailInput {
@@ -50,10 +70,35 @@ export class SlpMailbox {
   private readonly agentStorage: AgentStorage;
   private readonly resolveSlot: SlpMailboxOptions["resolveSlot"];
   private readonly now: () => Date;
+  private readonly controlTurns: SlpControlTurns;
   private readonly onChange: (groupId: string) => void;
   private readonly records = new Map<string, SlpMailRecord>();
-  /** One dispatch loop per slot; a second pump while one runs is a no-op. */
+  /** One dispatch loop per slot; `close` waits on these. */
   private readonly pumps = new Map<string, Promise<void>>();
+  /**
+   * Slots with a live loop. Set before the loop starts, unlike `pumps`, which
+   * is only assigned once `drain` yields; a pump re-entered from inside the
+   * loop would otherwise start a second one and orphan the first.
+   */
+  private readonly running = new Set<string>();
+  /** Wake-ups a live loop has not accounted for yet. Read as it exits. */
+  private readonly wakes = new Set<string>();
+  /**
+   * When each waiting mail id started waiting, and why. Admission is
+   * otherwise invisible: a busy answer and a held slot both leave the loop
+   * silent, so a 927-second stall and an 11ms one look identical on disk
+   * until someone differences `createdAt` against `acceptedAt` by hand. Set
+   * on entering a wait, read and cleared on leaving it.
+   */
+  private readonly waits = new Map<string, { reason: SlpMailWaitReason; startedAt: number }>();
+  /**
+   * Mail ids a caller must not mutate right now: `dispatch` holds one for its
+   * whole attempt, and `appendToQueuedReport` holds one for the length of its
+   * own write. Without this a report appended while `dispatch` is mid-attempt
+   * would either vanish (dispatch persists its own stale copy over it) or
+   * race it for the same file on disk.
+   */
+  private readonly locked = new Set<string>();
   private closing = false;
   /** Resolved by `close`, so a loop parked on a turn boundary stops waiting. */
   private readonly closed: Promise<void>;
@@ -67,6 +112,7 @@ export class SlpMailbox {
     this.agentStorage = options.agentStorage;
     this.resolveSlot = options.resolveSlot;
     this.now = options.now;
+    this.controlTurns = options.controlTurns;
     this.onChange = options.onChange ?? (() => undefined);
     this.closed = new Promise<void>((resolve) => {
       this.announceClosed = resolve;
@@ -104,11 +150,13 @@ export class SlpMailbox {
   }
 
   /**
-   * Boot: a message the daemon died while dispatching may have reached the
-   * provider, so it becomes `uncertain` and is retained, never replayed.
-   * Queued mail resumes dispatch.
+   * Boot, first half: a message the daemon died while dispatching may have
+   * reached the provider, so it becomes `uncertain` and is retained, never
+   * replayed. Nothing is dispatched here. Recovery reads these records to
+   * decide what it still owes, and a pump running alongside that could
+   * overwrite an `uncertain` record before anything had read it.
    */
-  async recover(): Promise<void> {
+  async recoverRecords(): Promise<void> {
     for (const { id, result } of await this.store.list()) {
       if (result instanceof Error) {
         this.logger.error({ mailId: id, err: result }, "SLP mail record unreadable");
@@ -127,6 +175,10 @@ export class SlpMailbox {
         this.logger.warn({ mailId: record.id }, "SLP mail acceptance is uncertain after restart");
       }
     }
+  }
+
+  /** Boot, second half: once recovery has decided, queued mail resumes. */
+  startPumps(): void {
     const pumped = new Set<string>();
     for (const record of this.list()) {
       const key = `${record.groupId}/${record.slotId}`;
@@ -149,46 +201,87 @@ export class SlpMailbox {
     }
   }
 
-  /** Re-check a slot whose destination changed (a hold lifted, a generation activated). */
+  /**
+   * Re-check a slot whose destination changed (a hold lifted, a generation
+   * activated). The wake-up is recorded before the live loop is consulted,
+   * and a loop reads that record after it releases the slot, so a wake-up
+   * landing in the window between the loop's last look at the queue and its
+   * exit restarts it instead of being dropped with no loop left to honour it.
+   */
   pump(groupId: string, slotId: string): void {
     if (this.closing) return;
     const key = `${groupId}/${slotId}`;
-    if (this.pumps.has(key)) return;
+    this.wakes.add(key);
+    if (this.running.has(key)) return;
+    this.start(groupId, slotId, key);
+  }
+
+  /**
+   * Restarting only on a recorded wake-up is what keeps a slot whose loop
+   * exited on a hold from spinning: that exit leaves its message queued, so a
+   * loop that re-checked the queue instead would re-enter itself forever.
+   */
+  private start(groupId: string, slotId: string, key: string): void {
+    this.wakes.delete(key);
+    this.running.add(key);
     const run = this.drain(groupId, slotId)
       .catch((error: unknown) => {
         this.logger.error({ groupId, slotId, err: error }, "SLP mail dispatch failed");
       })
       .finally(() => {
+        this.running.delete(key);
         this.pumps.delete(key);
+        if (this.wakes.delete(key) && !this.closing) this.start(groupId, slotId, key);
       });
     this.pumps.set(key, run);
   }
 
   private async drain(groupId: string, slotId: string): Promise<void> {
+    let failures = 0;
     for (;;) {
       if (this.closing) return;
       const next = this.nextQueued(groupId, slotId);
       if (!next) return;
       const destination = this.resolveSlot(groupId, slotId);
       if (destination.status !== "active") {
+        this.beginWait(next.id, destination.status, { groupId, slotId });
         this.logger.info(
           { mailId: next.id, slotId, destination: destination.status },
           "SLP mail waits for its slot",
         );
         return;
       }
+      this.endWait(next.id, { groupId, slotId });
       // Subscribed before the attempt so a boundary crossed during it is not missed.
       const boundary = nextTurnBoundary(this.agentManager, destination.agentId);
       try {
         const outcome = await this.dispatch(next, destination);
-        if (outcome === "busy") await Promise.race([boundary.reached, this.closed]);
+        failures = 0;
+        if (outcome === "busy") {
+          this.beginWait(next.id, "busy", { groupId, slotId, agentId: destination.agentId });
+          await Promise.race([boundary.reached, this.closed]);
+        }
+      } catch (error) {
+        failures += 1;
+        if (failures >= SLP_DISPATCH_ATTEMPTS) {
+          this.logger.error(
+            { mailId: next.id, groupId, slotId, failures, err: error },
+            "SLP mail delivery deferred to the next wake-up",
+          );
+          return;
+        }
+        this.logger.warn(
+          { mailId: next.id, groupId, slotId, failures, err: error },
+          "SLP mail dispatch failed before admission; retrying",
+        );
+        await Promise.race([pause(SLP_DISPATCH_RETRY_STEP_MS * failures), this.closed]);
       } finally {
         boundary.stop();
       }
     }
   }
 
-  /** Sequence order, except that an activation notice goes before whatever queued during the transfer. */
+  /** Sequence order, except that the runtime's own notice about the slot goes first. */
   private nextQueued(groupId: string, slotId: string): SlpMailRecord | null {
     let candidate: SlpMailRecord | null = null;
     for (const record of this.records.values()) {
@@ -201,48 +294,138 @@ export class SlpMailbox {
   }
 
   /**
+   * Record that a mail id cannot be admitted yet. Idempotent per id, so a
+   * loop that re-checks the same reason on a later iteration does not reset
+   * the clock. Debug, not info: most of the 116 deliveries in the field run
+   * took 5-30ms and never call this, and the fast path must stay quiet.
+   */
+  private beginWait(
+    mailId: string,
+    reason: SlpMailWaitReason,
+    context: Record<string, unknown>,
+  ): void {
+    if (this.waits.has(mailId)) return;
+    this.waits.set(mailId, { reason, startedAt: Date.now() });
+    this.logger.debug({ mailId, reason, ...context }, "SLP mail delivery is waiting");
+  }
+
+  /**
+   * Record that a wait tracked above is over. `waitMs` is what makes a
+   * 927-second stall and an 11ms one tellable apart by reading the log
+   * instead of differencing `createdAt` against `acceptedAt` across mail
+   * JSON. A no-op, and no log, for a mail id that was never waiting.
+   */
+  private endWait(mailId: string, context: Record<string, unknown>): void {
+    const wait = this.waits.get(mailId);
+    if (!wait) return;
+    this.waits.delete(mailId);
+    this.logger.info(
+      { mailId, reason: wait.reason, waitMs: Date.now() - wait.startedAt, ...context },
+      "SLP mail delivery resumed after a wait",
+    );
+  }
+
+  /**
    * The attempt is durable before the provider is asked. `busy` is the one
    * admission answer that proves no provider call happened, so only it
-   * returns the message to `queued`.
+   * returns the message to `queued`. Locked for the whole attempt: a report
+   * still `queued` when this starts must not be appended to underneath it,
+   * or the append would either be lost (this persists its own stale copy
+   * over it) or race it for the same file on disk. See `appendToQueuedReport`.
    */
   private async dispatch(
     record: SlpMailRecord,
     destination: Extract<SlpSlotDestination, { status: "active" }>,
   ): Promise<"accepted" | "busy" | "uncertain"> {
-    await ensureAgentLoaded(destination.agentId, {
-      agentManager: this.agentManager,
-      agentStorage: this.agentStorage,
-      logger: this.logger,
-    });
-    const attempt = {
-      id: newSlpId("attempt"),
-      generationId: destination.generationId,
-      agentId: destination.agentId,
-      at: this.now().toISOString(),
-    };
-    await this.persist({ ...record, state: "dispatching", attempt });
-    let admission: Awaited<ReturnType<AgentManager["admitForegroundTurn"]>>;
+    this.locked.add(record.id);
     try {
-      admission = await this.agentManager.admitForegroundTurn(destination.agentId, record.prompt, {
-        clientMessageId: record.id,
+      await ensureAgentLoaded(destination.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.logger,
       });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      await this.persist({ ...record, state: "uncertain", attempt, reason });
-      this.logger.error({ mailId: record.id, err: error }, "SLP mail dispatch errored");
-      return "uncertain";
+      const attempt = {
+        id: newSlpId("attempt"),
+        generationId: destination.generationId,
+        agentId: destination.agentId,
+        at: this.now().toISOString(),
+      };
+      await this.persist({ ...record, state: "dispatching", attempt });
+      // Claimed before the call, not after: admission answers `started` only
+      // when it took the run slot in that same tick, so the turn it reports is
+      // this message's with nothing able to start one in between.
+      const control = isControlMail(record.kind);
+      if (control) this.controlTurns.claim(destination.agentId);
+      let admission: Awaited<ReturnType<AgentManager["admitForegroundTurn"]>>;
+      try {
+        admission = await this.agentManager.admitForegroundTurn(
+          destination.agentId,
+          record.prompt,
+          {
+            clientMessageId: record.id,
+          },
+        );
+      } catch (error) {
+        if (control) this.controlTurns.release(destination.agentId);
+        const reason = error instanceof Error ? error.message : String(error);
+        await this.persist({ ...record, state: "uncertain", attempt, reason });
+        this.logger.error({ mailId: record.id, err: error }, "SLP mail dispatch errored");
+        return "uncertain";
+      }
+      if (control && admission.status !== "started") this.controlTurns.release(destination.agentId);
+      if (admission.status === "busy") {
+        await this.persist({ ...record, state: "queued" });
+        return "busy";
+      }
+      await this.persist({
+        ...record,
+        state: "accepted",
+        attempt,
+        acceptedAt: this.now().toISOString(),
+      });
+      return "accepted";
+    } finally {
+      this.locked.delete(record.id);
     }
-    if (admission.status === "busy") {
-      await this.persist({ ...record, state: "queued" });
-      return "busy";
+  }
+
+  /**
+   * Append to a report still `queued` for this slot instead of enqueueing a
+   * second one, so a Lead ending several turns while draining a backlog
+   * wakes the Supervisor once instead of once per turn. Returns false when
+   * there is nothing safe to append to — none is queued, or `dispatch`
+   * already owns the one that is — so the caller enqueues a fresh report
+   * instead. Never touches a report that is `dispatching`, `accepted` or
+   * `uncertain`: only `queued` mail is a candidate.
+   */
+  async appendToQueuedReport(
+    groupId: string,
+    slotId: string,
+    append: (existingPrompt: AgentPromptInput) => AgentPromptInput,
+  ): Promise<boolean> {
+    const candidate = this.queuedReport(groupId, slotId);
+    if (!candidate || this.locked.has(candidate.id)) return false;
+    this.locked.add(candidate.id);
+    try {
+      await this.persist({ ...candidate, prompt: append(candidate.prompt) });
+    } finally {
+      this.locked.delete(candidate.id);
     }
-    await this.persist({
-      ...record,
-      state: "accepted",
-      attempt,
-      acceptedAt: this.now().toISOString(),
-    });
-    return "accepted";
+    return true;
+  }
+
+  private queuedReport(groupId: string, slotId: string): SlpMailRecord | null {
+    for (const record of this.records.values()) {
+      if (
+        record.groupId === groupId &&
+        record.slotId === slotId &&
+        record.kind === "report" &&
+        record.state === "queued"
+      ) {
+        return record;
+      }
+    }
+    return null;
   }
 
   private async persist(record: SlpMailRecord): Promise<SlpMailRecord> {
@@ -254,9 +437,17 @@ export class SlpMailbox {
   }
 }
 
+/**
+ * What the runtime says about the slot itself, which the recipient has to read
+ * before it can make sense of anything that queued while it was held: an
+ * activation telling a successor it now owns the slot, and a cancellation
+ * telling a source it still does.
+ */
+const RUNTIME_FIRST_KINDS: ReadonlySet<SlpMailRecord["kind"]> = new Set(["activation", "control"]);
+
 function precedes(a: SlpMailRecord, b: SlpMailRecord): boolean {
-  const aFirst = a.kind === "activation";
-  const bFirst = b.kind === "activation";
+  const aFirst = RUNTIME_FIRST_KINDS.has(a.kind);
+  const bFirst = RUNTIME_FIRST_KINDS.has(b.kind);
   if (aFirst !== bFirst) return aFirst;
   return a.sequence < b.sequence;
 }

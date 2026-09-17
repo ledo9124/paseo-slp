@@ -78,7 +78,12 @@ export function SlpGroupBanner({
   );
 }
 
-function describeNotices(
+/**
+ * What this member is told, as translation keys. Exported for its own test:
+ * the decision it makes is which reader needs which fact, and that is worth
+ * reading directly rather than through a rendered tree.
+ */
+export function describeNotices(
   group: SlpGroupSummary,
   membership: SlpMembership,
   t: (key: string, options?: Record<string, unknown>) => string,
@@ -92,15 +97,7 @@ function describeNotices(
   if (group.initialMessageReceipt === "uncertain" && membership.isContact) {
     notices.push(t("slp.banner.receiptUncertain"));
   }
-  if (membership.generationState === "retired") {
-    notices.push(t("slp.banner.retired"));
-  } else if (membership.transfer?.phase === "blocked") {
-    notices.push(t("slp.banner.transferBlocked", { reason: membership.transfer.reason ?? "" }));
-  } else if (membership.transfer?.isCandidate) {
-    notices.push(t("slp.banner.transferCandidate"));
-  } else if (membership.transfer?.isSource) {
-    notices.push(t("slp.banner.transferSource"));
-  }
+  notices.push(...describeHandoffNotice(membership, t));
   if (group.mail.uncertain > 0) {
     notices.push(t("slp.banner.mailUncertain", { count: group.mail.uncertain }));
   }
@@ -108,6 +105,31 @@ function describeNotices(
     notices.push(t("slp.banner.mailQueued", { count: group.mail.queued }));
   }
   return notices;
+}
+
+/** At most one line about where this agent stands in a generation change. */
+function describeHandoffNotice(
+  membership: SlpMembership,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string[] {
+  if (membership.generationState === "retired") return [t("slp.banner.retired")];
+  const transfer = membership.transfer;
+  if (transfer?.phase === "blocked") {
+    return [t("slp.banner.transferBlocked", { reason: transfer.reason ?? "" })];
+  }
+  if (transfer?.isCandidate) return [t("slp.banner.transferCandidate")];
+  if (transfer?.isSource) {
+    // A source waiting on a decision is stopped, not on its way out: nothing
+    // is being prepared for it until the Supervisor answers.
+    const waiting = membership.pendingLeadHandoff?.transferId === transfer.id;
+    return [t(waiting ? "slp.banner.decisionSuspended" : "slp.banner.transferSource")];
+  }
+  if (membership.pendingLeadHandoff) {
+    // Whoever can answer is asked to; everyone else is told the group waits.
+    const key = membership.role === "supervisor" ? "decisionWaiting" : "decisionPending";
+    return [t(`slp.banner.${key}`)];
+  }
+  return [];
 }
 
 const styles = StyleSheet.create((theme: Theme) => ({

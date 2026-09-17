@@ -1,4 +1,5 @@
 import { DEFAULT_DAEMON_PORT } from "@getpaseo/protocol/product-identity";
+import { configurationEnvironment } from "./config-environment.js";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -575,7 +576,7 @@ export function resolveConfigFromPersisted(
   options?: ResolveConfigFromPersistedOptions,
 ): PaseoDaemonConfig {
   const resolvedOptions = options ?? {};
-  const env = resolvedOptions.env ?? process.env;
+  const env = configurationEnvironment(resolvedOptions.env ?? process.env);
   const cli = resolvedOptions.cli;
   const relayEnabledFallback =
     resolvedOptions.relayEnabledFallback ?? persisted.daemon?.relay?.enabled === undefined;
@@ -586,6 +587,7 @@ export function resolveConfigFromPersisted(
     mcpInjectIntoAgents,
     slpEnabled,
     slpHandoff,
+    slpRoles,
     browserToolsEnabled,
     autoArchiveAfterMerge,
     appendSystemPrompt,
@@ -654,6 +656,7 @@ export function resolveConfigFromPersisted(
     webUi,
     slpEnabled,
     slpHandoff,
+    slpRoles,
     appBaseUrl,
     auth: resolveAuthConfig(env, persisted),
     openai,

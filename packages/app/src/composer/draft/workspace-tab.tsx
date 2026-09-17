@@ -17,7 +17,7 @@ import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/draft/create-flow";
 import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liveness";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
@@ -28,7 +28,7 @@ import {
   type PendingWorkspaceDraftSubmission,
 } from "@/stores/workspace-draft-submission-store";
 import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
-import { encodeImages } from "@/utils/encode-images";
+import { requestWorkspaceDraftAgent } from "@/composer/draft/create-agent-request";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import {
@@ -64,7 +64,6 @@ import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
-const EMPTY_ONLINE_SERVER_IDS: string[] = [];
 const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: false,
@@ -204,15 +203,14 @@ async function submitDraftCreateRequest(input: {
     featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
   });
 
-  const imagesData = await encodeImages(images);
   const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
-  const result = await client.createAgent({
+  const result = await requestWorkspaceDraftAgent(client, {
     config,
     workspaceId,
-    ...(text ? { initialPrompt: text } : {}),
+    text,
     clientMessageId: attempt.clientMessageId,
-    ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
-    ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
+    ...(images ? { images } : {}),
+    ...(attachmentsArray ? { attachments: attachmentsArray } : {}),
   });
 
   return {
@@ -279,17 +277,10 @@ function buildDraftAgentSnapshot(input: {
 }
 
 function buildDraftInitialValues(input: {
-  workingDir: string | null;
   initialSetup: WorkspaceDraftTabSetup | null;
 }): CreateAgentInitialValues | undefined {
-  if (!input.workingDir) {
-    return undefined;
-  }
-  if (!input.initialSetup) {
-    return { workingDir: input.workingDir };
-  }
+  if (!input.initialSetup) return undefined;
   return {
-    workingDir: input.workingDir,
     provider: input.initialSetup.provider,
     modeId: input.initialSetup.modeId,
     model: input.initialSetup.model,
@@ -305,13 +296,6 @@ function resolveDraftWorkingDirectory(input: {
     return input.initialSetup.cwd;
   }
   return input.workspaceDirectory;
-}
-
-function resolveOnlineServerIds(input: { isConnected: boolean; serverId: string }): string[] {
-  if (!input.isConnected) {
-    return EMPTY_ONLINE_SERVER_IDS;
-  }
-  return [input.serverId];
 }
 
 interface WorkspaceDraftAgentTabProps {
@@ -388,7 +372,6 @@ export function WorkspaceDraftAgentTab({
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const client = useHostRuntimeClient(serverId);
-  const isConnected = useHostRuntimeIsConnected(serverId);
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
     workspaceDirectory: w.workspaceDirectory,
     id: w.id,
@@ -400,10 +383,8 @@ export function WorkspaceDraftAgentTab({
     initialSetup: draftSetup,
   });
   const draftInitialValues = buildDraftInitialValues({
-    workingDir: draftWorkingDirectory,
     initialSetup: draftSetup,
   });
-  const onlineServerIds = resolveOnlineServerIds({ isConnected, serverId });
   const draftStoreKey = useMemo(
     () =>
       buildDraftStoreKey({
@@ -420,7 +401,6 @@ export function WorkspaceDraftAgentTab({
       initialValues: draftInitialValues,
       initialFeatureValues: draftSetup?.featureValues,
       isVisible: true,
-      onlineServerIds,
       lockedWorkingDir: draftWorkingDirectory ?? undefined,
     },
   });
